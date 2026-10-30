@@ -64,6 +64,27 @@ def test_detector_skips_disabled_apps():
     assert CallDetector(lambda: teams)() == "teams"
 
 
+def test_the_app_that_took_the_mic_last_is_the_call():
+    """Teams may hold the mic after hanging up: a huddle started since is the call."""
+    now, clock = [], [0.0]
+    detect = CallDetector(lambda: now, clock=lambda: clock[0])
+    teams, huddle = _proc("com.microsoft.teams2.helper", True), _proc("com.tinyspeck.slackmacgap.helper", True)
+    now[:] = [teams]
+    assert detect() == "teams"
+    clock[0] = 60
+    now[:] = [teams, huddle]
+    assert detect() == "slack"
+    clock[0] = 70
+    now[:] = [huddle, teams]
+    assert detect() == "slack"  # the same two holders later: still the huddle
+    now[:] = [huddle]
+    clock[0] = 80
+    assert detect() == "slack"
+    now[:] = [huddle, teams]
+    clock[0] = 90
+    assert detect() == "teams"
+
+
 def _run(trigger: Trigger, timeline: list[tuple[float, bool]]) -> list[tuple[float, str]]:
     out = []
     for now, active in timeline:
@@ -358,6 +379,16 @@ def test_daemon_warns_when_a_track_is_missing(tmp_path: Path, sent_notifications
     assert "Recording without the microphone" in titles
     assert d.status()["missing"] == ["microphone"]
     d.shutdown()
+
+
+def test_switching_from_teams_to_slack_records_two_meetings(tmp_path: Path, sent_notifications):
+    def call(now):
+        return "teams" if 10 <= now < 300 else "slack" if 300 <= now < 700 else None
+    d, sessions, launched = _daemon(tmp_path, call)
+    d.run(until=lambda: d.now() > 760)
+    assert [s.trigger for s in sessions] == ["teams", "slack"]
+    assert all(s.started and s.stopped for s in sessions)
+    assert launched == [tmp_path / "rec0", tmp_path / "rec1"]
 
 
 def test_a_slack_huddle_is_recorded_as_one(tmp_path: Path, sent_notifications):
@@ -1411,3 +1442,32 @@ def test_quitting_stops_the_search_index_so_no_old_process_outlives_an_update(tm
     assert len(runs) == 1 and not runs[0].terminated
     d.shutdown()
     assert runs[0].terminated and not d.status()["indexing"]
+
+
+def _run_apps(trigger: Trigger, timeline: list[tuple[float, str | None]]) -> list[tuple[float, str]]:
+    out = []
+    for now, app in timeline:
+        for action in trigger.update(now, app is not None, app):
+            out.append((now, action))
+    return out
+
+
+def test_a_call_in_another_app_ends_the_meeting_and_starts_its_own():
+    t = Trigger(start_after=4, grace=10, max_session=3600)
+    timeline = [(0, "teams"), (4, "teams"), (100, "teams"), (102, "slack"), (104, "slack"), (106, "slack"),
+                (200, "slack"), (202, None), (212, None)]
+    assert _run_apps(t, timeline) == [(4, "start"), (106, "stop"), (106, "start"), (212, "stop")]
+    assert t.state == "idle"
+
+
+def test_a_moment_of_another_app_inside_a_call_splits_nothing():
+    t = Trigger(start_after=4, grace=10, max_session=3600)
+    timeline = [(0, "teams"), (4, "teams"), (50, "slack"), (52, "teams"), (54, "slack"), (56, "teams"), (300, "teams")]
+    assert _run_apps(t, timeline) == [(4, "start")]
+
+
+def test_a_switch_is_a_call_ended_for_the_meeting_before():
+    t = Trigger(start_after=4, grace=10, max_session=3600)
+    _run_apps(t, [(0, "teams"), (4, "teams"), (10, "slack")])
+    assert _run_apps(t, [(14, "slack")]) == [(14, "stop"), (14, "start")]
+    assert t.stopped_because == "call_ended" and t.app == "slack" and t.state == "recording"

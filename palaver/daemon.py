@@ -81,6 +81,10 @@ class Trigger:
     restarts release the mic briefly). After ``max_session`` seconds the
     session is force-stopped and nothing restarts until Teams releases the
     mic — guards against a hung detector or a laptop that slept.
+
+    ``app``: the app the call is in ("teams", "slack"). When another app
+    holds the call for ``start_after`` seconds, the meeting ends and the
+    new app's starts ("stop", "start"); a moment of it splits nothing.
     """
 
     def __init__(self, *, start_after: float, grace: float, max_session: float):
@@ -92,6 +96,8 @@ class Trigger:
         self._released_since: float | None = None
         self._started: float = 0.0
         self.stopped_because: str | None = None  # "max_length" | "call_ended", for the last "stop"
+        self.app: str | None = None  # the app of the call recording now
+        self._switched_since: float | None = None
 
     def block_until_released(self) -> None:
         self.state = "blocked"
@@ -103,8 +109,9 @@ class Trigger:
 
     def reset(self) -> None:
         self.state, self._active_since, self._released_since = "idle", None, None
+        self.app, self._switched_since = None, None
 
-    def update(self, now: float, active: bool) -> list[str]:
+    def update(self, now: float, active: bool, app: str | None = None) -> list[str]:
         if self.state == "blocked":
             if not active:
                 self.state, self._active_since = "idle", None
@@ -117,6 +124,7 @@ class Trigger:
                 self._active_since = now
             if now - self._active_since >= self.start_after:
                 self.state, self._started, self._released_since = "recording", now, None
+                self.app, self._switched_since = app, None
                 return ["start"]
             return []
         if now - self._started >= self.max_session:
@@ -126,7 +134,8 @@ class Trigger:
             return ["stop"]
         if active:
             self._released_since = None
-            return []
+            return self._switch(now, app)
+        self._switched_since = None
         if self._released_since is None:
             self._released_since = now
         if now - self._released_since >= self.grace:
@@ -135,6 +144,21 @@ class Trigger:
             return ["stop"]
         return []
 
+
+    def _switch(self, now: float, app: str | None) -> list[str]:
+        if app is None or self.app is None:
+            self.app = self.app or app  # a session continued after a restart learns its app
+            return []
+        if app == self.app:
+            self._switched_since = None
+            return []
+        if self._switched_since is None:
+            self._switched_since = now
+        if now - self._switched_since < self.start_after:
+            return []
+        self.app, self._started, self._switched_since = app, now, None
+        self.stopped_because = "call_ended"
+        return ["stop", "start"]
 
 _CALL_NAMES = {"teams": "Teams call", "slack": "Slack huddle"}
 
@@ -467,8 +491,9 @@ class Daemon:
             self._watch_manual()
         elif self._auto:
             active = self._detect_safely()
-            for action in self._trigger.update(self.now(), active):
+            for action in self._trigger.update(self.now(), active, self._last_call):
                 if action == "start":
+                    self._call_app = self._trigger.app or self._call_app
                     self._start()
                 else:
                     self._stop(self._trigger.stopped_because)

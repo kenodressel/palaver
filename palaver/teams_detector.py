@@ -15,6 +15,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import logging
+import time
 from dataclasses import dataclass
 from typing import Callable
 
@@ -139,27 +140,37 @@ def _app(process: AudioProcess, prefixes: tuple[str, ...]) -> bool:
 
 
 class CallDetector:
-    """Which app is in a call right now: "teams", "slack" or None."""
+    """Which app is in a call right now: "teams", "slack" or None. When both
+    hold the mic, the one that took it last: Teams may keep it after a
+    hang-up while the huddle that follows is the call."""
 
     def __init__(self, list_processes: Callable[[], list[AudioProcess]] = audio_processes, *,
-                 teams: Callable[[], bool] = lambda: True, slack: Callable[[], bool] = lambda: True):
+                 teams: Callable[[], bool] = lambda: True, slack: Callable[[], bool] = lambda: True,
+                 clock: Callable[[], float] = time.monotonic):
         self._list = list_processes
         self._teams = teams  # asked on every check: a switch applies at once
         self._slack = slack
+        self._clock = clock
         self._in_huddle = False
         self._audio: str | None = None
+        self._mic_since: dict[str, float] = {}  # app → since when it holds the mic
 
     def __call__(self) -> str | None:
         processes = self._list()
         self._log_changes(processes)
-        if self._teams() and any(p.running_input and _app(p, TEAMS_BUNDLE_PREFIXES) for p in processes):
-            return "teams"
-        if not self._slack():
-            return None
-        slack = [p for p in processes if _app(p, SLACK_BUNDLE_PREFIXES)]
-        if any(p.running_input for p in slack):
+        slack_on = self._slack()
+        slack = [p for p in processes if _app(p, SLACK_BUNDLE_PREFIXES)] if slack_on else []
+        holding = {app for app, on in (
+            ("teams", self._teams() and any(p.running_input and _app(p, TEAMS_BUNDLE_PREFIXES) for p in processes)),
+            ("slack", any(p.running_input for p in slack))) if on}
+        now = self._clock()
+        self._mic_since = {app: self._mic_since.get(app, now) for app in holding}
+        if "slack" in holding:
             self._in_huddle = True
-            return "slack"
+        if holding:
+            return max(sorted(holding, key=lambda app: app != "teams"), key=lambda app: self._mic_since[app])
+        if not slack_on:
+            return None
         if self._in_huddle and any(p.running_output for p in slack):
             return "slack"  # muted: the others still play
         self._in_huddle = False
