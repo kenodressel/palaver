@@ -166,7 +166,7 @@ sweep_stale() {
 
 # A link in the unpacked runtime that points out of it; nothing when all stay inside.
 link_out_of() {
-  root="$(cd "$1" && pwd -P)"
+  root="$(readlink -f "$1")"  # as readlink spells the targets: the case on disk ("Palaver")
   find "$1" -type l | while IFS= read -r link; do
     target="$(readlink -f "${link}" 2>/dev/null || true)"
     case "${target}" in

@@ -42,8 +42,9 @@ def build_assets(dist: Path, version: str) -> Path:
     dist.mkdir(parents=True)
     work = dist / "work"
     (work / RID / "bin").mkdir(parents=True)
-    (work / RID / "bin" / "python3").write_text("#!/bin/sh\n")
-    (work / RID / "bin" / "python3").chmod(0o755)
+    (work / RID / "bin" / "python3.13").write_text("#!/bin/sh\n")
+    (work / RID / "bin" / "python3.13").chmod(0o755)
+    (work / RID / "bin" / "python3").symlink_to("python3.13")  # as in python-build-standalone
     runtime = dist / f"palaver-runtime-{RID}.tar.gz"
     with tarfile.open(runtime, "w:gz") as tar:
         tar.add(work / RID, arcname=RID)
@@ -85,6 +86,15 @@ def installed_version(home: Path) -> str | None:
                            "runtime.json").read_text())["version"]
     except OSError:
         return None
+
+
+def test_a_support_folder_spelled_with_another_case_is_the_same_folder(home, tmp_path):
+    """APFS ignores case: an older Palaver made "Palaver", the installer says
+    "palaver". The runtime's own links (python3 -> python3.13) stay inside it."""
+    (home / "Library" / "Application Support" / "Palaver").mkdir(parents=True)
+    proc = run_install(home, build_assets(tmp_path / "d1", "0.1.0"))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert installed_version(home) == "0.1.0"
 
 
 def test_a_fresh_install_puts_the_layers_in_the_home_folder_and_opens_nothing(home, tmp_path):
