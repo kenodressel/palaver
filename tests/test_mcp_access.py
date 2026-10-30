@@ -476,3 +476,46 @@ def test_a_search_is_measured_from_its_understood_and_meetings():
     out, ids = mcp_server._measure("search_meetings", result)
     assert out["meetings"] == 2 and out["lines"] == 3 and out["chars"] > 50
     assert ids == [MEETING, "2026-10-26T09-00-00"]
+
+
+# --- an install from before the runtime (#60) ----------------------------------------------
+
+OLD_VENV_PYTHON = "/Users/someone/Library/Application Support/palaver/venv/bin/python"
+
+
+def test_an_entry_into_the_old_installers_venv_counts_as_not_working():
+    """The installer before #60 made a venv the runtime replaced: Claude's
+    entry points at a python that is gone, and Settings offers the fix."""
+    mcp_access.CLAUDE_CONFIG.write_text(json.dumps({"mcpServers": {
+        "meetings": {"command": OLD_VENV_PYTHON, "args": ["-m", "palaver", "mcp"]}}}))
+    assert mcp_access.registered() == {"registered": False, "stale": True, "name": "meetings", "scope": "user"}
+    mcp_access.DESKTOP_APP.mkdir(parents=True)
+    mcp_access.DESKTOP_CONFIG.parent.mkdir(parents=True)
+    mcp_access.DESKTOP_CONFIG.write_text(json.dumps({"mcpServers": {
+        "meetings": {"command": OLD_VENV_PYTHON, "args": ["-m", "palaver", "mcp"]}}}))
+    assert mcp_access.desktop_registered() == {"installed": True, "registered": False, "stale": True,
+                                               "name": "meetings"}
+
+
+def test_a_release_moves_stale_entries_to_its_own_python_and_leaves_working_ones(monkeypatch):
+    mcp_access.CLAUDE_CONFIG.write_text(json.dumps({"mcpServers": {
+        "meetings": {"command": OLD_VENV_PYTHON, "args": ["-m", "palaver", "mcp"]}}}))
+    mcp_access.DESKTOP_CONFIG.parent.mkdir(parents=True)
+    mcp_access.DESKTOP_CONFIG.write_text(json.dumps({"mcpServers": {
+        "meetings": {"command": OLD_VENV_PYTHON, "args": ["-m", "palaver", "mcp"]}}}))
+    ran = []
+    wrapper = "/Users/someone/Applications/Palaver.app/Contents/Resources/bin/python"
+
+    def run(cmd):
+        ran.append(cmd[1:4])
+        if cmd[2] == "add":
+            mcp_access.CLAUDE_CONFIG.write_text(json.dumps({"mcpServers": {
+                "meetings": {"command": wrapper, "args": ["-m", "palaver", "mcp"]}}}))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr("palaver.notes.find_claude", lambda configured=None: "/opt/bin/claude")
+    monkeypatch.setattr(mcp_access, "_run", run)
+    assert mcp_access.migrate(wrapper) == ["code", "desktop"]
+    assert ran == [["mcp", "remove", "meetings"], ["mcp", "add", "--scope"]]
+    assert json.loads(mcp_access.DESKTOP_CONFIG.read_text())["mcpServers"]["meetings"]["command"] == wrapper
+    assert mcp_access.migrate(wrapper) == []  # nothing stale any more

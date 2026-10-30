@@ -364,20 +364,37 @@ def _palaver_servers(servers: Any) -> list[str]:
     return [name for name, s in (servers or {}).items() if _is_palaver(s)] if isinstance(servers, dict) else []
 
 
+# The installer before #60 put a venv here; the runtime replaced it.
+OLD_VENVS = ("/Library/Application Support/palaver/venv/", "/Library/Application Support/meeting-transcribe/venv/")
+
+
+def _stale(server: Any) -> bool:
+    """An entry whose python was in the old installer's venv and is gone."""
+    command = str((server or {}).get("command") or "")
+    return any(v in command for v in OLD_VENVS) and not Path(command).exists()
+
+
 def registered() -> dict[str, Any]:
     """Whether Claude Code starts this server: read from its config file
     (cheap, cached until the file changes; `claude mcp list` would start
     every server to check it). ``registered`` is None when that can't be told."""
     try:
         config = _config(CLAUDE_CONFIG)
-        found = [(name, "user") for name in _palaver_servers(config.get("mcpServers"))]
+        user = config.get("mcpServers") or {}
+        found = [(name, "user", user[name]) for name in _palaver_servers(user)]
         for project in (config.get("projects") or {}).values():
-            found += [(name, "project") for name in _palaver_servers((project or {}).get("mcpServers"))]
+            servers = (project or {}).get("mcpServers") or {}
+            found += [(name, "project", servers[name]) for name in _palaver_servers(servers)]
     except FileNotFoundError:
         return {"registered": False}
     except (ValueError, OSError, AttributeError):
         return {"registered": None}
-    return {"registered": True, "name": found[0][0], "scope": found[0][1]} if found else {"registered": False}
+    working = [f for f in found if not _stale(f[2])]
+    if working:
+        return {"registered": True, "name": working[0][0], "scope": working[0][1]}
+    if found:  # it starts a python that is gone: not working, Settings offers the fix
+        return {"registered": False, "stale": True, "name": found[0][0], "scope": found[0][1]}
+    return {"registered": False}
 
 
 def desktop_registered() -> dict[str, Any]:
@@ -385,12 +402,18 @@ def desktop_registered() -> dict[str, Any]:
     claude_desktop_config.json). ``registered`` None: the file can't be read."""
     out: dict[str, Any] = {"installed": DESKTOP_APP.exists()}
     try:
-        found = _palaver_servers(_config(DESKTOP_CONFIG).get("mcpServers"))
+        servers = _config(DESKTOP_CONFIG).get("mcpServers") or {}
+        found = _palaver_servers(servers)
     except FileNotFoundError:
         return {**out, "registered": False}
     except (ValueError, OSError, AttributeError):
         return {**out, "registered": None}
-    return {**out, "registered": True, "name": found[0]} if found else {**out, "registered": False}
+    working = [name for name in found if not _stale(servers[name])]
+    if working:
+        return {**out, "registered": True, "name": working[0]}
+    if found:
+        return {**out, "registered": False, "stale": True, "name": found[0]}
+    return {**out, "registered": False}
 
 
 def _run(cmd: list[str]) -> subprocess.CompletedProcess:
@@ -406,6 +429,9 @@ def install(executable: str, options: list[str] = ()) -> dict[str, Any]:
     claude = notes.find_claude()
     if not claude:
         raise RuntimeError("Claude Code (the claude command) was not found")
+    old = registered()
+    if old.get("stale"):  # the entry of the installer before: replaced, `mcp add` refuses a taken name
+        _run([claude, "mcp", "remove", old["name"], "--scope", old["scope"]])
     cmd = mcp_server.install_command(executable, options=options)
     proc = _run([claude, *cmd[1:]])
     if proc.returncode != 0:
@@ -446,3 +472,23 @@ def install_desktop(executable: str, options: list[str] = ()) -> dict[str, Any]:
     finally:
         tmp.unlink(missing_ok=True)
     return desktop_registered()
+
+
+def migrate(executable: str) -> list[str]:
+    """Entries the installer before #60 left pointing into its venv, moved
+    to ``executable`` (the app's own python wrapper); working ones are left
+    alone. Returns which were moved ("code", "desktop")."""
+    moved = []
+    if registered().get("stale"):
+        try:
+            install(executable)
+            moved.append("code")
+        except RuntimeError:
+            pass  # no Claude Code here: Settings offers it again
+    if desktop_registered().get("stale"):
+        try:
+            install_desktop(executable)
+            moved.append("desktop")
+        except RuntimeError:
+            pass
+    return moved

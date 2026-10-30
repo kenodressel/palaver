@@ -641,3 +641,23 @@ def test_download_progress_reads_the_configured_repo():
     d._jobs["parakeet"] = {"state": "downloading", "error": None}
     d.status()
     assert seen == ["my/parakeet"]
+
+
+
+def test_running_downloads_say_so_on_disk_for_the_updater(tmp_path):
+    """The updater runs in the menu bar app, the downloads in the window's
+    server: a file with the server's pid says they run (#60)."""
+    import os
+    import threading
+
+    marker = tmp_path / "downloading"
+    release = threading.Event()
+    d = ob.Downloads(fetch=lambda m: release.wait(5), progress=lambda r: 0, done=lambda m: True, marker=marker)
+    assert not ob.downloads_running(marker)
+    d.start(["parakeet"])
+    _wait(lambda: marker.exists())
+    assert marker.read_text().strip() == str(os.getpid()) and ob.downloads_running(marker)
+    release.set()
+    _wait(lambda: not marker.exists())
+    marker.write_text("999999")  # a server that died while downloading
+    assert not ob.downloads_running(marker)

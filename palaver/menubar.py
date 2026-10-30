@@ -16,7 +16,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import notify, settings, usage
+from . import install_layout, notify, settings, usage
 from .meter import level_bar
 
 LOGGER = logging.getLogger(__name__)
@@ -188,6 +188,7 @@ AUTO_RECORD = (
     ("record_slack", "Record Slack huddles automatically"),
 )
 OPEN_TITLE = "Open Meetings"
+UPDATE_TITLE = "Update available"  # #60: shown only when there is one, with its version
 CALENDAR_TITLE = "Connect Calendar…"
 REPORT_TITLE = "Report a Problem…"  # #59: the window's report form
 QUIT_TITLE = "Quit"
@@ -199,7 +200,7 @@ def menu_layout() -> list[str | None]:
     window, reporting a problem. The old quick settings (latest folder,
     Notion page, log) are the window's business now (#37)."""
     return [*(title for _, title in AUTO_RECORD), START_TITLE, KEEP_TITLE, None,
-            OPEN_TITLE, CALENDAR_TITLE, REPORT_TITLE, None, QUIT_TITLE]
+            OPEN_TITLE, CALENDAR_TITLE, REPORT_TITLE, None, UPDATE_TITLE, QUIT_TITLE]
 
 
 def auto_record_states(defaults: settings.Settings, current=None) -> dict[str, bool]:
@@ -245,6 +246,135 @@ def attach_calendar_events(output_dir: Path, provider, since: datetime | None = 
     return found
 
 
+def update_busy(daemon_status: dict, *, jobs: list, test: str, downloading: bool) -> str | None:
+    """What an update waits for (#60): the daemon's reasons (a call, a
+    recording, its processing, notes), the window's language model jobs, the
+    setup assistant's test recording and its model downloads. None: idle."""
+    from .daemon import busy_reason
+
+    reason = busy_reason(daemon_status)
+    if reason:
+        return reason
+    if jobs:
+        return "writing notes" if any(j.get("kind") == "notes" for j in jobs) else "sorting projects"
+    if test not in ("idle", "done", "failed"):
+        return "a test recording"
+    if downloading:
+        return "downloading models"
+    return None
+
+
+def _move_mcp_entries() -> None:
+    """Claude's entries for the installer's venv before #60, moved to this
+    app's own python (it survives runtime updates)."""
+    from . import install_layout, mcp_access
+
+    try:
+        moved = mcp_access.migrate(install_layout.stable_python())
+    except Exception:
+        LOGGER.warning("moving Claude's MCP entries failed", exc_info=True)
+        return
+    if moved:
+        LOGGER.info("moved the MCP server's entries for %s to this app's python", ", ".join(moved))
+
+
+class Updates:
+    """The updater as the menu bar app runs it (#60): checks and downloads
+    on threads of their own, the swap on the main thread's tick (``tick``
+    says when the app must quit for it). Uninstalling goes through here
+    too: both end the app the same way.
+
+    The idle gate is asked on the main thread, where the daemon ticks, and
+    once more right before the swap script starts; the app quits in that
+    same tick, so no recording can start while an update installs. A call
+    that began before is recorded and the update waits: recording wins."""
+
+    def __init__(self, daemon, *, output_dir: Path | None = None, test_recording=None):
+        from . import downloader, install_layout, model_jobs, onboarding, updater
+
+        self._bundled = install_layout.bundle() is not None
+        self._installer = updater.Installer()
+        self.updater = updater.Updater(
+            installed=updater.installed_now, fetch_manifest=downloader.fetch_manifest,
+            stage=self._installer.stage,
+            apply=lambda staged: self._installer.apply(staged, wait_for=self.app_pids(), still_busy=self.busy),
+            busy=lambda: self.busy(),
+            enabled=lambda: settings.load().check_updates,
+            macos=updater.macos_version(), save=updater.write_status, previous=updater.read_status())
+        self._worker: threading.Thread | None = None
+
+        def busy() -> str | None:
+            return update_busy(
+                daemon.status(),
+                jobs=model_jobs.running(model_jobs.jobs_root(output_dir)) if output_dir else [],
+                test=(test_recording.status().get("state") if test_recording is not None else None) or "idle",
+                downloading=onboarding.downloads_running(install_layout.downloads_marker()))
+
+        self.busy = busy
+        self.quit_now = False
+        if self._bundled:  # runtimes before the one before this one go
+            info = install_layout.bundle_info()
+            if info.get("runtime"):
+                threading.Thread(target=updater.prune_runtimes, args=(info["runtime"],), daemon=True).start()
+            threading.Thread(target=_move_mcp_entries, daemon=True).start()
+        self.updater._changed()  # update.json says what this version is
+
+    def started(self) -> None:
+        """The app is up (its first tick ran): the swap that installed it
+        may drop the version before (#60)."""
+        from . import install_layout
+
+        version = install_layout.bundle_info().get("version")
+        if version:
+            path = install_layout.started_ok_path()
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(version)
+            except OSError:
+                LOGGER.warning("could not write %s", path)
+
+    def app_pids(self) -> list[int]:
+        """What must have quit before the app is replaced: this process, and
+        the launcher above it when it runs under one (the launcher hands it
+        $PALAVER_LAUNCHER_FD; a terminal does not)."""
+        return [os.getpid(), *([os.getppid()] if os.environ.get("PALAVER_LAUNCHER_FD") else [])]
+
+    def _background(self, fn) -> bool:
+        if self._worker is not None and self._worker.is_alive():
+            return False
+        self._worker = threading.Thread(target=fn, name="updates", daemon=True)
+        self._worker.start()
+        return True
+
+    def check(self) -> dict:
+        self._background(self.updater.check)
+        return self.updater.status()
+
+    def install(self) -> dict:
+        """The user's click: download in the background, install when idle."""
+        if self.updater.request():
+            self._background(self.updater.download)
+        return self.updater.status()
+
+    def tick(self) -> bool:
+        """Each second: start a due check; True when the app must quit now
+        (an update is swapped in, or the user uninstalled)."""
+        if self.updater.due():
+            self._background(self.updater.check)
+        return self.quit_now or self.updater.tick()
+
+    def uninstall(self, *, output_dir: Path, models: bool, recordings: bool) -> dict:
+        import tempfile
+
+        from . import uninstall
+
+        paths = uninstall.plan(Path.home(), output_dir=output_dir, models=models, recordings=recordings)
+        uninstall.start(paths, wait_for=self.app_pids(), work=Path(tempfile.gettempdir()),
+                        then_if_empty=uninstall.emptied(Path.home(), output_dir=output_dir) if recordings else [])
+        self.quit_now = True
+        return {"removing": [str(p) for p in paths]}
+
+
 def finalize(app) -> threading.Thread:
     """Before the app quits (Quit, logout, SIGTERM from the launcher): finish
     the WAVs and queue the recording instead of leaving .part files, then
@@ -259,9 +389,7 @@ def finalize(app) -> threading.Thread:
     return stopping
 
 
-PERMISSIONS_MARKER = (
-    Path.home() / "Library" / "Application Support" / "palaver" / "permissions-requested"
-)
+PERMISSIONS_MARKER = install_layout.permissions_marker()
 
 
 def click_action(event_type: int, modifier_flags: int) -> str:
@@ -366,12 +494,20 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
             # own (#57): restarted at any time, it never touches a recording.
             # What it needs from this process goes through the app socket.
             self.test_recording = onboarding.TestRecording()  # the setup assistant's (#55): recorded here
-            self.control = appctl.serve(appctl.APP_SOCKET, appctl.app_calls(
+            self.updates = Updates(self.daemon, output_dir=cfg.output_dir, test_recording=self.test_recording)  # #60
+            calls = appctl.app_calls(
                 self.daemon, on_main=on_main, test_recording=self.test_recording,
                 restart_web=lambda: self.web.restart(), refresh=self.refresh,
                 launch_helper=lambda kind, key, args: model_jobs.launch(
                     model_jobs.jobs_root(cfg.output_dir), kind, key,
-                    model_jobs.helper_argv(kind, args, cli_options, output_dir=cfg.output_dir))))
+                    model_jobs.helper_argv(kind, args, cli_options, output_dir=cfg.output_dir)))
+            calls.update(
+                update_check=lambda args: self.updates.check(),
+                update_install=lambda args: self.updates.install(),
+                uninstall=lambda args: on_main(lambda: self.updates.uninstall(
+                    output_dir=cfg.output_dir, models=bool(args.get("models")),
+                    recordings=bool(args.get("recordings")))))
+            self.control = appctl.serve(appctl.APP_SOCKET, calls)
             self.web = web_process.WebSupervisor(
                 lambda listen_fd, ready_fd: web_process.child_argv(
                     cli_options, listen_fd=listen_fd, ready_fd=ready_fd, app_socket=appctl.APP_SOCKET),
@@ -379,6 +515,7 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
                 on_ready=lambda restarted: restarted and AppHelper.callAfter(reload_in_place, self.web.url()))
             self.web.start()
             self._error = False
+            self._started = False  # the first tick ran (#60: the update's swap waits for it)
             self._click_installed = False
             self.status_item = rumps.MenuItem("Starting…")
             self.live_items = [rumps.MenuItem("") for _ in range(MENU_LINES)]
@@ -386,6 +523,7 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
             self.manual_item = rumps.MenuItem(START_TITLE, callback=self.toggle_manual)
             self.keep_item = rumps.MenuItem(KEEP_TITLE, callback=self.keep_recording)
             self.calendar_item = rumps.MenuItem(CALENDAR_TITLE, callback=self.connect_calendar)
+            self.update_item = rumps.MenuItem(UPDATE_TITLE, callback=self.install_update)
             self._calendar_retried = time.monotonic()  # connecting looks everything up first
             self._refresh_calendar_item()
             items = {**{title: self.record_items[key] for key, title in AUTO_RECORD},
@@ -393,6 +531,7 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
                      OPEN_TITLE: rumps.MenuItem(OPEN_TITLE, callback=self.open_meetings, key="m"),
                      CALENDAR_TITLE: self.calendar_item,
                      REPORT_TITLE: rumps.MenuItem(REPORT_TITLE, callback=self.report_problem),
+                     UPDATE_TITLE: self.update_item,
                      QUIT_TITLE: rumps.MenuItem(QUIT_TITLE, callback=self.quit)}
             self.menu = [
                 self.status_item,
@@ -431,12 +570,18 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
             try:
                 self.daemon.tick()
                 self._error = False
+                if not self._started:
+                    self._started = True
+                    self.updates.started()
             except Exception:
                 if not self._error:  # once when it starts failing, not every second
                     LOGGER.exception("the daemon's tick failed")
                 self._error = True
             self.refresh()
             self._retry_calendar()
+            if self.updates.tick():  # an update is swapped in after the quit, or the user uninstalled
+                self.timer.stop()
+                rumps.quit_application()
 
         def _retry_calendar(self):
             now = time.monotonic()
@@ -461,6 +606,11 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
             self.status_item.title = status_line(status, now, progress)
             self.manual_item.title = manual_title(status)
             self.keep_item._menuitem.setHidden_(not status.get("stop_question"))
+            from .updater import menu_title as update_title
+
+            update = update_title(self.updates.updater.status())
+            self.update_item.title = update or UPDATE_TITLE
+            self.update_item._menuitem.setHidden_(update is None)
             for key, on in switches.items():
                 self.record_items[key].state = on  # also when switched in the window's Settings
             lines = []
@@ -534,6 +684,10 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
 
         def open_meetings(self, _sender):
             open_window(self.web.url())
+
+        def install_update(self, _sender):
+            self.updates.install()
+            self.refresh()
 
         def report_problem(self, _sender):
             """One form for the report, in the window (#59): its server writes the zip."""

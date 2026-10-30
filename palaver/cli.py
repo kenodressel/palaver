@@ -91,10 +91,6 @@ def _cmd_app(args: argparse.Namespace) -> int:
         app_bundle.set_autostart(enabled)
         print("Palaver starts at login." if enabled else "Autostart removed.")
         return 0
-    if args.action == "build-release":
-        app = app_bundle.build_release_app(Path(args.dest))
-        print(f"Built {app}")
-        return 0
     if args.action == "restart-web":
         return _restart_web()
     if args.action == "uninstall":
@@ -947,9 +943,11 @@ def _cmd_mcp(args: argparse.Namespace) -> int:
     if args.install and args.desktop:
         from . import mcp_access
 
+        from .install_layout import stable_python  # an installed app's own Python: survives an update
+
         config = str(Path(args.config).expanduser().resolve()) if args.config else None
         try:
-            mcp_access.install_desktop(sys.executable, ["--config", config] if config else [])
+            mcp_access.install_desktop(stable_python(), ["--config", config] if config else [])
         except RuntimeError as exc:
             print(f"Not added to Claude Desktop: {exc}", file=sys.stderr)
             return 1
@@ -959,7 +957,9 @@ def _cmd_mcp(args: argparse.Namespace) -> int:
     if args.install:
         import subprocess
 
-        cmd = mcp_server.install_command(sys.executable, args.config)
+        from .install_layout import stable_python
+
+        cmd = mcp_server.install_command(stable_python(), args.config)
         print(" ".join(cmd))
         return subprocess.run(cmd).returncode
     cfg = _load_cfg(args)
@@ -1422,11 +1422,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_app.add_argument(
         "action",
         nargs="?",
-        choices=["install", "uninstall", "autostart", "build-release", "restart-web"],
+        choices=["install", "uninstall", "autostart", "restart-web"],
         default="install",
     )
     p_app.add_argument("state", nargs="?", choices=["on", "off"], help="for autostart")
-    p_app.add_argument("--dest", default="dist", help="for build-release (used by CI)")
     p_app.add_argument("--login", action="store_true", help="Start the app at login")
     p_app.add_argument(
         "--store-tokens",

@@ -39,14 +39,23 @@ jobs:
       - name: Run tests
         run: make test
 
+      - name: Pack the hosted models
+        # pyannote's copy, from Hugging Face: its repo is gated, so only
+        # this step gets the HF_TOKEN secret.
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: make models
+
       - name: Build release assets
-        # Wheel (with the AEC library), requirements.txt exported from
-        # uv.lock, Meeting Transcribe.app zipped, install.sh.
+        # The same recipe as on a Mac (#60): the app (with the wheel's code
+        # and the AEC library), the runtime (python-build-standalone + the
+        # lock), the models packed above, manifest.json, install.sh.
         run: make release
 
       - name: Smoke-install the assets
-        # install.sh into a throwaway HOME, exactly as users run it; checks
-        # the installed wheel imports and the app has no build-machine paths.
+        # install.sh into a throwaway HOME under sandbox-exec, exactly as
+        # users run it; imports, pyannote without a token, two updates
+        # without the runtime.
         run: make smoke-install
 
       - name: Create GitHub Release
@@ -55,9 +64,12 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v3
         with:
+          # Everything built; a runtime or model unchanged since the last
+          # release is uploaded again here (CI has no previous build to keep).
           files: |
-            dist/palaver-*.whl
-            dist/requirements.txt
-            dist/Palaver.zip
+            dist/palaver-app-*.zip
+            dist/palaver-runtime-*.tar.*
+            dist/palaver-models-*.tar
+            dist/manifest.json
             dist/install.sh
           generate_release_notes: true

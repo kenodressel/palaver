@@ -339,7 +339,7 @@ def test_pyannote_needs_a_token_and_the_page_says_where_without_it(app):
     app.probe._downloaded.discard("pyannote")
     app.probe.hf_token = False
     d = api.setup_page(app)["downloads"]
-    assert d["hf_token"] == {"set": False, "where": "[hf].token in ~/.config/palaver/config.toml, or HF_TOKEN",
+    assert d["hf_token"] == {"set": False, "needed": True, "where": "[hf].token in ~/.config/palaver/config.toml, or HF_TOKEN",
                              "terms": "https://huggingface.co/pyannote/speaker-diarization-community-1"}
     app.probe.hf_token = True
     assert api.setup_page(app)["downloads"]["hf_token"]["set"] is True

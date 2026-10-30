@@ -1430,6 +1430,41 @@ export function actionCatalog() {
   ])].sort();
 }
 
+// --- updates (#60) ----------------------------------------------------------------------
+
+// What Settings says about updates, from update.json: { text, action } where
+// action is the button ("install", "check") or null. Quiet: one line.
+export function updateView(u) {
+  const state = u?.state || "unsupported";
+  const version = u?.available?.version;
+  const size = u?.available?.download_bytes ? ` (${sizeText(u.available.download_bytes)})` : "";
+  switch (state) {
+    case "available":
+      return { text: `Palaver ${version} is available${size}. You have ${u.current}.`, action: "install" };
+    case "downloading": {
+      const total = u.available?.download_bytes || 0;
+      const share = total ? ` ${Math.min(99, Math.floor((100 * (u.done_bytes || 0)) / total))} %` : "";
+      return { text: `Downloading Palaver ${version}…${share}`, action: null };
+    }
+    case "ready":
+      return { text: u.waiting_for
+        ? `Palaver ${version} installs when Palaver is idle (now: ${u.waiting_for}).`
+        : `Installing Palaver ${version}…`, action: null };
+    case "installing":
+      return { text: `Installing Palaver ${version}: Palaver restarts.`, action: null };
+    case "failed":
+      return { text: u.error || "The update failed; this version stays.", action: version ? "install" : "check" };
+    case "up_to_date":
+      return { text: `Palaver ${u.current} is the latest version.`, action: "check" };
+    case "idle":
+    case "checking":
+      return { text: u.check_error ? `Palaver ${u.current}. Could not look for updates: ${u.check_error}`
+        : `Palaver ${u.current || ""}`.trim() + ".", action: "check" };
+    default:
+      return { text: "Updates come with an installed Palaver (install.sh); this one runs from a checkout.", action: null };
+  }
+}
+
 // --- one person, one look (UI cleanup 2026-10-30) ---------------------------------------
 
 // A named person's colour, one of the eight speaker colours (--v0…--v7),

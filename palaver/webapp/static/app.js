@@ -28,10 +28,12 @@ import { togglePalette, paletteOpen } from "./palette.js";
 import { reportMeeting, reportDraft, reportDoneText, actionCatalog } from "./logic.js";
 // Export and import of a meeting (#58).
 import { inferredText, importedLine, importedText, GLOBAL_COMMANDS } from "./logic.js";
+import { openExport, pickImport, wireDrop, importFile, askVoices, decideVoices, dialog } from "./exchange.js";
+// Updates and uninstalling (#60).
+import { updateView } from "./logic.js";
 // One person, one look; the header's people and projects; About this recording (UI cleanup 2026-10-30).
 import { personColor, laneColors, attendeeTokens, meetingPeople, ownerTokens, nameMarks, projectView, aboutLines,
   sameTitle } from "./logic.js";
-import { openExport, pickImport, wireDrop, importFile, askVoices, decideVoices } from "./exchange.js";
 
 async function api(path, body) {
   const opts = body === undefined ? {} : {
@@ -3882,10 +3884,11 @@ async function openSettings(how = "push") {
   const here = leaveMeeting("settings", "#/settings", how);
   try {
     let rec;
-    [state.settings, state.lm, state.tr, , , rec] = await Promise.all([api("/api/settings"), api("/api/language-model"),
-      api("/api/transcription"), refreshMcp(), refreshMemory(),
+    [state.settings, state.lm, state.tr, , , rec, state.update] = await Promise.all([api("/api/settings"),
+      api("/api/language-model"), api("/api/transcription"), refreshMcp(), refreshMemory(),
       // "Recommended for this Mac" (#55): the setup assistant's recommendations; the page works without them.
-      api("/api/setup/recommendations").catch(() => null)]);
+      api("/api/setup/recommendations").catch(() => null),
+      api("/api/update").catch(() => null)]);
     state.recommended = rec?.recommendations || null;
     state.error = state.lmError = state.trError = null;
   } catch (err) {
@@ -3967,13 +3970,84 @@ function renderSettings() {
   }
   if (state.tr) page.append(...renderTranscription(state.tr));
   if (state.lm) page.append(...renderLanguageModel(state.lm));
-  page.append(renderMemorySection(), renderMcpSection(),
+  page.append(renderMemorySection(), renderMcpSection(), renderUpdateSection(),
     h("h2", {}, "Help"),
     h("div", { class: "gloss-card settings-card" },
       h("p", { class: "meta" }, "Something went wrong, or you wish Palaver did something differently? A report puts ",
         "everything needed to look into it in one zip on your Desktop, for you to send."),
       h("button", { type: "button", class: "btn", onclick: () => APP_ACTIONS.reportProblem() }, "Report a Problem…")));
   $("#main").replaceChildren(page);
+}
+
+// --- updates and uninstalling (#60) -------------------------------------------------------
+
+// A quiet line: the version, an update when there is one (with its notes),
+// and the switch for looking automatically. The menu bar app does the work.
+function renderUpdateSection() {
+  const u = state.update;
+  const view = updateView(u);
+  const section = h("section", { id: "update-section" }, h("h2", {}, "Updates"));
+  const label = { install: "Download and install", check: "Check now" }[view.action];
+  section.append(h("div", { class: "gloss-card settings-card" },
+    h("div", { class: "lm-row" }, h("span", { class: "meta", role: "status" }, view.text),
+      label ? h("button", { type: "button", class: "btn", onclick: (e) => updateAction(view.action, e.currentTarget) }, label)
+        : null),
+    u?.available?.notes ? h("details", { class: "update-notes" }, h("summary", {}, "What's new"),
+      h("p", { class: "meta" }, u.available.notes)) : null,
+    view.action === "install" ? h("p", { class: "meta" },
+      "Installs when nothing records or processes, then Palaver restarts. Your recordings and settings stay.") : null,
+    state.settings && u?.state !== "unsupported" ? settingSwitch("check_updates", "Look for updates automatically") : null,
+    state.settings && u?.state !== "unsupported" ? h("p", { class: "meta" },
+      "Once at start and every 6 hours Palaver asks GitHub for its latest release. Nothing is sent about you or this Mac, and nothing downloads until you click.") : null,
+    h("div", { class: "lm-row" },
+      h("span", { class: "meta" }, "Removes Palaver from this Mac. Your recordings stay unless you choose otherwise."),
+      h("button", { type: "button", class: "btn", onclick: () => openUninstall() }, "Uninstall Palaver…"))));
+  return section;
+}
+
+async function updateAction(action, button) {
+  try {
+    await busy(button, api(`/api/update/${action}`, {}));
+  } catch (err) {
+    toast(`Not done: ${err.message}`);
+  }
+  pollUpdate();
+}
+
+// While it checks or downloads, the line follows it.
+let updatePoll = null;
+function pollUpdate() {
+  clearTimeout(updatePoll);
+  updatePoll = setTimeout(async () => {
+    try {
+      state.update = await api("/api/update");
+    } catch {
+      return;
+    }
+    document.getElementById("update-section")?.replaceWith(renderUpdateSection());
+    if (["checking", "downloading", "ready", "installing"].includes(state.update?.state)) pollUpdate();
+  }, 1000);
+}
+
+function openUninstall() {
+  const models = h("input", { type: "checkbox" });
+  const recordings = h("input", { type: "checkbox" });
+  dialog({
+    title: "Uninstall Palaver?",
+    body: [
+      h("p", { class: "meta" }, "Palaver quits and removes the app, its runtime, the login item, the palaver command and a downloaded update."),
+      h("fieldset", { class: "export-choices" }, h("legend", { class: "visually-hidden" }, "What else goes"),
+        h("label", { class: "export-choice" }, models, h("span", { class: "export-label" }, "Also remove the models"),
+          h("span", { class: "meta export-hint" }, "The speaker model in Palaver's folder; it can be downloaded again.")),
+        h("label", { class: "export-choice" }, recordings,
+          h("span", { class: "export-label" }, "Also delete my recordings"),
+          h("span", { class: "meta export-hint" }, "Every meeting folder in your recordings folder and in its trash (audio, transcripts, notes), ",
+            "and Palaver's data: voices, glossary, people, projects, settings and logs. Other files in the recordings folder stay."))),
+      h("p", { class: "meta" }, "Models from Hugging Face (Parakeet, the notes model) stay in ~/.cache/huggingface."),
+    ],
+    buttons: [{ label: "Cancel" }, { label: "Uninstall", value: "done", run: () => api("/api/uninstall",
+      { confirm: true, models: models.checked, recordings: recordings.checked }) }],
+  });
 }
 
 // --- memory (issue #49) -------------------------------------------------------------
@@ -4727,7 +4801,7 @@ const SETUP_VIEWS = {
           checkRow(m.label, "warn", `${gbText(m.disk_gb)}, for ${m.purpose}`, m.note ? `The catch: ${m.note}.` : ""))) : null,
         d.needed.length ? h("p", { class: fits ? "meta" : "meta error" },
           `${Math.round(d.free_disk_gb)} GB free on this Mac.${fits ? "" : " Free up space first."}`) : null,
-        d.needed.some((m) => m.id === "pyannote") && !d.hf_token.set ? h("div", { class: "gloss-card settings-card setup-token" },
+        d.needed.some((m) => m.id === "pyannote") && d.hf_token.needed && !d.hf_token.set ? h("div", { class: "gloss-card settings-card setup-token" },
           h("p", {}, h("strong", {}, "pyannote needs a Hugging Face token. "),
             "Its model is gated: accept its terms on Hugging Face once, then set the token as ",
             h("code", {}, d.hf_token.where), ". Palaver never shows the token."),

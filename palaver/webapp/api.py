@@ -23,7 +23,7 @@ from .. import (attribution, calendar_events, coach, cutting, exchange, glossary
                 my_notes, notes, organizations, people, prep, projects, settings, shared_mic, titles)
 from .. import search as search_query
 from ..render import render_markdown
-from .. import model_jobs, undo
+from .. import install_layout, model_jobs, undo
 from .._xdg import xdg_config_home
 from ..models import Segment, SpeakerTurn, Utterance
 from ..paths import RecordingPaths, is_recording_folder_name, recording_folder_timestamp
@@ -2970,6 +2970,50 @@ def _undo_my_notes(output_dir: Path, token: str) -> None:
 
 # --- Claude access (MCP, #45) ------------------------------------------------------------
 
+# --- updates and uninstalling (#60): the menu bar app does both ----------------------------------
+
+APP_GONE = "Palaver's menu bar app does not answer; open Palaver and try again."
+
+
+def update_status(read: Callable[[], dict | None] | None = None) -> dict[str, Any]:
+    """What the menu bar app's updater knows (update.json), for Settings."""
+    from .. import updater
+
+    status = (read or updater.read_status)() or {"state": "unsupported"}
+    return {**status, "check_updates": settings.load().check_updates}
+
+
+def update_action(action: str, call: Callable | None = None) -> dict[str, Any]:
+    """"check": look for a release now; "install": download it and install
+    it at the next idle moment (the menu bar app decides when)."""
+    from .. import appctl
+
+    if action not in ("check", "install"):
+        raise Refused(f"no update action {action!r}")
+    try:
+        return (call or appctl.call)(f"update_{action}", {})
+    except appctl.CallRefused as exc:
+        raise Refused(str(exc)) from None
+    except appctl.CallFailed:
+        raise Refused(APP_GONE) from None
+
+
+def uninstall_palaver(body: dict, call: Callable | None = None) -> dict[str, Any]:
+    """{"confirm": true, "models": bool, "recordings": bool}: Palaver quits
+    and is removed; recordings only when ticked."""
+    from .. import appctl
+
+    if body.get("confirm") is not True:
+        raise Refused("uninstalling needs the user's confirmation")
+    args = {"models": body.get("models") is True, "recordings": body.get("recordings") is True}
+    try:
+        return (call or appctl.call)("uninstall", args, timeout=appctl.MAIN_THREAD_TIMEOUT + 2.0)
+    except appctl.CallRefused as exc:
+        raise Refused(str(exc)) from None
+    except appctl.CallFailed:
+        raise Refused(APP_GONE) from None
+
+
 def mcp_status() -> dict[str, Any]:
     """The running `palaver mcp` clients, the newest access log entries
     (newest first) and whether Claude Code starts the server."""
@@ -3002,9 +3046,9 @@ def install_mcp(target: str = "code", cli_options: list[str] = ()) -> dict[str, 
     import sys
 
     if target == "desktop":
-        mcp_access.install_desktop(sys.executable, list(cli_options))
+        mcp_access.install_desktop(install_layout.stable_python(), list(cli_options))
     else:
-        mcp_access.install(sys.executable, list(cli_options))
+        mcp_access.install(install_layout.stable_python(), list(cli_options))
     return mcp_status()
 
 
@@ -3178,7 +3222,7 @@ def setup_page(app) -> dict[str, Any]:
                       "total_gb": round(onboarding.download_size(needed), 2),
                       "free_disk_gb": round(hw.free_disk_gb, 1),
                       # pyannote's model is gated: its download needs a token (never shown, only whether set)
-                      "hf_token": {"set": app.probe.hf_token_set(),
+                      "hf_token": {"set": app.probe.hf_token_set(), "needed": app.probe.hf_token_needed(),
                                    "where": "[hf].token in ~/.config/palaver/config.toml, or HF_TOKEN",
                                    "terms": f"https://huggingface.co/{app.probe.repo_of(pyannote)}"},
                       "status": app.probe.downloads.status()},

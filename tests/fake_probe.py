@@ -90,6 +90,9 @@ class FakeProbe:
     def hf_token_set(self) -> bool:
         return self.hf_token
 
+    def hf_token_needed(self) -> bool:
+        return True  # a checkout: pyannote from Hugging Face
+
     def repo_of(self, m: ob.Model) -> str:
         return m.repo
 

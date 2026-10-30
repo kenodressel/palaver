@@ -14,8 +14,8 @@ from .memory import parse_budgets
 @dataclass(frozen=True)
 class Config:
     user_name: str
-    notion_token: str
-    notion_parent_page_id: str
+    notion_token: str  # "": Notion is not used
+    notion_parent_page_id: str | None
     hf_token: str | None
     output_dir: Path
     retention_days: int
@@ -80,12 +80,16 @@ def default_config_path() -> Path:
 
 
 def load_config(path: Path | None = None) -> Config:
+    """config.toml, or the defaults without one: an installed Palaver runs
+    without a config file (#60); Notion is used only with a token."""
     path = path or default_config_path()
-    if not path.exists():
+    if path.exists():
+        with path.open("rb") as fh:
+            data = tomllib.load(fh)
+    elif path != default_config_path():  # one asked for by name must be there
         raise FileNotFoundError(f"Config file not found: {path}")
-
-    with path.open("rb") as fh:
-        data = tomllib.load(fh)
+    else:
+        data = {}
 
     user = data.get("user", {})
     notion = data.get("notion", {})
@@ -95,18 +99,16 @@ def load_config(path: Path | None = None) -> Config:
     processing = data.get("processing", {})
     notes = data.get("notes", {})
 
-    notion_token = _token("NOTION_TOKEN", notion.get("token"))
-    if not notion_token:
-        raise ValueError("Notion token missing (set NOTION_TOKEN or [notion].token)")
-
+    # Notion is optional: without a token meetings stay on this Mac.
+    notion_token = _token("NOTION_TOKEN", notion.get("token")) or ""
     notion_mode = notion.get("mode", "page")
     if notion_mode not in ("page", "database"):
         raise ValueError('[notion].mode must be "page" or "database"')
     parent_page_id = notion.get("parent_page_id")
     database_id = notion.get("database_id")
-    if notion_mode == "page" and not parent_page_id:
+    if notion_token and notion_mode == "page" and not parent_page_id:
         raise ValueError("[notion].parent_page_id is required")
-    if notion_mode == "database" and not database_id:
+    if notion_token and notion_mode == "database" and not database_id:
         raise ValueError('[notion].database_id is required when mode = "database"')
 
     hf_token = _token("HF_TOKEN", hf.get("token"))
@@ -136,7 +138,7 @@ def load_config(path: Path | None = None) -> Config:
         notion_database_id=database_id,
         live_processing=bool(processing.get("live", True)),
         record_slack=bool(data.get("recording", {}).get("slack", True)),
-        notion_auto_sync=bool(notion.get("auto_sync", True)),
+        notion_auto_sync=bool(notion_token) and bool(notion.get("auto_sync", True)),
         notes_enabled=bool(notes.get("enabled", True)),
         notes_engine=_notes_engine(notes.get("engine", "local")),
         notes_local_model=str(notes.get("local_model", Config.notes_local_model)),

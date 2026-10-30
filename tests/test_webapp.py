@@ -752,7 +752,7 @@ def test_set_settings_writes_only_what_changed(tmp_path: Path):
     assert api.set_settings({"record_teams": False}, no_slack) == {
         "realtime": False, "record_teams": False, "record_slack": False, "search_meaning": True,
         "live_processing": True, "nudge_talk_share": True, "nudge_monologue": True, "nudge_quiet_invitee": True,
-        "nudge_pace": False, "nudge_fillers": False}
+        "nudge_pace": False, "nudge_fillers": False, "check_updates": True}
     assert json.loads(settings.path().read_text()) == {"realtime": False, "future": 1, "record_teams": False}
     settings.path().write_text("[broken")
     api.set_settings({"record_slack": True}, no_slack)

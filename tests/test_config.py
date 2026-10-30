@@ -62,7 +62,7 @@ def test_missing_parent_page_raises(tmp_path: Path):
         load_config(cfg_path)
 
 
-def test_missing_file_raises(tmp_path: Path):
+def test_a_config_file_named_but_missing_raises(tmp_path: Path):
     with pytest.raises(FileNotFoundError):
         load_config(tmp_path / "nope.toml")
 
@@ -230,3 +230,28 @@ def test_a_wrong_memory_budget_says_which(tmp_path: Path):
     _write(cfg_path, _BASE + "[memory]\nlive_gb = 0\n")
     with pytest.raises(ValueError, match="live_gb"):
         load_config(cfg_path)
+
+
+def _no_tokens(monkeypatch):
+    import keyring
+
+    monkeypatch.delenv("NOTION_TOKEN", raising=False)
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.setattr(keyring, "get_password", lambda service, name: None)
+
+
+def test_without_a_notion_token_meetings_stay_on_this_mac(tmp_path: Path, monkeypatch):
+    _no_tokens(monkeypatch)
+    cfg_path = tmp_path / "config.toml"
+    _write(cfg_path, '[user]\nname = "Timo"\n')
+    cfg = load_config(cfg_path)
+    assert cfg.notion_token == "" and cfg.notion_auto_sync is False
+    assert cfg.hf_token is None
+
+
+def test_an_installed_palaver_runs_without_a_config_file(tmp_path: Path, monkeypatch, isolated_config_home):
+    _no_tokens(monkeypatch)
+    cfg = load_config()  # ~/.config/palaver/config.toml was never written
+    assert cfg.output_dir == Path.home() / "Meetings" / "Recordings"
+    assert cfg.notion_auto_sync is False
+    assert cfg.diarizer_repo == "pyannote/speaker-diarization-community-1"

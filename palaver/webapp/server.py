@@ -194,6 +194,8 @@ def _handler(app: App, port: int) -> type[BaseHTTPRequestHandler]:
                     return self._json(api.live_coach(app.recording))
                 if url.path == "/api/memory":
                     return self._json(api.memory_status(app.recording))
+                if url.path == "/api/update":  # #60
+                    return self._json(api.update_status())
                 if url.path == "/api/upcoming":
                     return self._json(api.upcoming(app.calendar))
                 if url.path == "/api/mcp":
@@ -355,6 +357,10 @@ def _handler(app: App, port: int) -> type[BaseHTTPRequestHandler]:
                 m = re.fullmatch(r"/api/recording/(stop|keep)", self.path)
                 if m:
                     return self._json(api.answer_recording_question(app.recording, m.group(1), str(body["meeting"])))
+                if self.path in ("/api/update/check", "/api/update/install"):
+                    return self._json(api.update_action(self.path.rsplit("/", 1)[1]))
+                if self.path == "/api/uninstall":
+                    return self._json(api.uninstall_palaver(body))
                 if self.path == "/api/mcp/clear":
                     return self._json(api.clear_mcp_log())
                 if self.path == "/api/mcp/restore":

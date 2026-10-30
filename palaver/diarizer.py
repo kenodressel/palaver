@@ -27,10 +27,16 @@ class PyannoteDiarizer:
     def _ensure_pipeline(self):
         if self._pipeline is not None:
             return
+        import os
         import warnings
 
         import torch
 
+        from . import model_store
+
+        # pyannote 4 sends usage metrics to pyannote.ai unless told not to;
+        # nothing of a meeting leaves this Mac.
+        os.environ.setdefault("PYANNOTE_METRICS_ENABLED", "false")
         with warnings.catch_warnings():
             # We pass waveforms in memory (see diarize), so pyannote's
             # torchcodec decoder is never used; its import-time warning
@@ -38,12 +44,14 @@ class PyannoteDiarizer:
             warnings.filterwarnings("ignore", message=r"\s*torchcodec is not installed")
             from pyannote.audio import Pipeline
 
-        if not self._hf_token:
+        # The copy a release hosts (#60) needs no token; the gated repo does.
+        checkpoint = model_store.resolve(self._repo)
+        if checkpoint == self._repo and not self._hf_token:
             raise RuntimeError(
-                "HF token required for pyannote gated models. "
-                "Set HF_TOKEN env or [hf].token in config."
+                "The speaker model is not on this Mac: download it in the setup assistant "
+                "(or set HF_TOKEN / [hf].token to fetch it from Hugging Face)."
             )
-        pipeline = Pipeline.from_pretrained(self._repo, token=self._hf_token)
+        pipeline = Pipeline.from_pretrained(checkpoint, token=None if checkpoint != self._repo else self._hf_token)
         device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
         pipeline.to(device)
         self._pipeline = pipeline

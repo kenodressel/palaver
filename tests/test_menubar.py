@@ -4,6 +4,8 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from palaver import settings
 from palaver.menubar import (
     auto_record_states,
@@ -72,6 +74,7 @@ def test_the_menu_has_no_old_quick_settings_and_the_switches_of_the_settings_pag
         "Connect Calendar…",
         "Report a Problem…",
         None,
+        "Update available",  # hidden unless there is one (#60)
         "Quit",
     ]
     for gone in ("Open latest transcript in Notion", "Open latest recording folder", "Open log",
@@ -377,3 +380,93 @@ def _wait(condition, timeout=2.0):
     while time.monotonic() < deadline and not condition():
         time.sleep(0.01)
     return condition()
+
+
+def test_the_menu_bar_app_checks_for_updates_and_quits_for_the_swap_only_when_told(monkeypatch, tmp_path):
+    """Updates (#60) as the menu bar app holds them: from a checkout there is
+    nothing to update and nothing is fetched."""
+    import os
+
+    from palaver import menubar, updater
+    from palaver import settings as settings_module
+
+    monkeypatch.delenv("PALAVER_APP", raising=False)
+    monkeypatch.setattr(updater, "write_status", lambda status, home=None: None)
+    fetched = []
+    monkeypatch.setattr("palaver.downloader.fetch_manifest", lambda *a, **k: fetched.append(1))
+
+    class Daemon:
+        def status(self):
+            return {"state": "idle"}
+
+    updates = menubar.Updates(Daemon())
+    assert updates.updater.status()["state"] == "unsupported"
+    assert updates.tick() is False and fetched == []
+    assert updates.app_pids() == [os.getpid()]  # not the terminal it runs in
+    assert settings_module.load().check_updates is True
+
+
+
+@pytest.mark.parametrize("daemon_status, jobs, test, downloading, reason", [
+    ({"state": "idle"}, [], "idle", False, None),
+    ({"state": "recording"}, [], "idle", False, "recording"),
+    ({"state": "idle"}, [{"kind": "notes", "key": "x"}], "idle", False, "writing notes"),
+    ({"state": "idle"}, [], "recording", False, "a test recording"),
+    ({"state": "idle"}, [], "checking", False, "a test recording"),
+    ({"state": "idle"}, [], "done", False, None),
+    ({"state": "idle"}, [], "idle", True, "downloading models"),
+])
+def test_an_update_waits_for_everything_palaver_does_not_only_recordings(daemon_status, jobs, test, downloading, reason):
+    from palaver import menubar
+
+    assert menubar.update_busy(daemon_status, jobs=jobs, test=test, downloading=downloading) == reason
+
+
+
+def test_a_started_release_says_so_for_the_swap_and_carries_a_failed_swaps_error(monkeypatch, tmp_path):
+    """The swap keeps the app before until the new one has started (#60);
+    a swap that failed is said again after the reopen."""
+    from palaver import install_layout, menubar, updater
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    app = tmp_path / "Palaver.app"
+    (app / "Contents" / "Resources").mkdir(parents=True)
+    (app / "Contents" / "Resources" / "runtime.json").write_text(json.dumps({"version": "0.2.0", "runtime": "rt"}))
+    monkeypatch.setenv("PALAVER_APP", str(app))
+    monkeypatch.setattr(updater, "prune_runtimes", lambda current, home=None: [])
+    updater.write_status({"state": "failed", "from_swap": True, "error": "Palaver 0.3.0 did not start; 0.2.0 is back.",
+                          "available": {"version": "0.3.0"}})
+
+    class Daemon:
+        def status(self):
+            return {"state": "idle"}
+
+    updates = menubar.Updates(Daemon())
+    assert updates.updater.status()["error"] == "Palaver 0.3.0 did not start; 0.2.0 is back."
+    assert updater.read_status()["error"] == "Palaver 0.3.0 did not start; 0.2.0 is back."
+    assert not install_layout.started_ok_path().exists()
+    updates.started()
+    assert install_layout.started_ok_path().read_text() == "0.2.0"
+
+
+def test_the_launcher_is_waited_for_only_when_this_process_runs_under_it(monkeypatch, tmp_path):
+    """An installed app's command started from a terminal has the shell as
+    its parent: an update or uninstall must not wait for that (#60)."""
+    import os
+
+    from palaver import menubar, updater
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("PALAVER_APP", str(tmp_path / "Palaver.app"))
+    monkeypatch.setattr(updater, "prune_runtimes", lambda current, home=None: [])
+    monkeypatch.setattr(menubar, "_move_mcp_entries", lambda: None)
+
+    class Daemon:
+        def status(self):
+            return {"state": "idle"}
+
+    monkeypatch.delenv("PALAVER_LAUNCHER_FD", raising=False)
+    assert menubar.Updates(Daemon()).app_pids() == [os.getpid()]
+    monkeypatch.setenv("PALAVER_LAUNCHER_FD", "3")
+    assert menubar.Updates(Daemon()).app_pids() == [os.getpid(), os.getppid()]

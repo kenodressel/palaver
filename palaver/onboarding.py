@@ -70,13 +70,14 @@ class Model:
     probe: str  # a file of the repo that is there once it is downloaded
     disk_gb: float
     memory: str  # what it uses, said plainly
+    hosted: bool = False  # a release carries a copy (model_store): no Hugging Face token needed
 
 
 MODELS: dict[str, Model] = {m.id: m for m in (
     Model("parakeet", "Parakeet", "transcription", "mlx-community/parakeet-tdt-0.6b-v3", "config.json", 2.3,
           "about 2.5 GB of memory while transcribing"),
     Model("pyannote", "pyannote", "telling the speakers apart", "pyannote/speaker-diarization-community-1",
-          "config.yaml", 0.03, "about 1 GB of memory while it runs"),
+          "config.yaml", 0.03, "about 1 GB of memory while it runs", hosted=True),
     Model("gemma", "Gemma 4 12B", "notes and projects", GEMMA, "config.json", 8.3,
           "about 10 GB of memory while writing, up to 12 GB"),
     Model("qwen", "Qwen3 30B A3B", "notes and projects", QWEN, "config.json", 16.0,
@@ -923,6 +924,38 @@ def complete(repo: str, probe: str = "config.json") -> bool:
     return False
 
 
+def model_here(model: Model, repo: str) -> bool:
+    """Whether every file of ``model`` is on this Mac: the copy a release
+    hosts (model_store), or the Hugging Face cache."""
+    from . import model_store
+
+    if model.hosted and model_store.local_path(repo) is not None:
+        return True
+    return complete(repo, model.probe)
+
+
+def download_progress(repo: str) -> int:
+    """Bytes of ``repo`` here so far: its hosted copy's download, else the cache's."""
+    from . import model_store
+
+    name = model_store.HOSTED.get(repo)
+    if name is not None and model_store.partial_bytes(name):
+        return model_store.partial_bytes(name)
+    return cached_bytes(repo)
+
+
+def downloads_running(marker: Path) -> bool:
+    """Whether the window's server downloads models now (its marker, with a live pid)."""
+    try:
+        pid = int(marker.read_text().strip())
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 class Downloads:
     """Model downloads the user agreed to, one after the other, in the
     background. ``fetch(model)`` downloads one (raises on failure);
@@ -934,11 +967,12 @@ class Downloads:
     def __init__(self, fetch: Callable[[Model], None] | None = None,
                  progress: Callable[[str], int] | None = None,
                  done: Callable[[Model], bool] | None = None,
-                 repo_of: Callable[[Model], str] | None = None):
+                 repo_of: Callable[[Model], str] | None = None, marker: Path | None = None):
         self._repo_of = repo_of or (lambda m: m.repo)
+        self._marker = marker  # while downloading: this process's pid, for the updater (#60)
         self._fetch = fetch or (lambda m: _fetch(m, self._repo_of(m)))
-        self._progress = progress or cached_bytes
-        self._done = done or (lambda m: complete(self._repo_of(m), m.probe))
+        self._progress = progress or download_progress
+        self._done = done or (lambda m: model_here(m, self._repo_of(m)))
         self._lock = threading.Lock()
         self._jobs: dict[str, dict[str, Any]] = {}
         self._thread: threading.Thread | None = None
@@ -956,6 +990,18 @@ class Downloads:
         return self.status()
 
     def _run(self) -> None:
+        if self._marker is not None:
+            with contextlib.suppress(OSError):
+                self._marker.parent.mkdir(parents=True, exist_ok=True)
+                self._marker.write_text(f"{os.getpid()}\n")
+        try:
+            self._download_queued()
+        finally:
+            if self._marker is not None:
+                with contextlib.suppress(OSError):
+                    self._marker.unlink()
+
+    def _download_queued(self) -> None:
         while True:
             with self._lock:
                 mid = next((m for m, j in self._jobs.items() if j["state"] == "queued"), None)
@@ -983,9 +1029,37 @@ class Downloads:
         return {"running": any(j["state"] in ("queued", "downloading") for j in jobs.values()), "models": out}
 
 
+def fetch_hosted(repo: str, manifest=None) -> bool:
+    """The copy of ``repo`` the latest release hosts (#60): downloaded,
+    checked against the manifest's sha256 and unpacked into the models
+    folder. False when no release hosts it (or none is reachable)."""
+    from . import downloader, model_store
+
+    name = model_store.HOSTED.get(repo)
+    if name is None:
+        return False
+    try:
+        manifest = manifest or downloader.fetch_manifest()
+    except (downloader.DownloadError, ValueError):
+        return False
+    entry = next((m for m in manifest.models if m.name == name and m.repo == repo), None)
+    if entry is None:
+        return False
+    part = model_store.download_path(name)
+    try:
+        downloader.download(entry.asset, part)
+        model_store.install_archive(part, name=name, version=entry.version)
+    finally:
+        part.unlink(missing_ok=True)
+    return True
+
+
 def _fetch(model: Model, repo: str) -> None:
-    """Download in a helper process (the Hugging Face token from config.toml
-    goes in its environment, never on its command line)."""
+    """Download a hosted model from the release; any other (or a hosted one
+    no release has) in a helper process from Hugging Face (the token from
+    config.toml goes in its environment, never on its command line)."""
+    if model.hosted and fetch_hosted(repo):
+        return
     env = dict(os.environ)
     try:
         from .config import load_config
@@ -1023,7 +1097,9 @@ class Probe:
 
     def __init__(self, cfg=None):
         self.cfg = cfg
-        self.downloads = Downloads(repo_of=self.repo_of)
+        from . import install_layout
+
+        self.downloads = Downloads(repo_of=self.repo_of, marker=install_layout.downloads_marker())
         self.test = TestRecording()
 
     def repo_of(self, m: Model) -> str:
@@ -1075,7 +1151,7 @@ class Probe:
         out = set()
         for m in MODELS.values():
             try:
-                here = complete(self.repo_of(m), m.probe)
+                here = model_here(m, self.repo_of(m))
                 if m.id == "e5" and here:  # pinned to a revision: that one must be there
                     from . import embeddings
 
@@ -1089,6 +1165,13 @@ class Probe:
     def hf_token_set(self) -> bool:
         """Whether a Hugging Face token is set (pyannote's model is gated); never the token."""
         return bool(getattr(self.cfg, "hf_token", None) or os.environ.get("HF_TOKEN"))
+
+    def hf_token_needed(self) -> bool:
+        """An installed release downloads pyannote's copy from its own
+        release (#60); a checkout gets it from Hugging Face, with a token."""
+        from . import install_layout
+
+        return install_layout.bundle() is None
 
     def full_name(self) -> str:
         import pwd

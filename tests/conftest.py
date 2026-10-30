@@ -125,8 +125,9 @@ def no_network(monkeypatch):
     real_urlopen = urllib.request.urlopen
 
     def urlopen(url, *args, **kwargs):
-        host = urlsplit(url if isinstance(url, str) else url.full_url).hostname
-        if host not in LOCAL_HOSTS:
+        parts = urlsplit(url if isinstance(url, str) else url.full_url)
+        host = parts.hostname
+        if host not in LOCAL_HOSTS and parts.scheme != "file":  # file://: release assets on disk
             raise AssertionError(f"test tried to reach the network: {host}")
         return real_urlopen(url, *args, **kwargs)
 

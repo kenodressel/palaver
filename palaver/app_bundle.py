@@ -14,6 +14,7 @@ so macOS keeps what was allowed.
 
 from __future__ import annotations
 
+import json
 import plistlib
 import shutil
 import subprocess
@@ -32,16 +33,22 @@ APPS_DIR = Path.home() / "Applications"
 LAUNCH_AGENT = Path.home() / "Library" / "LaunchAgents" / f"{BUNDLE_ID}.plist"
 APP_LOG = LOG_PATH.with_name("app.log")
 
-# Released apps (built in CI, installed by install.sh) find their venv and
-# log relative to the user's home at runtime; "~/" paths are resolved by
-# the launcher from $HOME.
-RELEASE_VENV = "~/Library/Application Support/palaver/venv"
-RELEASE_PYTHON = f"{RELEASE_VENV}/bin/python"
+# Released apps (#60) carry Palaver's code in Contents/Resources/python and
+# run it on the runtime of their build, found by its id relative to the
+# user's home at runtime; "~/" paths are resolved by the launcher from $HOME.
+RELEASE_RUNTIMES = "~/Library/Application Support/palaver/runtime"
 RELEASE_LOG = "~/Library/Logs/palaver/app.log"
+CODE_DIR = "python"  # in Contents/Resources
+INSTALL_COMMAND = "curl -fsSL https://raw.githubusercontent.com/kenodressel/palaver/master/install.sh | sh"
 
 
-def info_plist() -> dict:
-    return {
+def release_python(runtime_id: str) -> str:
+    return f"{RELEASE_RUNTIMES}/{runtime_id}/bin/python3"
+
+
+def info_plist(runtime_id: str | None = None) -> dict:
+    extra = {"PalaverRuntimeID": runtime_id} if runtime_id else {}
+    return {**extra,
         "CFBundleIdentifier": BUNDLE_ID,
         "CFBundleName": APP_NAME,
         "CFBundleDisplayName": APP_NAME,
@@ -198,6 +205,7 @@ int main(void) {
     @autoreleasepool {
         char *args[] = { %(args)s, NULL };
         char *log_path = %(log)s;
+%(prelude)s
         make_parents(log_path);
         posix_spawn_file_actions_t actions;
         posix_spawn_file_actions_init(&actions);
@@ -252,17 +260,102 @@ def _c_path(value: str) -> str:
     return f"strdup({_c_string(value)})"
 
 
+# A release's launcher (#60) starts the bundle's own Python host (HOST,
+# below) instead of the runtime's python3, so the menu bar app's process is
+# Palaver.app's: the Dock, the menu bar and Activity Monitor say "Palaver"
+# with its icon. ``args[0]`` (the runtime's python3) is only checked: without
+# that runtime the launcher says how to get it back instead of failing silently.
+_RELEASE_PRELUDE = r"""
+        if (access(args[0], X_OK) != 0) {
+            [NSApplication sharedApplication];
+            [NSApp activateIgnoringOtherApps:YES];
+            NSAlert *alert = [NSAlert new];
+            alert.messageText = @"Palaver can't start";
+            alert.informativeText = [NSString stringWithFormat:@"Its runtime is missing (%%s). Run the installer again:\n\n%(install)s", args[0]];
+            [alert runModal];
+            return 78;
+        }
+        args[0] = strdup([NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:@"Contents/MacOS/%(host)s"].fileSystemRepresentation);
+"""
+
+HOST = "Palaver"  # in Contents/MacOS: the Python that runs the app, as Palaver.app
+
+# The host: the runtime's libpython, loaded from the user's home at runtime
+# (it is not known at build time), running this bundle's code. A program in
+# Contents/MacOS has the bundle as its main bundle; the runtime's python3
+# would have none. Children started with sys.executable are the host too.
+_HOST_C = r"""
+#include <dlfcn.h>
+#include <limits.h>
+#include <mach-o/dyld.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main(int argc, char **argv) {
+    char exe[PATH_MAX], app[PATH_MAX], runtime[PATH_MAX], code[PATH_MAX], lib[PATH_MAX];
+    uint32_t size = sizeof exe;
+    if (_NSGetExecutablePath(exe, &size) != 0 || realpath(exe, app) == NULL) return 70;
+    for (int i = 0; i < 3; i++) {  /* .../Palaver.app/Contents/MacOS/Palaver -> .../Palaver.app */
+        char *slash = strrchr(app, '/');
+        if (slash) *slash = 0;
+    }
+    const char *home = getenv("HOME");
+    snprintf(runtime, sizeof runtime, "%%s/Library/Application Support/palaver/runtime/%(runtime_id)s", home ? home : "");
+    snprintf(code, sizeof code, "%%s/Contents/Resources/%(code)s", app);
+    snprintf(lib, sizeof lib, "%%s/lib/libpython%(pyver)s.dylib", runtime);
+    setenv("PYTHONHOME", runtime, 1);
+    setenv("PYTHONPATH", code, 1);
+    setenv("PALAVER_APP", app, 1);
+    setenv("PYTHONNOUSERSITE", "1", 1);
+    setenv("PYTHONDONTWRITEBYTECODE", "1", 1);  /* the signed bundle is never written to */
+    void *python = dlopen(lib, RTLD_NOW | RTLD_GLOBAL);
+    if (python == NULL) {
+        fprintf(stderr, "Palaver's runtime is missing (%%s). Run the installer again:\n  %(install)s\n", runtime);
+        return 1;
+    }
+    int (*bytes_main)(int, char **) = (int (*)(int, char **))dlsym(python, "Py_BytesMain");
+    if (bytes_main == NULL) {
+        fprintf(stderr, "%%s has no Py_BytesMain\n", lib);
+        return 70;
+    }
+    return bytes_main(argc, argv);
+}
+"""
+
+
+def compile_host(path: Path, *, runtime_id: str, python_version: str) -> None:
+    source = _HOST_C % {"runtime_id": runtime_id, "code": CODE_DIR, "pyver": python_version,
+                        "install": INSTALL_COMMAND}
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "host.c"
+        src.write_text(source)
+        subprocess.run(["clang", "-O2", "-o", str(path), str(src)], check=True)
+
+
+def sign_identity() -> str:
+    """Ad hoc ("-") unless $PALAVER_SIGN_IDENTITY names a certificate: with
+    one kept for every release, macOS keeps the microphone and system audio
+    permissions across updates (an ad hoc signature differs every build)."""
+    import os
+
+    return os.environ.get("PALAVER_SIGN_IDENTITY") or "-"
+
+
 def compile_launcher(
     path: Path,
     *,
     python: Path | str,
     cli_options: list[str],
     log_path: Path | str = APP_LOG,
+    release: bool = False,
 ) -> None:
     argv = [str(python), "-m", "palaver", *cli_options, "menubar"]
+    prelude = _RELEASE_PRELUDE % {"host": HOST, "install": INSTALL_COMMAND} if release else ""
     source = _LAUNCHER_C % {
         "args": ", ".join([_c_path(argv[0])] + [f"strdup({_c_string(a)})" for a in argv[1:]]),
         "log": _c_path(str(log_path)),
+        "prelude": prelude,
     }
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "launcher.m"
@@ -277,21 +370,69 @@ def build_app(
     python: Path | str,
     cli_options: list[str],
     log_path: Path | str = APP_LOG,
+    release: bool = False,
+    runtime_id: str | None = None,
+    before_signing=None,
 ) -> Path:
     app = dest_dir / f"{APP_NAME}.app"
     macos = app / "Contents" / "MacOS"
     macos.mkdir(parents=True, exist_ok=True)
     (app / "Contents" / "Resources").mkdir(exist_ok=True)
     shutil.copyfile(ICON, app / "Contents" / "Resources" / ICON.name)
-    (app / "Contents" / "Info.plist").write_bytes(plistlib.dumps(info_plist()))
-    compile_launcher(macos / EXECUTABLE, python=python, cli_options=cli_options, log_path=log_path)
-    subprocess.run(["codesign", "--force", "--sign", "-", str(app)], check=True, capture_output=True)
+    (app / "Contents" / "Info.plist").write_bytes(plistlib.dumps(info_plist(runtime_id)))
+    compile_launcher(macos / EXECUTABLE, python=python, cli_options=cli_options, log_path=log_path, release=release)
+    if before_signing is not None:
+        before_signing(app)
+    for nested in sorted(macos.iterdir()):  # nested code first, then the bundle
+        if nested.name != EXECUTABLE:
+            subprocess.run(["codesign", "--force", "--sign", sign_identity(), str(nested)], check=True,
+                           capture_output=True)
+    subprocess.run(["codesign", "--force", "--sign", sign_identity(), str(app)], check=True, capture_output=True)
     return app
 
 
-def build_release_app(dest_dir: Path) -> Path:
-    """The app CI publishes: runs the venv install.sh creates."""
-    return build_app(dest_dir, python=RELEASE_PYTHON, cli_options=[], log_path=RELEASE_LOG)
+# The Python other programs start (Claude Code's MCP server) and the
+# command (~/.local/bin/palaver links to it): this app's code on its
+# runtime. They find the app through their own path, so a link works.
+_WRAPPER = """#!/bin/sh
+# Palaver's Python: the app's host, on the runtime the app was built for.
+exec "$(dirname "$(readlink -f "$0")")/../../MacOS/{host}" "$@"
+"""
+_COMMAND = """#!/bin/sh
+exec "$(dirname "$(readlink -f "$0")")/../../MacOS/{host}" -m palaver "$@"
+"""
+
+
+def _install_code(app: Path, code: Path, runtime_id: str, version: str, compile_with: str | None,
+                  python_version: str | None = None) -> None:
+    """Palaver's package (``code``: the folder holding ``palaver/``, as a
+    wheel unpacks) into the bundle, compiled ahead: the bundle is signed
+    and never written to at runtime."""
+    resources = app / "Contents" / "Resources"
+    target = resources / CODE_DIR
+    shutil.copytree(code, target, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    if compile_with:
+        subprocess.run([compile_with, "-m", "compileall", "-q", "--invalidation-mode", "unchecked-hash",
+                        str(target)], check=True)
+    (resources / "runtime.json").write_text(json.dumps({"version": version, "runtime": runtime_id}) + "\n")
+    compile_host(app / "Contents" / "MacOS" / HOST, runtime_id=runtime_id,
+                 python_version=python_version or ".".join(runtime_id.split(".")[:2]))
+    bin_dir = resources / "bin"
+    bin_dir.mkdir()
+    for name, text in (("python", _WRAPPER), ("palaver", _COMMAND)):
+        (bin_dir / name).write_text(text.format(host=HOST))
+        (bin_dir / name).chmod(0o755)
+
+
+def build_release_app(dest_dir: Path, *, runtime_id: str, code: Path, version: str = __version__,
+                      compile_with: str | None = None, python_version: str | None = None) -> Path:
+    """The app a release publishes (#60): the launcher, the host that runs
+    Palaver's code as Palaver.app, the code, and the command; it runs on
+    runtime ``runtime_id`` in Application Support."""
+    return build_app(dest_dir, python=release_python(runtime_id), cli_options=[], log_path=RELEASE_LOG,
+                     release=True, runtime_id=runtime_id,
+                     before_signing=lambda app: _install_code(app, code, runtime_id, version, compile_with,
+                                                              python_version))
 
 
 def install(*, python: Path, cli_options: list[str], login: bool) -> Path:

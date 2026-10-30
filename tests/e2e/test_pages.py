@@ -122,3 +122,18 @@ def test_a_provider_card_saves_its_key_with_one_save(page, app_server, fake_keyc
     card = page.locator(".settings-card", has=page.get_by_role("heading", name="Soniox"))
     expect(card).to_contain_text("Key set ✓")
     assert "soniox-key" in fake_keychain.values()
+
+
+def test_settings_say_how_palaver_updates_and_uninstalling_asks_first(page, app_server):
+    """#60: a checkout has no updates; "Uninstall Palaver…" asks, and Cancel
+    changes nothing."""
+    goto(page, app_server, "#/settings")
+    section = page.locator("#update-section")
+    expect(section.get_by_role("heading", name="Updates")).to_be_visible()
+    expect(section.get_by_role("status")).to_contain_text("runs from a checkout")
+    section.get_by_role("button", name="Uninstall Palaver…").click()
+    box = page.get_by_role("dialog", name="Uninstall Palaver?")
+    expect(box.get_by_role("checkbox", name=re.compile("Also delete my recordings"))).not_to_be_checked()
+    expect(box.get_by_role("button", name="Uninstall")).to_be_focused()
+    box.get_by_role("button", name="Cancel").click()
+    expect(box).to_have_count(0)

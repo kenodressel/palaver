@@ -52,7 +52,7 @@ def check_config(path: Path):
     from .config import load_config
 
     try:
-        return Check("Config", "ok", str(path)), load_config(path)
+        return Check("Config", "ok", str(path) if path.exists() else "none: the defaults"), load_config(path)
     except FileNotFoundError:
         return Check("Config", "fail", f"{path} not found", "create it as shown in the README"), None
     except ValueError as exc:
@@ -320,15 +320,20 @@ def run_checks(*, config_path: Path, offline: bool = False) -> list[Check]:
     config_check, cfg = check_config(config_path)
     checks.append(config_check)
     if cfg is not None:
-        if not offline:
+        if not offline and cfg.notion_token:
             checks.append(check_notion(cfg.notion_token, cfg.notion_mode,
                                        cfg.notion_parent_page_id, cfg.notion_database_id))
-        if not cfg.hf_token:
-            checks.append(Check("Hugging Face token", "fail", "missing",
-                                "set HF_TOKEN or [hf].token (pyannote's model is gated)"))
+        from . import model_store
+
+        if model_store.local_path(cfg.diarizer_repo) is not None:  # a release's copy: no token (#60)
+            checks.append(Check("Diarization model", "ok", "downloaded (Palaver's copy)"))
         else:
-            checks.append(Check("Hugging Face token", "ok", "set"))
-        checks.append(check_model("Diarization model", cfg.diarizer_repo, "config.yaml", "30 MB"))
+            if not cfg.hf_token:
+                checks.append(Check("Hugging Face token", "warn", "missing",
+                                    "download the speaker model in the setup assistant, or set HF_TOKEN"))
+            else:
+                checks.append(Check("Hugging Face token", "ok", "set"))
+            checks.append(check_model("Diarization model", cfg.diarizer_repo, "config.yaml", "30 MB"))
         if cfg.transcriber == "parakeet-mlx":
             checks.append(check_model("Parakeet model", cfg.parakeet_repo, "config.json", "1.2 GB"))
         else:

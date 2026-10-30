@@ -1401,3 +1401,13 @@ def test_a_record_switch_turned_off_stops_its_call_now(tmp_path):
     d.switched_off("teams")
     assert sessions[0].stop_reason == "auto_off"
     assert d.status()["state"] != "recording"
+
+
+def test_quitting_stops_the_search_index_so_no_old_process_outlives_an_update(tmp_path: Path):
+    """#60: after an update's swap, a process of the old app would import
+    the new code; the index is the one worker that runs while idle."""
+    d, _, _, runs = _index_daemon(tmp_path, lambda now: False)
+    d.run(until=lambda: d.now() > 30)
+    assert len(runs) == 1 and not runs[0].terminated
+    d.shutdown()
+    assert runs[0].terminated and not d.status()["indexing"]

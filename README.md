@@ -3,37 +3,125 @@
 Aus dem Palaver wird ein Plan. Local transcription with speaker diarization
 for Microsoft Teams meetings and Slack huddles on macOS: a menu bar app that
 records, transcribes, says who spoke when, and writes notes. Fully offline
-except for the optional Notion upload. Until October 2026 it was called
+except for the optional Notion upload and the update check. Until October 2026 it was called
 meeting-transcribe; its settings move to the new folders on the first start.
 
 ## Requirements
 
-- macOS Tahoe (26.x) on Apple Silicon (M1 or later)
-- Python 3.10+
-- A HuggingFace account + token for pyannote's gated model
-- A Notion internal integration with write access to a parent page
+- macOS 15 or later on Apple Silicon (M1 or later)
+- About 3 GB of disk for the app and its runtime, plus the models you choose
+  in the setup assistant (Parakeet 2.3 GB; the notes model 8 GB or more)
 
-## Install
+Nothing else: no Python, Homebrew, Hugging Face account or Notion. Notion is
+optional (meetings upload there when `config.toml` has a token); without it
+everything stays on this Mac.
+
+## Install, update, uninstall
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kenodressel/palaver/master/install.sh | sh
-# or, to also start the menu bar app at login:
-curl -fsSL https://raw.githubusercontent.com/kenodressel/palaver/master/install.sh | sh -s -- --autostart
+# options: --autostart (start at login), --cli (the palaver command in ~/.local/bin)
+curl -fsSL https://raw.githubusercontent.com/kenodressel/palaver/master/install.sh | sh -s -- --autostart --cli
 ```
 
-This installs the latest GitHub release: a Python venv with exactly the
-locked dependencies (via [uv](https://docs.astral.sh/uv/), ~1 GB on first
-install) in `~/Library/Application Support/palaver/venv`, the
-`palaver` command in `~/.local/bin`, and `Palaver.app` in
-`~/Applications`. While the repository is private, install the GitHub CLI
-and `gh auth login` first — the installer then downloads through it. Re-run
-the same command to update.
+Then open Palaver (`~/Applications/Palaver.app`). Its setup assistant
+recommends the settings for this Mac and downloads the models it needs, with
+your OK and with progress, and macOS asks for the Microphone and System Audio
+Recording permissions.
 
-Releases are built by GitHub Actions when a `v*` tag is pushed
-(`.github/workflows/release.yml`): tests, the wheel (with the echo-cancellation
-library prebuilt), `requirements.txt` exported from `uv.lock`, the app, and a
-smoke install of all of it into a throwaway home directory. `make release`
-and `make smoke-install` do the same locally.
+The installer writes only into your home folder and changes no shell or
+`PATH` setting. A release has three layers, each downloaded only when it
+changed:
+
+| Layer | Where | Size | Downloaded |
+|---|---|---|---|
+| App: Palaver's code and its launcher | `~/Applications/Palaver.app` | 3 MB | every release |
+| Runtime: a standalone Python ([python-build-standalone](https://github.com/astral-sh/python-build-standalone)) with every locked dependency, prebuilt | `~/Library/Application Support/palaver/runtime/<id>/` | 530 MB download, 1.6 GB on disk | when `uv.lock` changes |
+| Models | `~/Library/Application Support/palaver/models/` (pyannote, hosted with the release: no token) and `~/.cache/huggingface` (Parakeet, the notes model) | up to ~10 GB | once, again when a model changes |
+
+**Updates.** Palaver looks for a new release at start and every 6 hours (one
+anonymous request for the release's `manifest.json`; turn it off in Settings →
+Updates). When there is one, the menu bar menu says "Update available
+(version)" and Settings shows what's new. A click downloads only the changed
+layers, checks each against the manifest's SHA-256, and installs at the next
+moment nothing records, transcribes or writes notes; then Palaver restarts.
+A failed download or install keeps the version you have and says why. Running
+the install command again updates too. The runtime before the current one is
+kept, so `PALAVER_VERSION=0.1.0 sh install.sh` goes back without a download.
+
+**Uninstall.** Settings → Uninstall Palaver… asks first, then removes the app,
+its runtime, the login item and the `palaver` command; the models only when
+ticked; your recordings, settings and voices only when ticked. Or:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kenodressel/palaver/master/install.sh | sh -s -- --uninstall [--models]
+```
+
+which keeps recordings, settings and data. Models downloaded from Hugging Face
+stay in `~/.cache/huggingface`.
+
+**Permissions after an update.** macOS remembers Microphone and System Audio
+Recording for an app by its signature. A release signed with the same
+certificate every time keeps them; an ad-hoc signature (a local `make
+release` without `PALAVER_SIGN_IDENTITY`) is new with every build. When the
+signature changed, an update makes Palaver ask again right after its restart,
+while it is idle, instead of in the middle of the next call.
+
+### Releases
+
+`make release` builds every asset on this Mac into `dist/` (GitHub Actions'
+`release.yml` runs the same recipe):
+
+- `palaver-app-<version>.zip`: Palaver.app with the code from the wheel
+  (including the echo-cancellation library), compiled ahead
+- `palaver-runtime-<id>.tar.gz`: built only when its id is new; the id is a
+  hash of the locked requirements (exported from `uv.lock`), the Python
+  version, its python-build-standalone release and the arch
+  (`RUNTIME_PYTHON` and `PBS_RELEASE` in the Makefile). The build downloads
+  python-build-standalone into `dist/build`, checked against the release's
+  `SHA256SUMS`, installs the requirements into it with uv, makes the entry
+  points relocatable, and `otool` checks that no library names `/Users`,
+  Homebrew or `/usr/local`
+- `palaver-models-pyannote-community-1-<revision>.tar`: pyannote's pipeline
+  from your Hugging Face cache, with its license (see
+  [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md))
+- `manifest.json`, `install.sh`, and `upload.txt`: the files this release must
+  upload. An asset the previous release published unchanged keeps its URL
+  there and is not uploaded again; `make publish` creates the GitHub release
+  from `upload.txt`.
+
+#### Signing releases
+
+`make publish` refuses an app signed ad hoc. Create one code-signing
+certificate, keep it (with a backup), and sign every release with it:
+
+- **Keychain Access:** Keychain Access → Certificate Assistant → Create a
+  Certificate… → Name "Palaver Release", Identity Type "Self-Signed Root",
+  Certificate Type "Code Signing" → Create. Export it with its private key as
+  a `.p12` for the backup.
+- **Or in a terminal:**
+
+  ```bash
+  openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=Palaver Release" \
+    -addext "keyUsage=critical,digitalSignature" -addext "extendedKeyUsage=critical,codeSigning" \
+    -keyout palaver-release.key -out palaver-release.crt
+  openssl pkcs12 -export -inkey palaver-release.key -in palaver-release.crt \
+    -name "Palaver Release" -out palaver-release.p12   # asks for a password: this is the backup
+  security import palaver-release.p12 -k ~/Library/Keychains/login.keychain-db -T /usr/bin/codesign
+  rm palaver-release.key                               # the .p12 holds it; keep that somewhere safe
+  security find-identity -p codesigning                # "Palaver Release" is listed
+  ```
+
+Then `PALAVER_SIGN_IDENTITY="Palaver Release" make release publish`. A lost
+certificate means a new one, and every tester is asked for the permissions
+once more. A Developer ID certificate works the same way and also satisfies
+Gatekeeper for downloads.
+
+`make smoke-install` installs `dist/` into a throwaway home under
+`sandbox-exec` (no writes outside it, no network), imports Palaver and its
+dependencies as the app runs them, loads pyannote from the hosted copy
+without a token, and updates twice, with `install.sh` and with the app's
+updater, checking the runtime is not downloaded again.
 
 ## Setup (from source)
 
@@ -53,15 +141,16 @@ and `make smoke-install` do the same locally.
    cd -
    ```
 
-2. On HuggingFace, accept the gated-model terms for
-   `pyannote/speaker-diarization-community-1`. Create a token with Read
-   permission.
+2. pyannote's model: a checkout downloads it from Hugging Face, where it is
+   gated: accept the terms for `pyannote/speaker-diarization-community-1`
+   and create a token with Read permission (an installed release downloads
+   Palaver's own copy instead, without a token).
 
-3. In Notion, create an internal integration at notion.so/profile/integrations.
+3. (Optional) In Notion, create an internal integration at notion.so/profile/integrations.
    Share a parent page with the integration (this is where meeting transcripts
    will appear).
 
-4. Create `~/.config/palaver/config.toml`:
+4. (Optional: without it the defaults apply) Create `~/.config/palaver/config.toml`:
 
    ```toml
    [user]
@@ -89,7 +178,8 @@ and `make smoke-install` do the same locally.
    for duration (`Duration`/`Dauer`) and speakers (`Speakers`/`Teilnehmer`),
    and a select column `Source` (set to "Teams").
 
-5. Export tokens (or add them to `config.toml` directly):
+5. Export tokens (or add them to `config.toml` directly); without a Notion
+   token meetings stay on this Mac:
 
    ```bash
    export HF_TOKEN=hf_xxx

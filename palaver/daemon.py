@@ -671,6 +671,9 @@ class Daemon:
         if self._session is not None:
             self._stop(reason)
         self._pump_processing()
+        if self._indexer is not None:  # it goes on after the next start; never on the old code (#60)
+            self._indexer.terminate()
+            self._indexer = None
         self._write_state(state="stopped")
 
     def _detect_safely(self) -> bool:
@@ -1291,6 +1294,22 @@ def _coach_context(cfg) -> dict:
     # Saved by `process` after the last call: nothing here reads the meetings.
     return live_coach.meeting_context(event, user_name=cfg.user_name, baseline=coach.load_baseline(),
                                       voices=list(VoiceBank().names()))
+
+
+def busy_reason(status: dict) -> str | None:
+    """What keeps Palaver from restarting now (an update waits for it, #60),
+    from ``Daemon.status()``: a recording, its processing, notes being
+    written or waiting. None: idle. The search index is no reason: it
+    stops for anything, quitting too, and goes on from where it was."""
+    if status.get("state") == "recording":
+        return "recording"
+    if status.get("teams_active"):  # a call, maybe recorded in a moment
+        return "a call"
+    if status.get("transcribing") or status.get("queued"):
+        return "transcribing"
+    if status.get("writing_notes") or status.get("notes_queued"):
+        return "writing notes"
+    return None
 
 
 def read_status(state_path: Path | None = None) -> str:
