@@ -1,10 +1,10 @@
-// Export and import of a meeting as one .palaver file (#58): the export
+// Export and import of a meeting as one .zip (#58): the export
 // dialog, the import of a picked or dropped file with its questions (the
 // same meeting here already; the voices that came with it). What happens
 // to the page after an import (the list, the meeting, Undo) is app.js's.
 
 import { h, toast, busy } from "./ui.js";
-import { exportChoices, exportRequest, exportedText, isPalaverFile, collisionText, voicesQuestion }
+import { exportChoices, exportRequest, exportedText, isMeetingZip, collisionText, voicesQuestion }
   from "./logic.js";
 
 class Failed extends Error {}
@@ -97,7 +97,7 @@ export function openExport(m, title) {
   let first;
   const d = dialog({
     title: `Export “${title}”`,
-    body: [h("p", { class: "meta" }, "One .palaver file to send to a colleague who uses Palaver: by AirDrop, Slack or mail."),
+    body: [h("p", { class: "meta" }, "One .zip to send to a colleague who uses Palaver: by AirDrop, Slack or mail."),
       h("fieldset", { class: "export-choices" }, h("legend", { class: "visually-hidden" }, "What goes in"), ...boxes)],
     buttons: [{ label: "Cancel" }, { label: "Export", value: "export", run: async () => { first = await send(false); } }],
   });
@@ -113,9 +113,9 @@ export function openExport(m, title) {
   });
 }
 
-// Import…: a file picker for .palaver files.
+// Import…: a file picker for exported meetings (.zip).
 export function pickImport(onFile) {
-  const picker = h("input", { type: "file", accept: ".palaver", hidden: true,
+  const picker = h("input", { type: "file", accept: ".zip", hidden: true,
     onchange: () => {
       const [file] = picker.files;
       picker.remove();
@@ -125,7 +125,7 @@ export function pickImport(onFile) {
   picker.click();
 }
 
-// A .palaver file dropped anywhere on the window imports it; a place that
+// An exported meeting's .zip dropped anywhere on the window imports it; a place that
 // takes files itself (my notes) handles its own drops first.
 export function wireDrop(onFile) {
   const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
@@ -141,9 +141,10 @@ export function wireDrop(onFile) {
     document.body.classList.remove("dropping-file");
     if (!hasFiles(e) || e.defaultPrevented) return;
     e.preventDefault();
-    const files = [...e.dataTransfer.files].filter((f) => isPalaverFile(f.name));
+    const files = [...e.dataTransfer.files].filter((f) => isMeetingZip(f.name));
     if (!files.length) {
-      toast("Only a .palaver file can be dropped here: a meeting a colleague exported");
+      toast("Only a meeting exported from Palaver can be dropped here: its .zip. "
+        + "If it was unpacked, compress the folder again (Finder: Compress) and drop that.");
       return;
     }
     onFile(files[0]);
@@ -153,8 +154,8 @@ export function wireDrop(onFile) {
 // Sends ``file``; asks when the meeting is here already. Resolves with the
 // server's answer to the import, or null when nothing was imported.
 export async function importFile(file) {
-  if (!isPalaverFile(file.name)) {
-    toast(`“${file.name}” is not a .palaver file`);
+  if (!isMeetingZip(file.name)) {
+    toast(`“${file.name}” is not a .zip: a meeting exported from Palaver is one`);
     return null;
   }
   toast(`Importing “${file.name}”…`, { short: true });

@@ -1,15 +1,13 @@
-name: Release
+name: Release dry run
 
+# Builds and smoke-installs the release assets; publishes nothing. A release
+# is signed with the kept certificate, which only the maintainer's Mac has:
+# it is made there (make release, make publish; README, "Signing releases").
 on:
-  push:
-    tags:
-      - "v*"
-  # Build-only dry run: builds and smoke-installs the assets without
-  # publishing anything. The publish step below is gated on an actual tag.
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   UV_FROZEN: "1"
@@ -23,18 +21,14 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
 
-      - name: Set version from tag
-        # A dry run has no tag; it builds the version in __init__.py as is.
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          sed -i '' "s/^__version__ = \".*\"/__version__ = \"$VERSION\"/" palaver/__init__.py
-          grep -q "^__version__ = \"$VERSION\"" palaver/__init__.py \
-            || { echo "✗ Failed to set version in palaver/__init__.py"; exit 1; }
-          echo "✓ Version set to $VERSION"
-
       - name: Install dependencies
         run: uv sync --python 3.13 --extra dev
+
+      - name: Build the echo-cancellation library
+        run: make aec
+
+      - name: Install WebKit for the end-to-end tests
+        run: uv run --extra dev python -m playwright install webkit
 
       - name: Run tests
         run: make test
@@ -57,19 +51,3 @@ jobs:
         # users run it; imports, pyannote without a token, two updates
         # without the runtime.
         run: make smoke-install
-
-      - name: Create GitHub Release
-        # Only on a real tag — every v* tag becomes the "latest" release that
-        # install.sh serves.
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v3
-        with:
-          # Everything built; a runtime or model unchanged since the last
-          # release is uploaded again here (CI has no previous build to keep).
-          files: |
-            dist/palaver-app-*.zip
-            dist/palaver-runtime-*.tar.*
-            dist/palaver-models-*.tar
-            dist/manifest.json
-            dist/install.sh
-          generate_release_notes: true

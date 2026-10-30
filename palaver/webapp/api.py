@@ -1060,7 +1060,7 @@ def _imported(paths: RecordingPaths) -> dict[str, Any] | None:
 
 def export_meeting(output_dir: Path, meeting_id: str, downloads: Path, *, user_name: str, notes: bool = True,
                    voices: bool = False, audio: bool = False, confirm_local: bool = False) -> dict[str, Any]:
-    """Save the meeting as a ``.palaver`` file in ``downloads``: the window
+    """Save the meeting as a ``.zip`` in ``downloads``: the window
     can't download in its web view, the server is on this Mac anyway. A
     meeting kept on this Mac answers with a question first."""
     paths = meeting_paths(output_dir, meeting_id)
@@ -1081,7 +1081,7 @@ def export_meeting(output_dir: Path, meeting_id: str, downloads: Path, *, user_n
 
 def import_meeting(output_dir: Path, file: Path, *, user_name: str, separate: bool = False,
                    calendar=None) -> dict[str, Any]:
-    """Import a ``.palaver`` file as a meeting; undone by trashing it again.
+    """Import an exported meeting's zip as a meeting; undone by trashing it again.
     The same meeting here already answers with a question (keep mine, or
     import as a separate meeting) and writes nothing."""
     try:

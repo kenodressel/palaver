@@ -69,8 +69,9 @@ while it is idle, instead of in the middle of the next call.
 
 ### Releases
 
-`make release` builds every asset on this Mac into `dist/` (GitHub Actions'
-`release.yml` runs the same recipe):
+`make release` builds every asset on this Mac into `dist/`. GitHub Actions'
+`release.yml` runs the same recipe as a manual dry run but never publishes:
+only the Mac with the signing certificate does (below).
 
 - `palaver-app-<version>.zip`: Palaver.app with the code from the wheel
   (including the echo-cancellation library), compiled ahead

@@ -1,8 +1,10 @@
-"""Export and import of a meeting as one .palaver file (#58), with synthetic meetings only."""
+"""Export and import of a meeting as one .zip (#58), with synthetic meetings only."""
 
 import hashlib
 import json
+import shutil
 import stat
+import subprocess
 import zipfile
 from pathlib import Path
 
@@ -101,7 +103,7 @@ def doc(file: Path, name: str):
 @pytest.fixture
 def exported(tmp_path) -> Path:
     paths = make_meeting(tmp_path / "anna")
-    return export(paths, tmp_path / "out" / "budget.palaver")
+    return export(paths, tmp_path / "out" / "budget.zip")
 
 
 # --- export ---------------------------------------------------------------------------
@@ -166,7 +168,7 @@ def test_where_the_meeting_was_held_stays_home(exported):
 
 
 def test_notes_can_be_left_out(tmp_path):
-    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.palaver", notes=False)
+    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.zip", notes=False)
     assert "meeting/notes.json" not in names_in(out)
 
 
@@ -174,15 +176,15 @@ def test_voices_go_in_only_when_asked_and_only_of_people_named_by_hand_or_voice(
     paths = make_meeting(tmp_path / "anna")
     paths.speakers_inferred.write_text(json.dumps({"SPEAKER_01": {"name": "X", "rule": "calendar", "why": "",
                                                                   "confidence": 0.9}}))
-    out = export(paths, tmp_path / "x.palaver", voices=True)
+    out = export(paths, tmp_path / "x.zip", voices=True)
     assert {n for n in names_in(out) if n.startswith("voices/")} == {"voices/SPEAKER_00.json", "voices/SPEAKER_01.json"}
     assert doc(out, "voices/SPEAKER_00.json") == {"label": "SPEAKER_00", "name": "Tom", "embedding": _vector(0)}
 
 
 def test_audio_goes_in_only_when_asked_compressed(tmp_path):
     paths = make_meeting(tmp_path / "anna")
-    assert not any(n.startswith("audio/") for n in names_in(export(paths, tmp_path / "a.palaver")))
-    out = export(paths, tmp_path / "b.palaver", audio=True)
+    assert not any(n.startswith("audio/") for n in names_in(export(paths, tmp_path / "a.zip")))
+    out = export(paths, tmp_path / "b.zip", audio=True)
     assert {n for n in names_in(out) if n.startswith("audio/")} == {"audio/system.opus", "audio/mic.opus"}
     assert out.stat().st_size < paths.system_wav.stat().st_size
 
@@ -191,9 +193,9 @@ def test_a_meeting_kept_on_this_mac_asks_before_it_exports(tmp_path):
     paths = make_meeting(tmp_path / "anna")
     paths.local_only.write_text("{}")
     with pytest.raises(exchange.KeptOnThisMac):
-        export(paths, tmp_path / "x.palaver")
-    assert not (tmp_path / "x.palaver").exists()
-    assert export(paths, tmp_path / "x.palaver", confirm_local=True).exists()
+        export(paths, tmp_path / "x.zip")
+    assert not (tmp_path / "x.zip").exists()
+    assert export(paths, tmp_path / "x.zip", confirm_local=True).exists()
 
 
 def test_keep_on_this_mac_travels_with_the_file_and_can_be_lifted_here(tmp_path):
@@ -201,7 +203,7 @@ def test_keep_on_this_mac_travels_with_the_file_and_can_be_lifted_here(tmp_path)
 
     paths = make_meeting(tmp_path / "anna")
     paths.local_only.write_text("{}")
-    out = export(paths, tmp_path / "x.palaver", confirm_local=True)
+    out = export(paths, tmp_path / "x.zip", confirm_local=True)
     assert doc(out, "meeting/meta.json")["kept_on_this_mac"] is True
     mine = tmp_path / "timo"
     import_into(mine, out)
@@ -220,13 +222,13 @@ def test_a_meeting_still_being_processed_is_not_exported(tmp_path):
     paths = make_meeting(tmp_path / "anna")
     paths.transcript_json.unlink()
     with pytest.raises(exchange.NotReady):
-        export(paths, tmp_path / "x.palaver")
+        export(paths, tmp_path / "x.zip")
 
 
 def test_the_file_name_is_date_and_title(tmp_path):
     paths = make_meeting(tmp_path / "anna")
     (paths.folder / "title.json").write_text(json.dumps({"title": "Q3: budget / plan?"}))
-    assert exchange.file_name(paths) == "2026-10-29 Q3 budget plan.palaver"
+    assert exchange.file_name(paths) == "2026-10-29 Q3 budget plan.zip"
 
 
 # --- import -----------------------------------------------------------------------------
@@ -271,7 +273,7 @@ def test_the_importer_invited_is_themselves_in_the_event(tmp_path, exported):
 
 
 def test_inference_keeps_the_hints_of_an_import(tmp_path):
-    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.palaver", voices=True)
+    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.zip", voices=True)
     import_into(tmp_path / "timo", out)
     inference.refresh(tmp_path / "timo", user_name="Timo", bank=VoiceBank(tmp_path / "bank"))
     assert inference.load(RecordingPaths(tmp_path / "timo" / ID))["SPEAKER_00"]["rule"] == "imported"
@@ -320,7 +322,7 @@ def test_the_exporters_own_title_comes_along_but_is_not_the_users(tmp_path):
     paths = make_meeting(tmp_path / "anna")
     (paths.folder / "title.json").write_text(json.dumps({"title": "Budget with Tom"}))
     mine = tmp_path / "timo"
-    import_into(mine, export(paths, tmp_path / "x.palaver"))
+    import_into(mine, export(paths, tmp_path / "x.zip"))
     here = RecordingPaths(mine / ID)
     assert titles.resolve(here) == ("Budget with Tom", "imported")  # over the event's, under the user's
     assert titles.load(here) is None
@@ -332,7 +334,7 @@ def test_the_exporters_own_title_comes_along_but_is_not_the_users(tmp_path):
 
 
 def test_audio_comes_in_as_one_track_the_window_plays(tmp_path):
-    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.palaver", audio=True)
+    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.zip", audio=True)
     import_into(tmp_path / "timo", out)
     paths = RecordingPaths(tmp_path / "timo" / ID)
     info = sf.info(str(paths.system_wav))
@@ -344,7 +346,7 @@ def test_tracks_of_different_rates_become_one_system_track(tmp_path):
     paths = make_meeting(tmp_path / "anna")
     t = np.arange(48_000 * 60) / 48_000
     sf.write(str(paths.mic_wav), (0.3 * np.sin(2 * np.pi * 440 * t)).astype(np.float32), 48_000, subtype="PCM_16")
-    import_into(tmp_path / "timo", export(paths, tmp_path / "x.palaver", audio=True))
+    import_into(tmp_path / "timo", export(paths, tmp_path / "x.zip", audio=True))
     here = RecordingPaths(tmp_path / "timo" / ID)
     audio, rate = sf.read(str(here.system_wav))
     assert rate == SR and abs(len(audio) / SR - 60) < 0.5 and not here.mic_wav.exists()
@@ -355,19 +357,19 @@ def test_tracks_of_different_rates_become_one_system_track(tmp_path):
 def test_a_microphone_alone_becomes_the_system_track(tmp_path):
     paths = make_meeting(tmp_path / "anna")
     paths.system_wav.unlink()
-    import_into(tmp_path / "timo", export(paths, tmp_path / "x.palaver", audio=True))
+    import_into(tmp_path / "timo", export(paths, tmp_path / "x.zip", audio=True))
     here = RecordingPaths(tmp_path / "timo" / ID)
     assert here.system_wav.exists() and not here.mic_wav.exists()
 
 
 def test_audio_is_not_decoded_onto_a_nearly_full_disk(tmp_path, monkeypatch):
-    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.palaver", audio=True)
+    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.zip", audio=True)
     monkeypatch.setattr(exchange, "_free_bytes", lambda path: exchange.MIN_FREE_BYTES + 1000)
     rejected(tmp_path, out, "Not enough free disk space")
 
 
 def test_voices_go_into_the_voice_bank_only_after_a_yes(tmp_path):
-    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.palaver", voices=True)
+    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.zip", voices=True)
     result = import_into(tmp_path / "timo", out)
     assert result.voices == [{"label": "SPEAKER_00", "name": "Tom"}, {"label": "SPEAKER_01", "name": "Carla"}]
     bank = VoiceBank()
@@ -383,7 +385,7 @@ def test_voices_go_into_the_voice_bank_only_after_a_yes(tmp_path):
 def test_pending_voices_are_kept_apart_where_nothing_reads_them(tmp_path):
     """Recognition, inference, suggestions and the voice bank read
     speaker_embeddings.json; voices not yet said yes to are not in it."""
-    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.palaver", voices=True)
+    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.zip", voices=True)
     import_into(tmp_path / "timo", out)
     paths = RecordingPaths(tmp_path / "timo" / ID)
     assert not paths.speaker_embeddings.exists()
@@ -393,7 +395,7 @@ def test_pending_voices_are_kept_apart_where_nothing_reads_them(tmp_path):
 def test_yes_to_a_hint_teaches_no_voice_while_the_voices_wait(tmp_path):
     from palaver.webapp import api
 
-    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.palaver", voices=True)
+    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.zip", voices=True)
     mine = tmp_path / "timo"
     import_into(mine, out)
     api.name_speaker(mine, ID, "SPEAKER_00", "Tom")  # "Yes, Tom" on the hint
@@ -405,7 +407,7 @@ def test_yes_to_the_voices_skips_a_name_the_user_rejected(tmp_path):
     from palaver.speakers import load_speaker_names
     from palaver.webapp import api
 
-    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.palaver", voices=True)
+    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.zip", voices=True)
     mine = tmp_path / "timo"
     import_into(mine, out)
     api.name_speaker(mine, ID, "SPEAKER_01", "")  # "No, not Carla"
@@ -417,7 +419,7 @@ def test_yes_to_the_voices_skips_a_name_the_user_rejected(tmp_path):
 
 
 def test_voices_said_no_to_are_deleted_from_the_meeting(tmp_path):
-    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.palaver", voices=True)
+    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.zip", voices=True)
     import_into(tmp_path / "timo", out)
     paths = RecordingPaths(tmp_path / "timo" / ID)
     assert exchange.decide_voices(paths, False) == []
@@ -428,7 +430,7 @@ def test_voices_said_no_to_are_deleted_from_the_meeting(tmp_path):
 def test_undoing_an_import_forgets_the_voices_it_taught(tmp_path):
     from palaver.webapp import api
 
-    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.palaver", voices=True)
+    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.zip", voices=True)
     mine = tmp_path / "timo"
     answer = api.import_meeting(mine, out, user_name="Timo")
     bank = VoiceBank()
@@ -503,7 +505,7 @@ def test_a_calendar_here_links_its_own_copy_of_the_event(tmp_path, exported):
 
 
 def test_the_exporters_project_is_a_hint_kept_with_the_import(tmp_path):
-    out = exchange.export_meeting(make_meeting(tmp_path / "anna"), tmp_path / "x.palaver", user_name="Anna Berg",
+    out = exchange.export_meeting(make_meeting(tmp_path / "anna"), tmp_path / "x.zip", user_name="Anna Berg",
                                   projects=["Northwind"])
     import_into(tmp_path / "timo", out)
     assert exchange.load_record(RecordingPaths(tmp_path / "timo" / ID))["projects"] == ["Northwind"]
@@ -547,49 +549,126 @@ def rejected(tmp_path: Path, file: Path, match: str) -> None:
 
 
 def test_not_a_zip_is_rejected(tmp_path):
-    bad = tmp_path / "x.palaver"
+    bad = tmp_path / "x.zip"
     bad.write_text("hello")
     rejected(tmp_path, bad, "not a zip")
 
 
 def test_an_unknown_format_version_is_rejected_with_a_clear_message(tmp_path, exported):
-    rejected(tmp_path, repack(exported, tmp_path / "x.palaver", manifest={"format": 2}),
+    rejected(tmp_path, repack(exported, tmp_path / "x.zip", manifest={"format": 2}),
              "format 2; this Palaver reads format 1. Update Palaver")
 
 
 def test_a_file_not_matching_its_checksum_is_rejected(tmp_path, exported):
     transcript = json.dumps([{"start": 0, "end": 1, "text": "forged", "label": "SPEAKER_00"}]).encode()
-    rejected(tmp_path, repack(exported, tmp_path / "x.palaver", change={"meeting/transcript.json": transcript},
+    rejected(tmp_path, repack(exported, tmp_path / "x.zip", change={"meeting/transcript.json": transcript},
                               fix=False), "does not match its checksum")
 
 
 def test_a_path_out_of_the_folder_is_rejected(tmp_path, exported):
-    rejected(tmp_path, repack(exported, tmp_path / "x.palaver", extra=[("../../evil.json", b"{}")]), "unsafe path")
-    rejected(tmp_path, repack(exported, tmp_path / "y.palaver", extra=[("/etc/evil.json", b"{}")]), "unsafe path")
+    rejected(tmp_path, repack(exported, tmp_path / "x.zip", extra=[("../../evil.json", b"{}")]), "unsafe path")
+    rejected(tmp_path, repack(exported, tmp_path / "y.zip", extra=[("/etc/evil.json", b"{}")]), "unsafe path")
 
 
 def test_a_link_is_rejected(tmp_path, exported):
     info = zipfile.ZipInfo("voices/SPEAKER_00.json")
     info.external_attr = (stat.S_IFLNK | 0o777) << 16
-    rejected(tmp_path, repack(exported, tmp_path / "x.palaver", extra=[(info, b"/etc/passwd")]), "link")
+    rejected(tmp_path, repack(exported, tmp_path / "x.zip", extra=[(info, b"/etc/passwd")]), "link")
 
 
 def test_a_file_not_part_of_the_format_is_rejected(tmp_path, exported):
-    rejected(tmp_path, repack(exported, tmp_path / "x.palaver", extra=[("meeting/run.sh", b"rm -rf ~")]),
-             "not part of a Palaver file")
+    rejected(tmp_path, repack(exported, tmp_path / "x.zip", extra=[("meeting/run.sh", b"rm -rf ~")]),
+             "not part of an exported meeting")
+
+
+def in_folder(src: Path, dst: Path, folder: str, *, extra: list[tuple[str, bytes]] = ()) -> Path:
+    """``src`` the way Finder compresses its unpacked folder again: every
+    entry under ``folder/``, the folders listed, AppleDouble files in
+    ``__MACOSX/``, a ``.DS_Store``."""
+    with zipfile.ZipFile(src) as zf:
+        files = {n: zf.read(n) for n in zf.namelist()}
+    with zipfile.ZipFile(dst, "w") as zf:
+        for d in ("", "meeting/", "voices/", "audio/"):
+            if d == "" or any(n.startswith(d) for n in files):
+                zf.writestr(f"{folder}/{d}", b"")
+        for n, d in files.items():
+            zf.writestr(f"{folder}/{n}", d)
+            zf.writestr(f"__MACOSX/{folder}/{'/'.join(n.split('/')[:-1] + ['._' + n.split('/')[-1]])}", b"\0\5\26\7")
+        zf.writestr(f"{folder}/.DS_Store", b"\0\0\0\1Bud1")
+        for n, d in extra:
+            zf.writestr(n, d)
+    return dst
+
+
+def test_a_zip_unpacked_and_compressed_again_in_finder_imports(tmp_path):
+    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.zip", audio=True, voices=True)
+    again = in_folder(out, tmp_path / "again.zip", "2026-10-29 Q3 budget plan")
+    result = import_into(tmp_path / "timo", again)
+    assert result.id == ID and result.sender == "Anna Berg"
+    assert RecordingPaths(tmp_path / "timo" / ID).system_wav.exists()  # the audio, read under the folder
+
+
+@pytest.mark.skipif(shutil.which("ditto") is None, reason="macOS only: Finder's Compress is ditto")
+def test_a_folder_compressed_by_finder_imports(tmp_path):
+    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.zip", audio=True)
+    unpacked = tmp_path / "unpacked" / "2026-10-29 Q3 budget plan"
+    subprocess.run(["ditto", "-x", "-k", str(out), str(unpacked)], check=True)
+    (unpacked / ".DS_Store").write_bytes(b"\0\0\0\1Bud1")
+    subprocess.run(["xattr", "-w", "com.apple.metadata:kMDItemWhereFroms", "x", str(unpacked / "manifest.json")],
+                   check=True)  # an attribute becomes a ._ file in __MACOSX/
+    again = tmp_path / "again.zip"
+    subprocess.run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(unpacked), str(again)], check=True)
+    assert any(n.startswith("__MACOSX/") for n in names_in(again))
+    assert import_into(tmp_path / "timo", again).id == ID
+
+
+def test_a_zip_that_is_not_an_exported_meeting_says_so(tmp_path):
+    other = tmp_path / "photos.zip"
+    with zipfile.ZipFile(other, "w") as zf:
+        zf.writestr("photos/beach.jpg", b"\xff\xd8")
+    rejected(tmp_path, other, "not a meeting exported from Palaver")
+
+
+def test_only_one_folder_around_the_meeting_is_taken(tmp_path, exported):
+    two = in_folder(exported, tmp_path / "two.zip", "a", extra=[("b/manifest.json", b"{}")])
+    rejected(tmp_path, two, "not a meeting exported from Palaver")
+    deeper = in_folder(in_folder(exported, tmp_path / "in.zip", "inner"), tmp_path / "deeper.zip", "outer")
+    rejected(tmp_path, deeper, "not a meeting exported from Palaver")
+
+
+def test_under_the_folder_the_same_rules_hold(tmp_path, exported):
+    rejected(tmp_path, in_folder(exported, tmp_path / "a.zip", "m", extra=[("m/meeting/run.sh", b"rm -rf ~")]),
+             "not part of an exported meeting")
+    rejected(tmp_path, in_folder(exported, tmp_path / "b.zip", "m", extra=[("m/scripts/", b"")]),
+             "folder 'm/scripts/'")
+    rejected(tmp_path, in_folder(exported, tmp_path / "c.zip", "m", extra=[("__MACOSX/../evil", b"")]),
+             "unsafe path")
+    rejected(tmp_path, in_folder(exported, tmp_path / "d.zip", "m", extra=[("m/.DS_Store/x.json", b"{}")]),
+             "not part of an exported meeting")
+
+
+def test_a_changed_file_under_the_folder_fails_its_checksum(tmp_path, exported):
+    forged = repack(exported, tmp_path / "f.zip", fix=False,
+                    change={"meeting/transcript.json": b'[{"start": 0, "end": 1, "text": "x", "label": "SPEAKER_00"}]'})
+    rejected(tmp_path, in_folder(forged, tmp_path / "g.zip", "m"), "does not match its checksum")
+
+
+def test_finder_entries_do_not_count_as_files_but_are_capped(tmp_path, exported):
+    junk = [(f"__MACOSX/m/._{i}", b"") for i in range(exchange.MAX_RAW_ENTRIES)]
+    rejected(tmp_path, in_folder(exported, tmp_path / "j.zip", "m", extra=junk), "an exported meeting has at most 64")
 
 
 def test_a_zip_listing_too_many_entries_is_rejected_before_it_is_opened(tmp_path, monkeypatch):
-    many = tmp_path / "many.palaver"
+    many = tmp_path / "many.zip"
     with zipfile.ZipFile(many, "w") as zf:
-        for i in range(100):
+        for i in range(300):
             zf.writestr(f"x{i}", b"")
     monkeypatch.setattr(zipfile, "ZipFile", lambda *a, **k: pytest.fail("opened"))
-    rejected(tmp_path, many, "100 entries; a Palaver file has at most 64")
+    rejected(tmp_path, many, "300 entries; an exported meeting has at most 64")
 
 
 def test_a_zip_with_a_huge_table_of_contents_is_rejected(tmp_path):
-    big = tmp_path / "big.palaver"
+    big = tmp_path / "big.zip"
     with zipfile.ZipFile(big, "w") as zf:
         for i in range(3):
             zf.writestr(f"{i}" + "a" * 30_000, b"")
@@ -624,69 +703,69 @@ def test_too_much_in_total_is_rejected(tmp_path, exported, monkeypatch):
 
 def test_an_entry_larger_than_its_header_says_is_rejected(tmp_path, exported, monkeypatch):
     real = exchange._cap
-    monkeypatch.setattr(exchange, "_entries", lambda zf: {i.filename: i for i in zf.infolist()})
+    monkeypatch.setattr(exchange, "_entries", lambda zf: ("", {i.filename: i for i in zf.infolist()}))
     monkeypatch.setattr(exchange, "_cap", lambda name: 10 if name == "meeting/transcript.json" else real(name))
     rejected(tmp_path, exported, "larger than it says")
 
 
 def test_a_json_not_fitting_its_schema_is_rejected_before_anything_is_written(tmp_path, exported):
     transcript = json.dumps([{"start": 0, "end": 1, "text": 42, "label": "SPEAKER_00"}]).encode()
-    rejected(tmp_path, repack(exported, tmp_path / "x.palaver", change={"meeting/transcript.json": transcript}),
+    rejected(tmp_path, repack(exported, tmp_path / "x.zip", change={"meeting/transcript.json": transcript}),
              r"transcript.json\[0\].text is not string")
 
 
 def test_unknown_keys_are_rejected(tmp_path, exported):
     meta = json.loads(json.dumps(doc(exported, "meeting/meta.json")))
     meta["run"] = "something"
-    rejected(tmp_path, repack(exported, tmp_path / "x.palaver", change={"meeting/meta.json": json.dumps(meta).encode()}),
+    rejected(tmp_path, repack(exported, tmp_path / "x.zip", change={"meeting/meta.json": json.dumps(meta).encode()}),
              "which it can't have")
 
 
 def test_nan_is_rejected(tmp_path, exported):
-    rejected(tmp_path, repack(exported, tmp_path / "x.palaver",
+    rejected(tmp_path, repack(exported, tmp_path / "x.zip",
                               change={"meeting/turns.json": b'[{"speaker": "SPEAKER_00", "start": NaN, "end": 1}]'}),
              "NaN")
 
 
 def test_a_label_that_is_not_a_speaker_label_is_rejected(tmp_path, exported):
     speakers = json.dumps([{"label": "../../x", "name": "Tom", "how": "hand"}]).encode()
-    rejected(tmp_path, repack(exported, tmp_path / "x.palaver", change={"meeting/speakers.json": speakers}),
+    rejected(tmp_path, repack(exported, tmp_path / "x.zip", change={"meeting/speakers.json": speakers}),
              "not in the expected form")
 
 
 def test_times_outside_the_meeting_are_rejected(tmp_path, exported):
     turns = json.dumps([{"speaker": "SPEAKER_00", "start": 1, "end": 5000}]).encode()
-    rejected(tmp_path, repack(exported, tmp_path / "x.palaver", change={"meeting/turns.json": turns}),
+    rejected(tmp_path, repack(exported, tmp_path / "x.zip", change={"meeting/turns.json": turns}),
              "not within the meeting")
 
 
 def test_a_missing_required_file_is_rejected(tmp_path, exported):
-    rejected(tmp_path, repack(exported, tmp_path / "x.palaver", change={"meeting/turns.json": None}), "lacks")
+    rejected(tmp_path, repack(exported, tmp_path / "x.zip", change={"meeting/turns.json": None}), "lacks")
 
 
 def test_a_file_the_manifest_does_not_list_is_rejected(tmp_path, exported):
-    out = repack(exported, tmp_path / "x.palaver", fix=False, extra=[("meeting/notes.json", b"{}")],
+    out = repack(exported, tmp_path / "x.zip", fix=False, extra=[("meeting/notes.json", b"{}")],
                  change={"meeting/notes.json": None})
     rejected(tmp_path, out, "not listed")
 
 
 def test_a_voice_of_someone_not_named_is_rejected(tmp_path, exported):
     voice = json.dumps({"label": "SPEAKER_00", "name": "Mallory", "embedding": _vector(5)}).encode()
-    rejected(tmp_path, repack(exported, tmp_path / "x.palaver", change={"voices/SPEAKER_00.json": voice}),
+    rejected(tmp_path, repack(exported, tmp_path / "x.zip", change={"voices/SPEAKER_00.json": voice}),
              "not the voice of a person named")
 
 
 def test_an_unusual_compression_is_rejected(tmp_path, exported):
     info = zipfile.ZipInfo("meeting/calendar.json")
     info.compress_type = zipfile.ZIP_BZIP2
-    out = repack(exported, tmp_path / "x.palaver", change={"meeting/calendar.json": None},
+    out = repack(exported, tmp_path / "x.zip", change={"meeting/calendar.json": None},
                  manifest={}, extra=[(info, b"{}")])
     rejected(tmp_path, out, "compressed in a way")
 
 
 def test_a_number_json_can_only_write_as_infinity_is_rejected(tmp_path, exported):
     voice = b'{"label": "SPEAKER_00", "name": "Tom", "embedding": [1e999' + b", 0.5" * 20 + b"]}"
-    rejected(tmp_path, repack(exported, tmp_path / "x.palaver", change={"voices/SPEAKER_00.json": voice}),
+    rejected(tmp_path, repack(exported, tmp_path / "x.zip", change={"voices/SPEAKER_00.json": voice}),
              "not a finite number")
 
 
@@ -696,7 +775,7 @@ def test_voices_of_another_size_than_here_are_left_out_and_said_so(tmp_path):
     anna = make_meeting(tmp_path / "anna")
     emb = json.loads(anna.speaker_embeddings.read_text())
     anna.speaker_embeddings.write_text(json.dumps({k: v + v for k, v in emb.items()}))  # 128, here 64
-    out = export(anna, tmp_path / "x.palaver", voices=True)
+    out = export(anna, tmp_path / "x.zip", voices=True)
     mine = tmp_path / "timo"
     make_meeting(mine, "2026-10-01T10-00-00", start="2026-10-01T10:00:00+01:00", event=None, user="Timo")
     VoiceBank().add("Zoe", [1.0] * 64, source="x:1")
@@ -718,7 +797,7 @@ def test_an_import_whose_follow_up_fails_is_taken_out_again(tmp_path, exported):
 
 
 def test_a_damaged_manifest_is_rejected(tmp_path, exported):
-    damaged = tmp_path / "x.palaver"
+    damaged = tmp_path / "x.zip"
     data = bytearray(exported.read_bytes())
     with zipfile.ZipFile(exported) as zf:
         info = zf.getinfo("manifest.json")
@@ -731,16 +810,16 @@ def test_a_damaged_manifest_is_rejected(tmp_path, exported):
 @pytest.mark.parametrize("when", ["9999-12-31T23:59:59+14:00", "0001-01-01T00:00:00-12:00", "1970-01-01T00:00:00+00:00"])
 def test_a_date_out_of_range_is_rejected(tmp_path, exported, when):
     meta = {**doc(exported, "meeting/meta.json"), "start": when, "end": when}
-    rejected(tmp_path, repack(exported, tmp_path / "x.palaver", change={"meeting/meta.json": json.dumps(meta).encode()}),
+    rejected(tmp_path, repack(exported, tmp_path / "x.zip", change={"meeting/meta.json": json.dumps(meta).encode()}),
              "out of range")
 
 
 def test_audio_broken_after_its_header_is_rejected(tmp_path):
-    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.palaver", audio=True)
+    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.zip", audio=True)
     with zipfile.ZipFile(out) as zf:
         opus = bytearray(zf.read("audio/system.opus"))
     opus[300:] = bytes((i * 37) % 256 for i in range(len(opus) - 300))
-    rejected(tmp_path, repack(out, tmp_path / "y.palaver", change={"audio/system.opus": bytes(opus)}), "audio")
+    rejected(tmp_path, repack(out, tmp_path / "y.zip", change={"audio/system.opus": bytes(opus)}), "audio")
 
 
 def test_leftovers_of_imports_are_swept_at_start_and_of_exports_on_the_next_export(tmp_path):
@@ -752,7 +831,7 @@ def test_leftovers_of_imports_are_swept_at_start_and_of_exports_on_the_next_expo
 
     rec, downloads = tmp_path / "rec", tmp_path / "Downloads"
     old, fresh = rec / ".importing" / "a", rec / ".importing" / "b"
-    old_export, other = downloads / ".palaver-export-x1", downloads / "keep.palaver"
+    old_export, other = downloads / ".palaver-export-x1", downloads / "keep.zip"
     for d in (old, fresh, old_export):
         d.mkdir(parents=True)
     other.write_text("mine")
@@ -770,8 +849,8 @@ def test_leftovers_of_imports_are_swept_at_start_and_of_exports_on_the_next_expo
 
 
 def test_audio_that_is_not_audio_is_rejected(tmp_path):
-    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.palaver", audio=True)
-    rejected(tmp_path, repack(out, tmp_path / "y.palaver", change={"audio/system.opus": b"not audio at all"}),
+    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.zip", audio=True)
+    rejected(tmp_path, repack(out, tmp_path / "y.zip", change={"audio/system.opus": b"not audio at all"}),
              "can't be read")
 
 
@@ -822,7 +901,7 @@ def test_cli_export_and_import_round_trip(tmp_path, capsys, monkeypatch):
 
     monkeypatch.setattr("palaver.settings.user_name", lambda: None)
     make_meeting(tmp_path / "anna")
-    out = tmp_path / "budget.palaver"
+    out = tmp_path / "budget.zip"
     assert main(["--config", str(cli_config(tmp_path, "anna", "Anna Berg")), "export", ID, "--no-notes", "--voices",
                  "-o", str(out)]) == 0
     assert "Exported transcript and names, voices to" in capsys.readouterr().out
@@ -845,24 +924,24 @@ def test_cli_export_of_a_meeting_kept_on_this_mac_needs_yes(tmp_path, capsys, mo
     paths = make_meeting(tmp_path / "anna")
     paths.local_only.write_text("{}")
     cfg = str(cli_config(tmp_path, "anna", "Anna Berg"))
-    assert main(["--config", cfg, "export", ID, "-o", str(tmp_path / "x.palaver")]) == 1
-    assert not (tmp_path / "x.palaver").exists()
-    assert main(["--config", cfg, "export", ID, "-o", str(tmp_path / "x.palaver"), "--yes"]) == 0
+    assert main(["--config", cfg, "export", ID, "-o", str(tmp_path / "x.zip")]) == 1
+    assert not (tmp_path / "x.zip").exists()
+    assert main(["--config", cfg, "export", ID, "-o", str(tmp_path / "x.zip"), "--yes"]) == 0
 
 
 def test_cli_import_says_why_a_file_is_rejected(tmp_path, capsys):
     from palaver.cli import main
 
-    bad = tmp_path / "x.palaver"
+    bad = tmp_path / "x.zip"
     bad.write_text("nope")
     assert main(["--config", str(cli_config(tmp_path, "timo", "Timo")), "import", str(bad)]) == 1
-    assert "Not imported: This is not a Palaver file" in capsys.readouterr().out
+    assert "Not imported: This is not a zip" in capsys.readouterr().out
 
 
 def test_an_import_is_built_before_the_projects_are_held(tmp_path, monkeypatch):
     from palaver.webapp import api
 
-    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.palaver", audio=True)
+    out = export(make_meeting(tmp_path / "anna"), tmp_path / "x.zip", audio=True)
     held = []
     real = exchange._write_audio
     monkeypatch.setattr(exchange, "_write_audio",
@@ -905,11 +984,11 @@ def call(srv, path, body=None, *, raw: bytes | None = None, content_type="applic
 
 def test_http_export_saves_to_downloads(server, tmp_path):
     status, answer = call(server, f"/api/meetings/{ID}/export", {"notes": False, "voices": True})
-    assert status == 200 and answer["name"] == "2026-10-29 Budget review.palaver" and answer["folder"] == "Downloads"
+    assert status == 200 and answer["name"] == "2026-10-29 Budget review.zip" and answer["folder"] == "Downloads"
     saved = tmp_path / "Downloads" / answer["name"]
     assert "meeting/notes.json" not in names_in(saved) and "voices/SPEAKER_00.json" in names_in(saved)
     _, again = call(server, f"/api/meetings/{ID}/export", {})
-    assert again["name"] == "2026-10-29 Budget review 2.palaver"  # never over an earlier one
+    assert again["name"] == "2026-10-29 Budget review 2.zip"  # never over an earlier one
 
 
 def test_http_export_of_a_meeting_kept_on_this_mac_asks_first(server, tmp_path):
@@ -917,7 +996,7 @@ def test_http_export_of_a_meeting_kept_on_this_mac_asks_first(server, tmp_path):
     assert call(server, f"/api/meetings/{ID}/export", {}) == (200, {"question": "local_only"})
     assert not (tmp_path / "Downloads").exists()
     status, answer = call(server, f"/api/meetings/{ID}/export", {"confirm_local": True})
-    assert status == 200 and answer["name"].endswith(".palaver")
+    assert status == 200 and answer["name"].endswith(".zip")
 
 
 def test_http_import_asks_before_going_beside_my_own_recording(server, tmp_path, exported):
@@ -934,12 +1013,12 @@ def test_http_import_asks_before_going_beside_my_own_recording(server, tmp_path,
 def test_http_import_refuses_json_and_says_why_a_file_is_rejected(server, tmp_path, exported):
     assert call(server, "/api/import", {"file": "x"})[0] == 415
     status, answer = call(server, "/api/import", raw=b"not a zip", content_type="application/octet-stream")
-    assert status == 400 and answer["error"].startswith("Not imported: This is not a Palaver file")
+    assert status == 400 and answer["error"].startswith("Not imported: This is not a zip")
 
 
 def test_http_voices_of_an_import_are_added_on_a_yes(tmp_path, server):
     out = export(make_meeting(tmp_path / "anna", "2026-10-28T09-00-00", start="2026-10-28T09:00:00+01:00", event=None),
-                 tmp_path / "x.palaver", voices=True)
+                 tmp_path / "x.zip", voices=True)
     _, answer = call(server, "/api/import", raw=out.read_bytes(), content_type="application/octet-stream")
     assert answer["voices"] == [{"label": "SPEAKER_00", "name": "Tom"}, {"label": "SPEAKER_01", "name": "Carla"}]
     before = VoiceBank().names()  # Tom, from the user's own meeting (named by hand there)

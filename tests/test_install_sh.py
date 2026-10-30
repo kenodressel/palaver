@@ -63,8 +63,10 @@ def home(tmp_path) -> Path:
     return h
 
 
-def run_install(home: Path, dist: Path, *args, opened: Path | None = None, background=False, path_bin=True):
-    env = {"HOME": str(home), "PATH": (f"{home}/.local/bin:" if path_bin else "") + "/usr/bin:/bin:/usr/sbin:/sbin",
+def run_install(home: Path, dist: Path, *args, opened: Path | None = None, background=False, path_bin=True,
+                tools: Path | None = None):
+    env = {"HOME": str(home), "PATH": (f"{tools}:" if tools else "") + (f"{home}/.local/bin:" if path_bin else "")
+           + "/usr/bin:/bin:/usr/sbin:/sbin",
            "PALAVER_ASSETS_DIR": str(dist), "PALAVER_WAIT_SECONDS": "0.2", "LANG": "en_US.UTF-8"}
     if opened is not None:
         opener = home.parent / "open"
@@ -92,6 +94,32 @@ def test_a_fresh_install_puts_the_layers_in_the_home_folder_and_opens_nothing(ho
     assert installed_version(home) == "0.1.0"
     assert (home / "Library" / "Application Support" / "palaver" / "runtime" / RID / "bin" / "python3").exists()
     assert not opened.exists()
+
+
+def test_an_update_of_an_idle_app_does_not_wait_where_plutil_prints_its_errors_on_stdout(home, tmp_path):
+    """macOS 15's plutil says "No value at that key path" on stdout: a key
+    daemon.json leaves out is still nothing to wait for."""
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    (tools / "plutil").write_text('#!/bin/sh\nout="$(/usr/bin/plutil "$@" 2>&1)" || '
+                                  '{ echo "Could not extract value, error: No value at that key path"; exit 1; }\n'
+                                  'printf "%s" "$out"\n')
+    (tools / "plutil").chmod(0o755)
+    assert run_install(home, build_assets(tmp_path / "d1", "0.1.0")).returncode == 0
+    app = home / "Applications" / "Palaver.app"
+    launcher = subprocess.Popen([str(app / "Contents" / "MacOS" / "palaver-launcher")])
+    state = home / "Library" / "Application Support" / "palaver" / "daemon.json"
+    state.write_text(json.dumps({"state": "idle", "pid": launcher.pid}))
+    try:
+        proc = run_install(home, build_assets(tmp_path / "d2", "0.2.0"), opened=tmp_path / "opened.txt",
+                           tools=tools)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "waits until it is done" not in proc.stdout
+        assert installed_version(home) == "0.2.0"
+    finally:
+        if launcher.poll() is None:
+            launcher.send_signal(signal.SIGKILL)
+            launcher.wait()
 
 
 def test_an_update_waits_for_processing_quits_only_the_menu_bar_app_and_opens_it_again(home, tmp_path):

@@ -47,7 +47,7 @@ _MY_NOTES = re.compile(r"/api/(meetings|upcoming)/([^/]+)/my-notes(?:/(images|cl
 # Request bodies: an image pasted into the notes (base64) may be large; nothing else is.
 MAX_IMAGE_BODY = 35 * 1024 * 1024
 MAX_BODY = 2 * 1024 * 1024
-# A .palaver file to import (#58): at most what exchange.py unpacks, and its zip headers.
+# An exported meeting's zip to import (#58): at most what exchange.py unpacks, and its zip headers.
 MAX_IMPORT_BODY = exchange.MAX_FILE_BYTES
 
 
@@ -479,12 +479,12 @@ def _handler(app: App, port: int) -> type[BaseHTTPRequestHandler]:
                 return self._error(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
 
         def _import(self):
-            """A .palaver file, as the bytes it is (not JSON: it may be large).
+            """An exported meeting's zip, as the bytes it is (not JSON: it may be large).
             A foreign page can't send this type without a CORS preflight,
             which this server never answers. Kept in a temporary file while
             it is checked and imported."""
             if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/octet-stream":
-                return self._error(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "a .palaver file only")
+                return self._error(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "an exported meeting's .zip only")
             try:
                 length = int(self.headers.get("Content-Length") or 0)
             except ValueError:
@@ -495,7 +495,7 @@ def _handler(app: App, port: int) -> type[BaseHTTPRequestHandler]:
                                    "Not imported: the file is too large." if length > 0 else "no file")
             query = parse_qs(urlparse(self.path).query)
             with tempfile.TemporaryDirectory(prefix="palaver-import-") as tmp:
-                file = Path(tmp) / "import.palaver"
+                file = Path(tmp) / "import.zip"
                 with file.open("wb") as sink:
                     left = length
                     while left:

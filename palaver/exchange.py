@@ -1,5 +1,5 @@
 """Send a meeting to a colleague and take one in (issue #58): one
-``.palaver`` file, a zip with a fixed layout, no cloud and no account.
+zip with a fixed layout, no cloud and no account.
 
 ::
 
@@ -61,15 +61,18 @@ from .speakers import (load_ignored, load_inferred_names, load_merges, load_reco
                        load_speaker_names, names_in_effect, save_speaker_names)
 
 FORMAT = 1
-SUFFIX = ".palaver"
+SUFFIX = ".zip"
 
 # Caps: a four-hour meeting fits with room to spare, a zip bomb does not.
 MAX_ENTRIES = 64
+# A folder compressed again in Finder (Safari unpacks a downloaded zip) adds
+# its folders, __MACOSX/, .DS_Store and ._ files: entries skipped, never read.
+MAX_RAW_ENTRIES = 4 * MAX_ENTRIES
 MAX_JSON_BYTES = 16 * 1024 * 1024
 MAX_AUDIO_BYTES = 600 * 1024 * 1024
 MAX_TOTAL_BYTES = 1300 * 1024 * 1024
 MAX_FILE_BYTES = 1400 * 1024 * 1024  # the file itself: what it unpacks to, and its zip headers
-MAX_DIRECTORY_BYTES = 64 * 1024  # the zip's table of contents: 64 entries need a few KB
+MAX_DIRECTORY_BYTES = 64 * 1024  # the zip's table of contents: 256 entries need a few KB
 _END_OF_DIRECTORY = b"PK\x05\x06"
 MAX_SECONDS = 12 * 3600
 MIN_FREE_BYTES = 2 * 1024 ** 3  # what decoding an import's audio leaves free at least
@@ -90,6 +93,9 @@ _NAME = re.compile(rf"manifest\.json|meeting/(meta|calendar|transcript|turns|spe
 _REQUIRED = {"meeting/meta.json", "meeting/transcript.json", "meeting/turns.json", "meeting/speakers.json"}
 # Notes keys that travel; anything else (hashes of the exporter's files) stays home.
 _NOTES_KEYS = ("title", "summary", "sections", "next_steps", "decisions", "speaker_names")
+
+
+NOT_EXPORTED = "This zip is not a meeting exported from Palaver: it has no manifest.json."
 
 
 class Rejected(ValueError):
@@ -287,7 +293,7 @@ def _bytes(value: Any) -> bytes:
 
 
 def file_name(paths: RecordingPaths) -> str:
-    """``<date> <title>.palaver``, safe as a file name anywhere it is sent."""
+    """``<date> <title>.zip``, safe as a file name anywhere it is sent."""
     meta = _read(paths.meta, {})
     try:
         start = datetime.fromisoformat(meta["start_time"]).astimezone()
@@ -409,7 +415,7 @@ def _encode_audio(wav: Path, dest_dir: Path, track: str) -> Path:
 
 def export_meeting(paths: RecordingPaths, dest: Path, *, user_name: str, notes: bool = True, voices: bool = False,
                    audio: bool = False, confirm_local: bool = False, projects: Iterable[str] = ()) -> Path:
-    """Write the meeting to ``dest`` (a ``.palaver`` file; written beside
+    """Write the meeting to ``dest`` (a ``.zip`` file; written beside
     it first, then renamed, so a half-written file is never seen). A
     meeting kept on this Mac raises ``KeptOnThisMac`` unless the user said
     yes (``confirm_local``). ``projects``: the exporter's project names, a
@@ -467,7 +473,7 @@ def export_meeting(paths: RecordingPaths, dest: Path, *, user_name: str, notes: 
         manifest = {"format": FORMAT, "palaver_version": __version__,
                     "exported_at": datetime.now().astimezone().isoformat(timespec="seconds"),
                     "exported_by": user_name, "files": listed}
-        part = tmp / "out.palaver"
+        part = tmp / "out.zip"
         with zipfile.ZipFile(part, "w") as zf:
             zf.writestr("manifest.json", _bytes(manifest), compress_type=zipfile.ZIP_DEFLATED)
             for name, content in files.items():
@@ -512,7 +518,7 @@ def free_name(folder: Path, name: str) -> Path:
 
 @dataclass
 class Package:
-    """A ``.palaver`` file, checked: everything but the audio read and
+    """An exported meeting's zip, checked: everything but the audio read and
     validated; the audio checked when it is copied out."""
     path: Path
     manifest: dict
@@ -524,6 +530,7 @@ class Package:
     notes: dict | None = None
     voices: dict[str, dict] = field(default_factory=dict)  # label → {label, name, embedding}
     audio: list[str] = field(default_factory=list)  # entry names under audio/
+    root: str = ""  # the one folder everything is in, in a zip compressed again in Finder
 
     @property
     def sender(self) -> str:
@@ -562,56 +569,85 @@ def _cap(name: str) -> int:
     return MAX_AUDIO_BYTES if name.startswith("audio/") else MAX_JSON_BYTES
 
 
-def _entries(zf: zipfile.ZipFile) -> dict[str, zipfile.ZipInfo]:
-    """The zip's entries, refused unless every one is a file we know, of a
-    size we take, stored plainly or deflated, not encrypted, not a link."""
+_SKIPPED = re.compile(r"__MACOSX/.*|(.*/)?(\.DS_Store|\._[^/]+)")
+_FOLDERS = {"", "meeting/", "voices/", "audio/"}
+
+
+def _entries(zf: zipfile.ZipFile) -> tuple[str, dict[str, zipfile.ZipInfo]]:
+    """The zip's root folder ("" or ``<folder>/``) and its entries by their
+    name under it, refused unless every one is a file we know, of a size we
+    take, stored plainly or deflated, not encrypted, not a link. Finder's
+    additions (folders, ``__MACOSX/``, ``.DS_Store``) are skipped."""
     infos = zf.infolist()
-    if len(infos) > MAX_ENTRIES:
-        raise Rejected(f"The file has {len(infos)} entries; a Palaver file has at most {MAX_ENTRIES}.")
-    out: dict[str, zipfile.ZipInfo] = {}
-    total = 0
+    if len(infos) > MAX_RAW_ENTRIES:
+        raise Rejected(f"The zip has {len(infos)} entries; an exported meeting has at most {MAX_ENTRIES}.")
+    kept = []
     for info in infos:
         name = info.filename
-        if _unsafe(name):
-            raise Rejected(f"The file has an unsafe path: {name[:80]!r}.")
+        if _unsafe(name.removesuffix("/")):
+            raise Rejected(f"The zip has an unsafe path: {name[:80]!r}.")
         if stat.S_ISLNK(info.external_attr >> 16):
-            raise Rejected(f"The file has a link, which Palaver never follows: {name[:80]!r}.")
+            raise Rejected(f"The zip has a link, which Palaver never follows: {name[:80]!r}.")
+        if not _SKIPPED.fullmatch(name):
+            kept.append(info)
+    root = _root([i.filename for i in kept])
+    out: dict[str, zipfile.ZipInfo] = {}
+    total = 0
+    for info in kept:
+        name = info.filename[len(root):]
+        if info.is_dir():
+            if name not in _FOLDERS:
+                raise Rejected(f"The zip has the folder {info.filename[:80]!r}, which an exported meeting doesn't.")
+            continue
         if not _NAME.fullmatch(name):
-            raise Rejected(f"The file has {name[:80]!r}, which is not part of a Palaver file.")
+            raise Rejected(f"The zip has {info.filename[:80]!r}, which is not part of an exported meeting.")
         if name in out:
-            raise Rejected(f"The file has {name!r} twice.")
+            raise Rejected(f"The zip has {name!r} twice.")
         if info.flag_bits & 0x1:
-            raise Rejected("The file is encrypted.")
+            raise Rejected("The zip is encrypted.")
         if info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
             raise Rejected(f"{name!r} is compressed in a way Palaver does not read.")
         if info.file_size > _cap(name):
             raise Rejected(f"{name!r} is too large ({info.file_size // (1024 * 1024)} MB).")
         total += info.file_size
         out[name] = info
+    if len(out) > MAX_ENTRIES:
+        raise Rejected(f"The zip has {len(out)} files; an exported meeting has at most {MAX_ENTRIES}.")
     if total > MAX_TOTAL_BYTES:
-        raise Rejected(f"The file is too large ({total // (1024 * 1024)} MB unpacked).")
-    return out
+        raise Rejected(f"The zip is too large ({total // (1024 * 1024)} MB unpacked).")
+    return root, out
 
 
-def _read_entry(zf: zipfile.ZipFile, info: zipfile.ZipInfo, expected: dict, sink=None) -> bytes:
-    """The entry's bytes (or, with ``sink``, written there), never more than
-    its cap whatever its header says, and checked against the manifest."""
-    cap, size, digest, chunks = _cap(info.filename), 0, hashlib.sha256(), []
+def _root(names: list[str]) -> str:
+    """"" when the manifest is at the top; ``<folder>/`` when everything is
+    in that one folder and the manifest is directly in it."""
+    if "manifest.json" in names:
+        return ""
+    tops = {n.split("/", 1)[0] for n in names}
+    if len(tops) == 1 and f"{next(iter(tops))}/manifest.json" in names:
+        return f"{next(iter(tops))}/"
+    raise Rejected(NOT_EXPORTED)
+
+
+def _read_entry(zf: zipfile.ZipFile, name: str, info: zipfile.ZipInfo, expected: dict, sink=None) -> bytes:
+    """The entry ``name``'s bytes (or, with ``sink``, written there), never
+    more than its cap whatever its header says, and checked against the manifest."""
+    cap, size, digest, chunks = _cap(name), 0, hashlib.sha256(), []
     try:
         with zf.open(info) as f:
             for chunk in iter(lambda: f.read(_CHUNK), b""):
                 size += len(chunk)
                 if size > cap:
-                    raise Rejected(f"{info.filename!r} is larger than it says.")
+                    raise Rejected(f"{name!r} is larger than it says.")
                 digest.update(chunk)
                 if sink is None:
                     chunks.append(chunk)
                 else:
                     sink.write(chunk)
     except (zipfile.BadZipFile, zlib.error, EOFError) as exc:
-        raise Rejected(f"{info.filename!r} is damaged ({exc}).") from None
+        raise Rejected(f"{name!r} is damaged ({exc}).") from None
     if digest.hexdigest() != expected["sha256"] or size != expected["bytes"]:
-        raise Rejected(f"{info.filename!r} does not match its checksum: the file was changed or damaged.")
+        raise Rejected(f"{name!r} does not match its checksum: the zip was changed or damaged.")
     return b"".join(chunks)
 
 
@@ -626,31 +662,29 @@ def _precheck(path: Path) -> None:
             f.seek(max(0, size - 22 - 0xFFFF))  # the end record, behind at most a 64 KB comment
             tail = f.read()
     except OSError:
-        raise Rejected("This is not a Palaver file (it can't be read).") from None
+        raise Rejected("The file can't be read.") from None
     at = tail.rfind(_END_OF_DIRECTORY)
     if at < 0 or len(tail) - at < 22:
-        raise Rejected("This is not a Palaver file (it is not a zip).")
+        raise Rejected("This is not a zip.")
     entries = int.from_bytes(tail[at + 10:at + 12], "little")
     directory = int.from_bytes(tail[at + 12:at + 16], "little")
-    if entries > MAX_ENTRIES:
-        raise Rejected(f"The file has {entries} entries; a Palaver file has at most {MAX_ENTRIES}.")
+    if entries > MAX_RAW_ENTRIES:
+        raise Rejected(f"The zip has {entries} entries; an exported meeting has at most {MAX_ENTRIES}.")
     if directory > MAX_DIRECTORY_BYTES:
-        raise Rejected("The file's table of contents is too large for a Palaver file.")
+        raise Rejected("The zip's table of contents is too large for an exported meeting.")
 
 
 def read_package(path: Path) -> Package:
-    """Open and check a ``.palaver`` file (all but the audio's content,
+    """Open and check an exported meeting's zip (all but the audio's content,
     which ``import_package`` checks as it copies it). Raises ``Rejected``."""
     path = Path(path)
     _precheck(path)
     try:
         zf = zipfile.ZipFile(path)
     except (zipfile.BadZipFile, OSError, ValueError):
-        raise Rejected("This is not a Palaver file (it is not a zip).") from None
+        raise Rejected("This is not a zip.") from None
     with zf:
-        entries = _entries(zf)
-        if "manifest.json" not in entries:
-            raise Rejected("This is not a Palaver file: it has no manifest.")
+        root, entries = _entries(zf)
         manifest_info = entries.pop("manifest.json")
         if manifest_info.file_size > MAX_JSON_BYTES:
             raise Rejected("The manifest is too large.")
@@ -680,7 +714,7 @@ def read_package(path: Path) -> Package:
         for name, info in entries.items():
             if name.startswith("audio/"):
                 continue
-            doc = _json(_read_entry(zf, info, listed[name]), name)
+            doc = _json(_read_entry(zf, name, info, listed[name]), name)
             if name.startswith("voices/"):
                 check(doc, VOICE, name)
                 if f"voices/{doc['label']}.json" != name:
@@ -693,7 +727,7 @@ def read_package(path: Path) -> Package:
                       transcript=docs["meeting/transcript.json"], turns=docs["meeting/turns.json"],
                       speakers=docs["meeting/speakers.json"], calendar=docs.get("meeting/calendar.json"),
                       notes=docs.get("meeting/notes.json"), voices=voices,
-                      audio=sorted(n for n in entries if n.startswith("audio/")))
+                      audio=sorted(n for n in entries if n.startswith("audio/")), root=root)
     _consistent(package)
     return package
 
@@ -838,7 +872,7 @@ def _write_audio(zf: zipfile.ZipFile, package: Package, staging: Path, folder: P
     for name in package.audio:
         raw = staging / name.replace("/", "-")
         with raw.open("wb") as sink:
-            _read_entry(zf, zf.getinfo(name), package.manifest["files"][name], sink)
+            _read_entry(zf, name, zf.getinfo(package.root + name), package.manifest["files"][name], sink)
         tracks[name.split("/")[1].split(".")[0]] = raw
     if not tracks:
         return

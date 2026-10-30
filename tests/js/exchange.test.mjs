@@ -1,8 +1,8 @@
-// Export and import of a meeting as one .palaver file (#58): what the window says and sends.
+// Export and import of a meeting as one .zip (#58): what the window says and sends.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { exportChoices, exportRequest, exportedText, isPalaverFile, collisionText, importedText, importedLine,
+import { exportChoices, exportRequest, exportedText, isMeetingZip, collisionText, importedText, importedLine,
   voicesQuestion, inferredText, meetingCommands, paletteCommands, GLOBAL_COMMANDS, linkWhy }
   from "../../palaver/webapp/static/logic.js";
 
@@ -28,15 +28,16 @@ test("the export request says what is ticked, and the yes for a meeting kept on 
 });
 
 test("the toast says where the file went", () => {
-  assert.equal(exportedText({ name: "2026-10-29 Budget.palaver", folder: "Downloads" }),
-    "Saved to Downloads: “2026-10-29 Budget.palaver”");
+  assert.equal(exportedText({ name: "2026-10-29 Budget.zip", folder: "Downloads" }),
+    "Saved to Downloads: “2026-10-29 Budget.zip”");
 });
 
-test("only .palaver files are imported", () => {
-  assert.ok(isPalaverFile("2026-10-29 Budget.palaver"));
-  assert.ok(isPalaverFile("X.PALAVER"));
-  assert.ok(!isPalaverFile("notes.png"));
-  assert.ok(!isPalaverFile(undefined));
+test("only a .zip is imported", () => {
+  assert.ok(isMeetingZip("2026-10-29 Budget.zip"));
+  assert.ok(isMeetingZip("X.ZIP"));
+  assert.ok(!isMeetingZip("2026-10-29 Budget.palaver"));
+  assert.ok(!isMeetingZip("notes.png"));
+  assert.ok(!isMeetingZip(undefined));
 });
 
 test("the collision question says whose meeting is here", () => {

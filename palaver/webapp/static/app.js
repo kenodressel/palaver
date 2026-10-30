@@ -1059,7 +1059,7 @@ function voicesAnswered(id, r, add) {
   });
 }
 
-// Import…: a picked or dropped .palaver file becomes a meeting; Undo takes it back to the trash.
+// Import…: a picked or dropped exported .zip becomes a meeting; Undo takes it back to the trash.
 async function runImport(file) {
   const answer = await importFile(file);
   if (!answer) return;

@@ -77,7 +77,8 @@ check_mac() {
 # --- helpers -----------------------------------------------------------------------------------
 
 # A value from a JSON file: plutil reads JSON on every macOS Palaver supports.
-json() { plutil -extract "$2" raw -o - "$1" 2>/dev/null; }
+# Nothing for a missing key: macOS 15's plutil prints its error on stdout.
+json() { _v="$(plutil -extract "$2" raw -o - "$1" 2>/dev/null)" && printf '%s' "${_v}"; }
 
 WAIT_SECONDS="${PALAVER_WAIT_SECONDS:-10}"
 OPEN_COMMAND="${PALAVER_OPEN_COMMAND:-open}"

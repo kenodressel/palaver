@@ -1,10 +1,17 @@
 """Shared pytest fixtures."""
 
+import os
+import time
 from pathlib import Path
 
 import numpy as np
 import pytest
 import soundfile as sf
+
+# Meeting ids are local times and the fixtures are written in CET (+01:00):
+# the suite runs in that zone everywhere, CI's UTC included.
+os.environ["TZ"] = "Europe/Berlin"
+time.tzset()
 
 
 @pytest.fixture

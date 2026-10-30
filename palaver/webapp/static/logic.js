@@ -1342,7 +1342,7 @@ export function exportedText(answer) {
 }
 
 // Whether a dropped or picked file is one to import.
-export const isPalaverFile = (name) => /\.palaver$/i.test(String(name || ""));
+export const isMeetingZip = (name) => /\.zip$/i.test(String(name || ""));
 
 // The question when the meeting in the file is here already (phase 1: keep
 // mine, or import it beside it).

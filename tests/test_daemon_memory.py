@@ -236,6 +236,7 @@ def test_a_memory_table_in_config_toml_starts_the_daemon_and_doctor(monkeypatch,
     for name in ("check_aec", "check_microphone", "check_teams_detection"):
         monkeypatch.setattr(doctor, name, lambda *a, **k: doctor.Check(name, "ok", ""))
     monkeypatch.setattr(doctor, "check_model", lambda *a, **k: doctor.Check("model", "ok", ""))
+    monkeypatch.setattr(doctor, "_ram_gb", lambda: 48.0)  # CI's 7 GB would warn instead
     checks = doctor.run_checks(config_path=path, offline=True)
     [mem] = [c for c in checks if c.name == "Memory budgets"]
     assert mem.detail.startswith("live 4 GB, realtime 2.5 GB")

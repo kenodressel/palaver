@@ -1,4 +1,4 @@
-"""A meeting exported to a .palaver file and imported again (#58): from ⋯,
+"""A meeting exported to a .zip and imported again (#58): from ⋯,
 ⌘K, the sidebar and a file dropped on the window; the same meeting here
 asks first; the voices wait for a yes; Undo takes the import back."""
 
@@ -31,7 +31,7 @@ def export_from_menu(page, served, mid: str, *, voices: bool = False) -> str:
         dialog(page).get_by_role("checkbox", name="Voices of the named people").check()
     dialog(page).get_by_role("button", name="Export").click()
     expect(dialog(page)).to_have_count(0)
-    text = expect_toast(page, re.compile(r"^Saved to Downloads: “.+\.palaver”$")).locator(".toast-text").inner_text()
+    text = expect_toast(page, re.compile(r"^Saved to Downloads: “.+\.zip”$")).locator(".toast-text").inner_text()
     name = text.split("“", 1)[1].rstrip("”")
     return str(served.root.parent / "Downloads" / name)
 
@@ -50,8 +50,8 @@ def test_export_offers_what_goes_in_and_saves_the_file_to_downloads(page, app_se
     expect(d).to_contain_text("Biometric data")
     d.get_by_role("checkbox", name="Notes").uncheck()
     d.get_by_role("button", name="Export").click()
-    expect_toast(page, "Saved to Downloads: “2026-10-27 Team standup.palaver”")
-    with zipfile.ZipFile(app_server.root.parent / "Downloads" / "2026-10-27 Team standup.palaver") as zf:
+    expect_toast(page, "Saved to Downloads: “2026-10-27 Team standup.zip”")
+    with zipfile.ZipFile(app_server.root.parent / "Downloads" / "2026-10-27 Team standup.zip") as zf:
         names = set(zf.namelist())
     assert "meeting/transcript.json" in names and "meeting/notes.json" not in names
     assert not any(n.startswith(("audio/", "voices/")) for n in names)
@@ -189,14 +189,15 @@ def test_return_on_the_voices_question_keeps_them_out(page, app_server):
     assert not (app_server.root / f"{B}-2" / "speaker_embeddings.json").exists()
 
 
-def test_a_file_that_is_not_a_palaver_file_says_so(page, app_server, tmp_path):
+def test_a_file_that_is_not_an_exported_zip_says_so(page, app_server, tmp_path):
     page.guard.allow(r"status of 400")  # the server's refusal, said in the toast
     open_meeting(page, app_server, A)
-    bad = tmp_path / "notes.palaver"
+    bad = tmp_path / "notes.zip"
     bad.write_bytes(b"not a zip")
     drop(page, str(bad))
-    expect_toast(page, "Not imported: This is not a Palaver file (it is not a zip).")
+    expect_toast(page, "Not imported: This is not a zip.")
     other = tmp_path / "photo.png"
     other.write_bytes(b"\x89PNG")
     drop(page, str(other))
-    expect_toast(page, "Only a .palaver file can be dropped here: a meeting a colleague exported")
+    expect_toast(page, "Only a meeting exported from Palaver can be dropped here: its .zip. "
+                 "If it was unpacked, compress the folder again (Finder: Compress) and drop that.")

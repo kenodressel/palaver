@@ -1388,18 +1388,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_rename.add_argument("--no-audio", action="store_true", help="Don't play samples")
     p_rename.set_defaults(func=_cmd_rename)
 
-    p_export = sub.add_parser("export", help="Save a meeting as a .palaver file to send to a colleague")
+    p_export = sub.add_parser("export", help="Save a meeting as a .zip to send to a colleague")
     p_export.add_argument("meeting", help="the meeting's id (its folder name) or folder")
     p_export.add_argument("--notes", action=argparse.BooleanOptionalAction, default=True,
                           help="Include the notes (default: yes)")
     p_export.add_argument("--voices", action="store_true",
                           help="Include the voices of the people named (biometric data; default: no)")
     p_export.add_argument("--audio", action="store_true", help="Include the audio (default: no)")
-    p_export.add_argument("-o", "--output", help="The file to write (default: '<date> <title>.palaver' here)")
+    p_export.add_argument("-o", "--output", help="The file to write (default: '<date> <title>.zip' here)")
     p_export.add_argument("--yes", action="store_true", help="Export a meeting kept on this Mac without asking")
     p_export.set_defaults(func=_cmd_export)
 
-    p_import = sub.add_parser("import", help="Import a meeting from a .palaver file")
+    p_import = sub.add_parser("import", help="Import a meeting a colleague exported (its .zip)")
     p_import.add_argument("file")
     p_import.add_argument("--separate", action="store_true",
                           help="When the meeting is here already, import it beside it without asking")
