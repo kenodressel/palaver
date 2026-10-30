@@ -1,0 +1,379 @@
+"""Tests for the menu bar app's pure helpers (issue #14)."""
+
+import json
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from palaver import settings
+from palaver.menubar import (
+    auto_record_states,
+    with_record_switches,
+    toggle_auto_record,
+    AUTO_RECORD,
+    START_TITLE,
+    STOP_TITLE,
+    click_action,
+    event_action,
+    manual_action,
+    menu_layout,
+    menu_title,
+    show_menu_once,
+    status_line,
+)
+
+NOW = datetime(2026, 10, 20, 15, 0, tzinfo=timezone.utc)
+
+
+def _status(**kw):
+    base = {"state": "idle", "auto": True, "manual": False, "since": NOW.isoformat(),
+            "folder": None, "queued": [], "transcribing": False}
+    base.update(kw)
+    return base
+
+
+def test_menu_title_per_state():
+    assert menu_title(_status()) == ""  # the icon alone
+    assert menu_title(_status(state="recording")) == "🔴"
+    assert menu_title(_status(transcribing=True)) == "⏳"
+    assert menu_title(_status(state="paused")) == "⏸"
+    assert menu_title(_status(state="recording", transcribing=True)) == "🔴"  # recording wins
+    assert menu_title(_status(), error=True) == "⚠️"
+
+
+def test_the_start_stop_item_does_what_it_said():
+    assert manual_action(START_TITLE, recording=False) == "start"
+    assert manual_action(STOP_TITLE, recording=True) == "stop"
+    # The call ended (or one began) while the menu was open: nothing happens.
+    assert manual_action(STOP_TITLE, recording=False) is None
+    assert manual_action(START_TITLE, recording=True) is None
+
+
+def test_status_line():
+    since = (NOW - timedelta(minutes=12)).isoformat()
+    assert status_line(_status(), NOW) == "Waiting for a Teams call or Slack huddle"
+    assert status_line(_status(state="paused"), NOW) == "Not recording calls automatically"
+    line = status_line(_status(state="recording", since=since, folder="/r/2026-10-20T14-48-00"), NOW)
+    assert line.startswith("Recording for 12 min")
+    # Why it records, when the daemon says (issue #47).
+    why = "Recording · Teams call since 14:48 · mic AirPods (24 kHz)"
+    assert status_line(_status(state="recording", since=since, why_text=why), NOW) == why
+    assert status_line(_status(transcribing=True, queued=["a"]), NOW) == "Transcribing (1 more queued)"
+
+
+def test_the_menu_has_no_old_quick_settings_and_the_switches_of_the_settings_page():
+    layout = menu_layout()
+    assert layout == [
+        "Record Teams calls automatically",
+        "Record Slack huddles automatically",
+        START_TITLE,
+        "Keep recording",
+        None,
+        "Open Meetings",
+        "Connect Calendar…",
+        "Report a Problem…",
+        None,
+        "Quit",
+    ]
+    for gone in ("Open latest transcript in Notion", "Open latest recording folder", "Open log",
+                 "Record Teams calls and Slack huddles automatically"):
+        assert gone not in layout
+    assert [key for key, _ in AUTO_RECORD] == ["record_teams", "record_slack"]  # the Settings page's switches
+
+
+def test_the_record_switches_are_the_settings_pages():
+    defaults = settings.Settings(record_slack=False)  # config.toml said no Slack
+    assert auto_record_states(defaults) == {"record_teams": True, "record_slack": False}
+    assert toggle_auto_record("record_teams", defaults) is False
+    assert settings.load(defaults).record_teams is False
+    assert auto_record_states(defaults) == {"record_teams": False, "record_slack": False}
+    assert toggle_auto_record("record_slack", defaults) is True
+    assert settings.read_raw() == {"record_teams": False, "record_slack": True}  # only what was switched
+    settings.update({"record_teams": True})  # switched in the window's Settings: the menu shows it
+    assert auto_record_states(defaults)["record_teams"] is True
+
+
+def _log(tmp_path: Path, events: list[dict]) -> Path:
+    path = tmp_path / "session.log"
+    path.write_text("".join(json.dumps(e) + "\n" for e in events))
+    return path
+
+
+def test_processing_progress_from_session_log(tmp_path: Path):
+    from palaver.menubar import processing_progress
+
+    assert processing_progress(tmp_path / "missing.log") == (0, 7, "Starting")
+    log = _log(tmp_path, [
+        {"event": "record_stop"},
+        {"event": "process_start"},
+        {"event": "aec_start"}, {"event": "aec_done"},
+        {"event": "transcribe_start", "track": "system"}, {"event": "transcribe_done", "track": "system"},
+        {"event": "transcribe_start", "track": "mic"},
+    ])
+    assert processing_progress(log) == (3, 7, "Transcribing your microphone")
+    log = _log(tmp_path, [{"event": "process_start"}, {"event": "diarize_start"}])
+    assert processing_progress(log) == (4, 7, "Identifying speakers")
+    log = _log(tmp_path, [{"event": "process_done", "rc": 0}, {"event": "notion_upload_start"}])
+    assert processing_progress(log) == (7, 7, "Uploading to Notion")
+
+
+def test_title_shows_elapsed_time_and_progress():
+    since = (NOW - timedelta(minutes=12, seconds=34)).isoformat()
+    assert menu_title(_status(state="recording", since=since), now=NOW) == "🔴 12:34"
+    long = (NOW - timedelta(hours=1, minutes=2, seconds=3)).isoformat()
+    assert menu_title(_status(state="recording", since=long), now=NOW) == "🔴 1:02:03"
+    assert menu_title(_status(transcribing=True), progress=(3, 7, "x"), now=NOW) == "⏳ 3/7"
+
+
+def test_recording_lines():
+    from palaver.menubar import recording_lines
+
+    since = (NOW - timedelta(minutes=5)).isoformat()
+    lines = recording_lines(
+        _status(state="recording", since=since, folder="/r/2026-10-20T14-55-00",
+                system_source="process-tap", teams_active=True),
+        [("mic", -24.0, 0.0), ("system", None, 12.0)],
+        NOW,
+    )
+    # The status item above says why it records; the clock is in the menu bar.
+    assert lines[0].startswith("Mic") and "-24 dB" in lines[0]
+    assert lines[1].startswith("System") and "silent 12 s" in lines[1]
+    assert lines[2] == "System audio via Process Tap · Call active"
+    with_rate = recording_lines(
+        _status(state="recording", since=since, system_source="process-tap", teams_active=True,
+                why={"system": {"rate": 48000.0, "source": "process-tap"}}), [], NOW)
+    assert with_rate[-1] == "System audio via Process Tap (48 kHz) · Call active"
+
+
+def test_status_line_with_progress():
+    line = status_line(_status(transcribing=True, queued=["a"]), NOW, (3, 7, "Transcribing your microphone"))
+    assert line == "Transcribing your microphone (3/7, 1 more queued)"
+
+
+def test_permissions_to_request_on_first_launch(tmp_path: Path):
+    """Microphone and system-audio capture only — no Screen Recording."""
+    from palaver.menubar import permissions_to_request
+
+    marker = tmp_path / "asked"
+    assert permissions_to_request(mic_status=0, marker=marker) == ["microphone", "system-audio"]
+    assert permissions_to_request(mic_status=3, marker=marker) == ["system-audio"]
+    marker.write_text("1")
+    assert permissions_to_request(mic_status=3, marker=marker) == []
+    # Denied mic is not re-requested (macOS would not show the prompt again).
+    assert permissions_to_request(mic_status=2, marker=marker) == []
+
+
+def test_recording_lines_warn_about_missing_track():
+    from palaver.menubar import recording_lines
+
+    since = (NOW - timedelta(minutes=1)).isoformat()
+    lines = recording_lines(
+        _status(state="recording", since=since, folder="/r/x", system_source="process-tap",
+                mic_source="avcapture", teams_active=True, missing=["system audio"]),
+        [("mic", -24.0, 0.0), ("system", None, 60.0)], NOW,
+    )
+    assert any(line.startswith("⚠ Not recording: system audio") for line in lines)
+
+
+def test_title_flags_missing_track():
+    since = (NOW - timedelta(minutes=2)).isoformat()
+    assert menu_title(_status(state="recording", since=since, missing=["microphone"]), now=NOW) == "🔴⚠ 2:00"
+
+
+def test_click_action_left_opens_right_and_ctrl_show_menu():
+    from AppKit import NSEventModifierFlagControl, NSEventTypeLeftMouseUp, NSEventTypeRightMouseUp
+
+    assert click_action(NSEventTypeLeftMouseUp, 0) == "open"
+    assert click_action(NSEventTypeRightMouseUp, 0) == "menu"
+    assert click_action(NSEventTypeLeftMouseUp, NSEventModifierFlagControl) == "menu"
+
+
+def test_event_action_without_an_event_opens_the_window():
+    from AppKit import NSEventModifierFlagControl, NSEventTypeLeftMouseUp, NSEventTypeRightMouseUp
+
+    class Event:
+        def __init__(self, kind, flags=0):
+            self.kind, self.flags = kind, flags
+
+        def type(self):
+            return self.kind
+
+        def modifierFlags(self):
+            return self.flags
+
+    assert event_action(None) == "open"
+    assert event_action(Event(NSEventTypeLeftMouseUp)) == "open"
+    assert event_action(Event(NSEventTypeRightMouseUp)) == "menu"
+    assert event_action(Event(NSEventTypeLeftMouseUp, NSEventModifierFlagControl)) == "menu"
+
+
+def test_the_menu_is_taken_off_again_even_when_showing_it_fails():
+    import pytest
+
+    class Item:
+        def __init__(self):
+            self.menus = []
+
+        def setMenu_(self, menu):
+            self.menus.append(menu)
+
+    class Button:
+        def __init__(self, fail):
+            self.fail = fail
+
+        def performClick_(self, _):
+            if self.fail:
+                raise RuntimeError("no window server")
+
+    item = Item()
+    show_menu_once(item, Button(fail=False), "menu")
+    assert item.menus == ["menu", None]
+    item = Item()
+    with pytest.raises(RuntimeError):
+        show_menu_once(item, Button(fail=True), "menu")
+    assert item.menus == ["menu", None]
+
+
+def test_the_start_stop_item_asks_when_a_manual_recording_outlived_its_call():
+    from palaver.menubar import manual_title
+
+    assert manual_title(_status()) == START_TITLE
+    assert manual_title(_status(state="recording")) == STOP_TITLE
+    asked = {"meeting": "m", "reason": "teams", "minutes": 10, "message": "…"}
+    assert manual_title(_status(state="recording", stop_question=asked)) == "Call ended — Stop recording"
+    silent = {**asked, "reason": "silence", "minutes": 30}
+    assert manual_title(_status(state="recording", stop_question=silent)) == "Silent for 30 min — Stop recording"
+    # Whatever it says, a click on it while recording stops.
+    assert manual_action("Call ended — Stop recording", recording=True) == "stop"
+    assert manual_action("Silent for 30 min — Stop recording", recording=False) is None
+
+
+# --- audio problems (issue #50) -------------------------------------------------
+
+WARNING = "System audio is playing at the wrong speed; Palaver is correcting it"
+HINT = "Your mic sends nothing — muted?"
+
+
+def test_recording_lines_show_audio_warnings_and_hints():
+    from palaver.menubar import recording_lines
+
+    since = (NOW - timedelta(minutes=1)).isoformat()
+    lines = recording_lines(
+        _status(state="recording", since=since, folder="/r/x", system_source="process-tap",
+                teams_active=True, warnings=[WARNING], hints=[HINT]),
+        [("mic", -24.0, 0.0), ("system", -30.0, 0.0)], NOW,
+    )
+    assert f"⚠ {WARNING}" in lines and HINT in lines and f"⚠ {HINT}" not in lines
+    assert lines.index(f"⚠ {WARNING}") < next(i for i, x in enumerate(lines) if x.startswith("System audio via")) \
+        < lines.index(HINT)
+
+
+def test_recording_lines_show_two_warnings_at_most_and_never_drop_the_source_line():
+    from palaver.menubar import recording_lines
+
+    since = (NOW - timedelta(minutes=1)).isoformat()
+    lines = recording_lines(
+        _status(state="recording", since=since, folder="/r/x", system_source="process-tap", teams_active=True,
+                missing=["microphone"], warnings=["a", "b", "c", "d"], hints=[HINT]),
+        [("mic", -24.0, 0.0), ("system", -30.0, 0.0)], NOW,
+    )
+    assert [line for line in lines if line.startswith("⚠ ") and "Not recording" not in line] == ["⚠ a", "⚠ b"]
+    assert "+2 more — open Palaver for all" in lines
+    assert any(line.startswith("System audio via") for line in lines) and lines[-1] == HINT  # hints after it (#41)
+    assert len(lines) <= 8  # the menu's live lines
+
+
+def test_title_flags_an_audio_problem_but_not_a_hint():
+    since = (NOW - timedelta(minutes=2)).isoformat()
+    assert menu_title(_status(state="recording", since=since, warnings=[WARNING]), now=NOW) == "🔴⚠ 2:00"
+    assert menu_title(_status(state="recording", since=since, warnings=[], hints=[HINT]), now=NOW) == "🔴 2:00"
+
+
+def test_status_line_while_the_search_index_is_built():
+    """#46: the first run downloads the search model; say so while it does."""
+    assert status_line(_status(indexing=True, index_downloading=True), NOW) == \
+        "Downloading the search model (470 MB)"
+    assert status_line(_status(indexing=True), NOW) == "Indexing meetings for search"
+    assert status_line(_status(indexing=True, transcribing=True), NOW).startswith("Transcribing")
+
+
+def test_the_coach_in_the_menu_bar():
+    """The coach is one line at the end of the menu, never in the title (#41):
+    the title keeps the clock and 🔴."""
+    from palaver.menubar import MENU_LINES, recording_lines
+
+    since = (NOW - timedelta(minutes=12)).isoformat()
+    status = _status(state="recording", since=since, folder="/r/x", system_source="process-tap", teams_active=False,
+                     warnings=[WARNING], hints=[HINT], talk_text="You 62 % of the last 10 min",
+                     nudge={"kind": "monologue", "text": "4-min monologue"})
+    assert menu_title(status, now=NOW) == "🔴⚠ 12:00"
+    lines = recording_lines(status, [("mic", -24.0, 0.0), ("system", -30.0, 0.0)], NOW)
+    order = [lines.index(f"⚠ {WARNING}"), next(i for i, x in enumerate(lines) if "Call ended" in x),
+             lines.index(HINT), lines.index("Coach: 4-min monologue")]
+    assert order == sorted(order) and lines[-1] == "Coach: 4-min monologue"
+    assert "You 62 % of the last 10 min" not in lines  # one coach line: the nudge wins
+    no_nudge = recording_lines({**status, "nudge": None}, [("mic", -24.0, 0.0)], NOW)
+    assert no_nudge[-1] == "You 62 % of the last 10 min"
+    full = recording_lines({**status, "warnings": [WARNING] * 5, "hints": [HINT] * 3, "missing": ["microphone"]},
+                           [("mic", -24.0, 0.0), ("system", -30.0, 0.0)], NOW)
+    assert len(full) <= MENU_LINES and not any(x.startswith("Coach") for x in full)  # no room: the coach waits
+
+
+def test_both_record_switches_off_is_paused():
+    off = {"record_teams": False, "record_slack": False}
+    assert with_record_switches(_status(), off)["state"] == "paused"
+    assert menu_title(with_record_switches(_status(), off)) == "⏸"
+    assert with_record_switches(_status(), {"record_teams": True, "record_slack": False})["state"] == "idle"
+    recording = _status(state="recording")
+    assert with_record_switches(recording, off)["state"] == "recording"  # a manual one keeps running
+
+
+def test_quitting_never_holds_the_main_thread_for_the_window_server():
+    """before_quit (#57): the recording is finished first, then the window's
+    server stops in the background; the main thread is free within 3 s."""
+    import threading
+    import time
+
+    from palaver.menubar import finalize
+
+    order = []
+
+    class Timer:
+        def stop(self):
+            order.append("timer")
+
+    class Daemon:
+        def shutdown(self, reason):
+            order.append(("daemon", reason))
+
+    class Web:
+        def __init__(self):
+            self.stopped = threading.Event()
+
+        def stop(self):
+            order.append("web")
+            time.sleep(5)  # a server draining its last change
+            self.stopped.set()
+
+    class Control:
+        def close(self):
+            order.append("control")
+
+    class App:
+        timer, daemon, web, control = Timer(), Daemon(), Web(), Control()
+        quit_reason = "by_you"
+
+    started = time.monotonic()
+    t = finalize(App())
+    assert time.monotonic() - started < 3
+    assert order[:2] == ["timer", ("daemon", "by_you")]
+    assert _wait(lambda: "web" in order)
+    assert not App.web.stopped.is_set() and t.daemon
+
+
+def _wait(condition, timeout=2.0):
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and not condition():
+        time.sleep(0.01)
+    return condition()

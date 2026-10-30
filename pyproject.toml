@@ -1,0 +1,64 @@
+[project]
+name = "palaver"
+dynamic = ["version"]
+description = "Local Teams meeting transcription with speaker diarization"
+requires-python = ">=3.10"
+dependencies = [
+    "mlx-whisper>=0.4.0",
+    "parakeet-mlx>=0.3",
+    "pyannote.audio>=3.3.0",
+    "numpy>=1.24",
+    "scipy>=1.11",
+    "soundfile>=0.12",
+    "requests>=2.31",
+    "pyobjc-framework-Cocoa",
+    "pyobjc-framework-AVFoundation",
+    "pyobjc-framework-CoreAudio",
+    "pyobjc-framework-ScreenCaptureKit",
+    "pyobjc-framework-CoreMedia",
+    "soxr>=1.1.0",
+    "rumps>=0.4.0",
+    "keyring>=25.7.0",
+    "pyobjc-framework-webkit>=12.1",
+    "mlx-lm>=0.31.3",
+    "pyobjc-framework-eventkit>=12.1",
+    "pyobjc-framework-Vision>=12.1",
+    "wordfreq>=3.1.1",
+    "rapidfuzz>=3.14.5",
+    "mcp>=2.3.0",
+    # Search by meaning (#46): XLM-R's tokenizer; the model runs with numpy.
+    "sentencepiece>=0.2",
+    "huggingface-hub>=0.20",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-mock>=3.12", "playwright>=1.48"]
+
+[project.scripts]
+palaver = "palaver.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["palaver*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "palaver.__version__" }
+
+[tool.setuptools.package-data]
+# Built by `make aec` (CI builds it before the wheel); ctypes loads it from here.
+"palaver._vendored.webrtc_aec" = ["libraven_aec.dylib"]
+# The app and menu bar icons (drawn by tools/make_icons.py).
+"palaver" = ["assets/*"]
+# The Meetings window's page.
+"palaver.webapp" = ["static/*", "static/fonts/*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: hits real models or external services; default-skip",
+    "e2e: drives the Meetings window in Playwright's WebKit; skipped when WebKit is not installed",
+    "soak: replays a recording through the live and stream workers at real speed (60 min); run with -m soak",
+]
+addopts = "-m 'not integration and not soak' -p pytester"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"

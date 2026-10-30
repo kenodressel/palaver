@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Palaver – Struktur</title>
+<style>
+@font-face { font-family: "Bricolage Grotesque"; font-weight: 400 800; src: url("../../../palaver/webapp/static/fonts/BricolageGrotesque-latin.woff2") format("woff2"); }
+@font-face { font-family: "Instrument Sans"; font-weight: 400 700; src: url("../../../palaver/webapp/static/fonts/InstrumentSans-latin.woff2") format("woff2"); }
+:root {
+  --paper: #f7f6fb; --surface: #fff; --ink: #14123a; --ink-2: #5d5a7a; --ink-3: #6b6890; --rule: #e6e3f2;
+  --hover: #f1effa; --selected: #e9e5ff; --you: #5b3df5; --you-ink: #4127d6; --danger: #c2361f;
+  --coral-soft: #ffe6e0; --coral-ink: #b0311b; --v0: #d23f27; --v1: #0b8457; --v2: #a86f00; --v4: #1f6fd1;
+  --display: "Bricolage Grotesque", "Instrument Sans", -apple-system, sans-serif;
+  --sans: "Instrument Sans", -apple-system, sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: #dcd9ea; color: var(--ink); font: 15px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; }
+.page { max-width: 1320px; margin: 0 auto; padding: 24px 20px 60px; }
+.intro h1 { margin: 0; font: 800 30px/1.1 var(--display); letter-spacing: -0.02em; }
+.intro p { margin: 6px 0 0; color: var(--ink-2); max-width: 60rem; }
+.switch { display: flex; gap: 8px; margin: 18px 0 14px; flex-wrap: wrap; }
+.switch button { padding: 9px 16px; border: 0; border-radius: 999px; background: var(--surface); font-weight: 650; cursor: pointer; box-shadow: 0 0 0 1px var(--rule); }
+.switch button[aria-selected="true"] { background: var(--ink); color: var(--paper); box-shadow: none; }
+.explain { display: none; margin: 0 0 12px; padding: 12px 16px; border-radius: 14px; background: var(--surface); }
+.explain.on { display: block; }
+.explain b { font-family: var(--display); font-size: 17px; }
+.explain ul { margin: 6px 0 0; padding-left: 20px; color: var(--ink-2); }
+
+/* window chrome */
+.win { display: none; height: 760px; border-radius: 12px; overflow: hidden; background: var(--paper); box-shadow: 0 30px 60px -20px rgba(20,18,58,.35), 0 0 0 1px rgba(20,18,58,.12); position: relative; }
+.win.on { display: flex; flex-direction: column; }
+.titlebar { flex: none; height: 30px; display: flex; align-items: center; gap: 7px; padding: 0 12px; background: #eceaf4; border-bottom: 1px solid var(--rule); font-size: 12px; color: var(--ink-3); }
+.titlebar i { width: 11px; height: 11px; border-radius: 50%; background: #ff5f57; display: inline-block; }
+.titlebar i:nth-child(2) { background: #febc2e; } .titlebar i:nth-child(3) { background: #28c840; }
+.titlebar span { flex: 1; text-align: center; margin-right: 50px; }
+.body { flex: 1; display: flex; min-height: 0; }
+
+/* shared pieces */
+.brand { display: flex; align-items: center; gap: 9px; font: 800 20px/1 var(--display); letter-spacing: -0.02em; }
+.logo { width: 24px; height: 24px; border-radius: 6px; background: var(--you); position: relative; flex: none; }
+.logo::before, .logo::after { content: ""; position: absolute; left: 4px; height: 4px; border-radius: 2px; background: #fff; }
+.logo::before { top: 6px; width: 11px; } .logo::after { top: 14px; width: 15px; background: #3fd49a; }
+.icon { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.badge { min-width: 20px; padding: 0 6px; border-radius: 999px; background: var(--you); color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
+.badge.soft { background: var(--selected); color: var(--you-ink); }
+.search { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 999px; background: var(--surface); color: var(--ink-3); font-size: 13px; }
+.search kbd { margin-left: auto; padding: 1px 6px; border-radius: 6px; background: var(--hover); font: 600 11px var(--sans); color: var(--ink-2); }
+.day { margin: 14px 6px 6px; color: var(--ink-2); font-size: 12px; font-weight: 700; }
+.item { position: relative; display: block; width: 100%; margin-bottom: 6px; padding: 10px 13px 11px; border: 0; border-radius: 16px; background: var(--surface); text-align: left; cursor: pointer;
+  transition: transform .22s ease, opacity .22s ease, max-height .25s ease .12s, margin .25s ease .12s, padding .25s ease .12s; max-height: 140px; overflow: hidden; }
+.item:hover { box-shadow: 0 0 0 2px var(--selected); }
+.item.cur { box-shadow: 0 0 0 2px var(--you); }
+.item.gone { transform: translateX(-30px); opacity: 0; max-height: 0; margin: 0; padding-top: 0; padding-bottom: 0; }
+.item.flash { animation: flash 1.2s ease; }
+@keyframes flash { 0%, 40% { box-shadow: 0 0 0 3px var(--you); } }
+.item b { display: block; font-weight: 650; line-height: 1.3; }
+.meta { display: flex; gap: 9px; color: var(--ink-2); font-size: 12px; }
+.proj { display: block; color: var(--you-ink); font-size: 12px; font-weight: 700; }
+.dot { position: absolute; top: 12px; right: 12px; width: 8px; height: 8px; border-radius: 50%; background: var(--v0); }
+.upcoming { background: transparent; box-shadow: inset 0 0 0 1.5px var(--rule); }
+
+/* meeting page */
+.main { flex: 1; overflow: hidden; min-width: 0; }
+.meeting { max-width: 860px; margin: 0 auto; padding: 22px 34px; }
+.head { display: flex; align-items: flex-start; gap: 14px; }
+.head-text { flex: 1; min-width: 0; }
+.head h2 { margin: 0; font: 800 38px/1.02 var(--display); letter-spacing: -0.03em; }
+.when { margin-top: 4px; color: var(--ink-2); font-size: 14px; display: flex; gap: 12px; align-items: center; }
+.pill { padding: 1px 9px; border-radius: 999px; background: #e3f6ee; color: #0b6b47; font-size: 12px; font-weight: 650; }
+.chips { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.chip { padding: 3px 10px; border-radius: 999px; background: var(--selected); color: var(--you-ink); font-size: 12.5px; font-weight: 650; }
+.chip.unsure { background: none; box-shadow: inset 0 0 0 1.5px var(--selected); }
+.chip.add { background: none; color: var(--ink-3); box-shadow: inset 0 0 0 1.5px dashed var(--rule); border: 1.5px dashed var(--rule); padding: 2px 9px; }
+.toolbar { display: flex; gap: 6px; align-items: center; flex: none; position: relative; }
+.tbtn { display: inline-flex; align-items: center; gap: 7px; padding: 8px 14px; border: 0; border-radius: 999px; background: var(--surface); font-weight: 600; font-size: 14px; cursor: pointer; box-shadow: 0 0 0 1px var(--rule); }
+.tbtn:hover { box-shadow: 0 0 0 2px var(--selected); }
+.tbtn.primary { background: var(--you); color: #fff; box-shadow: none; }
+.tbtn.round { width: 38px; height: 38px; padding: 0; justify-content: center; }
+.menu { position: absolute; top: 44px; right: 0; z-index: 5; width: 270px; padding: 6px; border-radius: 14px; background: var(--surface); box-shadow: 0 18px 40px -12px rgba(20,18,58,.35), 0 0 0 1px var(--rule);
+  transform-origin: top right; transform: scale(.96); opacity: 0; pointer-events: none; transition: transform .14s ease, opacity .14s ease; }
+.menu.open { transform: none; opacity: 1; pointer-events: auto; }
+.menu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 9px; background: none; text-align: left; font-size: 14px; cursor: pointer; }
+.menu button:hover { background: var(--hover); }
+.menu kbd { margin-left: auto; color: var(--ink-3); font: 12px var(--sans); }
+.menu hr { border: 0; border-top: 1px solid var(--rule); margin: 5px 4px; }
+.menu .danger { color: var(--danger); }
+.attention { display: flex; align-items: center; gap: 10px; margin-top: 18px; padding: 10px 14px; border-radius: 14px; background: var(--coral-soft); color: var(--coral-ink); font-size: 14px; }
+.attention b { font-weight: 700; }
+.attention .go { margin-left: auto; font-weight: 700; }
+.ribbon { margin-top: 16px; padding: 12px 16px; border-radius: 22px; background: var(--surface); }
+.lane { display: grid; grid-template-columns: 250px 1fr 26px; align-items: center; gap: 12px; min-height: 38px; }
+.who { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; }
+.who { white-space: nowrap; min-width: 0; }
+.who small { color: var(--ink-3); font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+.av { width: 26px; height: 26px; border-radius: 50%; background: var(--c); color: #fff; display: grid; place-items: center; font-size: 10px; font-weight: 700; }
+.av.unknown { background: var(--hover); border: 2px dashed var(--c); color: var(--ink-2); }
+.track { position: relative; height: 16px; border-radius: 999px; background: var(--hover); }
+.track span { position: absolute; top: 0; height: 16px; border-radius: 999px; background: var(--c); }
+.more { width: 26px; height: 26px; border: 0; border-radius: 50%; background: none; color: var(--ink-3); cursor: pointer; font-weight: 800; letter-spacing: 1px; }
+.more:hover { background: var(--hover); color: var(--ink); }
+.tabs { display: flex; gap: 4px; margin: 18px 0 10px; }
+.tab { padding: 6px 14px; border-radius: 999px; font-weight: 650; font-size: 14px; color: var(--ink-2); }
+.tab.on { background: var(--ink); color: var(--paper); }
+.summary { font-size: 16px; line-height: 1.55; margin: 0 0 12px; }
+.cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.card { padding: 12px 16px; border-radius: 18px; background: var(--surface); font-size: 14px; }
+.card h4 { margin: 0 0 4px; font: 700 15px var(--display); }
+.card ul { margin: 0; padding-left: 18px; color: var(--ink-2); }
+
+/* toast */
+.toast { position: absolute; left: 50%; bottom: 22px; z-index: 9; display: flex; align-items: center; gap: 14px; padding: 10px 12px 10px 18px; border-radius: 999px; background: var(--ink); color: var(--paper); font-size: 14px;
+  transform: translate(-50%, 14px); opacity: 0; transition: transform .18s ease, opacity .18s ease; pointer-events: none; }
+.toast.on { transform: translate(-50%, 0); opacity: 1; pointer-events: auto; }
+.toast button { padding: 5px 12px; border: 0; border-radius: 999px; background: rgba(255,255,255,.14); color: #fff; font-weight: 700; cursor: pointer; }
+.toast .bar { position: absolute; left: 18px; right: 18px; bottom: 4px; height: 2px; border-radius: 2px; background: rgba(255,255,255,.35); transform-origin: left; }
+.toast.on .bar { animation: shrink 6s linear forwards; }
+@keyframes shrink { to { transform: scaleX(0); } }
+
+/* A: source list */
+.rail { width: 196px; flex: none; padding: 16px 10px; border-right: 1px solid var(--rule); display: flex; flex-direction: column; gap: 2px; }
+.rail .brand { margin: 2px 8px 16px; }
+.nav { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; font-weight: 600; font-size: 14px; color: var(--ink); cursor: pointer; }
+.nav:hover { background: var(--hover); }
+.nav.on { background: var(--selected); color: var(--you-ink); }
+.nav .badge { margin-left: auto; }
+.rail .spacer { flex: 1; }
+.col { width: 300px; flex: none; padding: 14px 10px; border-right: 1px solid var(--rule); overflow: hidden; }
+.col h3 { margin: 4px 6px 10px; font: 800 22px var(--display); letter-spacing: -0.02em; display: flex; align-items: center; gap: 8px; }
+.seg { display: flex; gap: 2px; padding: 3px; margin: 0 4px 6px; border-radius: 999px; background: var(--surface); font-size: 12px; font-weight: 650; }
+.seg span { flex: 1; text-align: center; padding: 4px 6px; border-radius: 999px; color: var(--ink-2); }
+.seg span.on { background: var(--ink); color: var(--paper); }
+
+/* B: compact sidebar */
+.side { width: 330px; flex: none; padding: 14px 12px; border-right: 1px solid var(--rule); overflow: hidden; display: flex; flex-direction: column; }
+.side .top { display: flex; align-items: center; gap: 8px; margin: 2px 6px 12px; }
+.side .top .gear { margin-left: auto; color: var(--ink-3); }
+.iconnav { display: flex; gap: 4px; padding: 4px; border-radius: 14px; background: var(--surface); margin-bottom: 10px; }
+.iconnav span { position: relative; flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 2px 5px; border-radius: 10px; font-size: 10.5px; font-weight: 650; color: var(--ink-2); cursor: pointer; }
+.iconnav span.on { background: var(--ink); color: var(--paper); }
+.iconnav .badge { position: absolute; top: 0; right: 6px; font-size: 9.5px; line-height: 15px; min-width: 16px; padding: 0 4px; }
+
+/* C: home */
+.topbar { flex: none; display: flex; align-items: center; gap: 18px; padding: 12px 22px; border-bottom: 1px solid var(--rule); }
+.topbar .tabsC { display: flex; gap: 4px; }
+.topbar .tabsC span { padding: 6px 13px; border-radius: 999px; font-weight: 650; font-size: 14px; color: var(--ink-2); display: inline-flex; gap: 6px; align-items: center; }
+.topbar .tabsC span.on { background: var(--ink); color: var(--paper); }
+.topbar .search { margin-left: auto; width: 290px; }
+.home { flex: 1; overflow: hidden; padding: 24px 34px; display: grid; grid-template-columns: 1.25fr 1fr; gap: 22px; align-content: start; }
+.home h2 { margin: 0 0 10px; font: 800 30px/1.05 var(--display); letter-spacing: -0.02em; }
+.home h3 { margin: 0 0 8px; font: 700 15px var(--display); color: var(--ink-2); }
+.next { padding: 16px 18px; border-radius: 22px; background: var(--ink); color: var(--paper); }
+.next b { font: 800 22px var(--display); display: block; }
+.next small { color: #c9c5ea; }
+.next .tbtn { margin-top: 10px; background: rgba(255,255,255,.12); color: #fff; box-shadow: none; }
+.todo { padding: 12px 14px; border-radius: 16px; background: var(--surface); margin-bottom: 8px; display: flex; gap: 12px; align-items: center; font-size: 14px; }
+.todo .q { flex: 1; }
+.todo .q small { display: block; color: var(--ink-3); }
+.todo .yes { padding: 5px 12px; border-radius: 999px; background: var(--selected); color: var(--you-ink); font-weight: 700; font-size: 13px; border: 0; }
+.todo .no { padding: 5px 10px; border-radius: 999px; background: none; color: var(--ink-2); font-weight: 600; font-size: 13px; border: 0; }
+.pick { display: flex; gap: 10px; margin-top: 22px; }
+.pick .option { flex: 1; cursor: pointer; padding: 12px 16px; border-radius: 14px; background: var(--surface); box-shadow: 0 0 0 1px var(--rule); font-weight: 650; text-align: center; }
+.pick .option.selected { box-shadow: 0 0 0 2px var(--you); color: var(--you-ink); }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="intro">
+    <h1>Grundstruktur: drei Richtungen</h1>
+    <p>Gleicher Stil, andere Ordnung. In allen dreien gilt dieselbe Aktions-Regel: Hauptaktion als violetter Button, Häufiges in der Leiste, Seltenes im ⋯-Menü. <b>Zum Ausprobieren:</b> ⋯ öffnen → „In den Papierkorb“ (mit Rückgängig), oder ein Meeting in der Liste anklicken. Inhalte sind ausgedacht.</p>
+  </div>
+  <div class="switch" role="tablist">
+    <button aria-selected="true" onclick="show('a')">A · Seitenleiste mit Bereichen</button>
+    <button aria-selected="false" onclick="show('b')">B · Kompakt, wie heute aufgeräumt</button>
+    <button aria-selected="false" onclick="show('c')">C · Startseite „Heute“</button>
+  </div>
+  <div class="explain on" id="ex-a"><b>A · Seitenleiste mit Bereichen</b> (wie Mail oder Notizen)
+    <ul><li>Links feste Bereiche mit Icons und Zählern: <i>Zu prüfen 3</i> und <i>Glossar 5</i> zeigen, wo etwas auf dich wartet.</li>
+    <li>Mitte die Liste des Bereichs, rechts das Meeting. Einstellungen unten in der Leiste statt Zahnrad.</li>
+    <li>Kostet Breite: Bei kleinem Fenster klappt die Bereichsleiste auf Icons zusammen.</li></ul></div>
+  <div class="explain" id="ex-b"><b>B · Kompakt</b> (zwei Spalten wie heute)
+    <ul><li>Die Text-Tabs werden zu einer Icon-Leiste mit Zählern; Suche wird zum Befehlsfeld (⌘K).</li>
+    <li>Filter-Dropdown und „Review“-Knopf verschwinden: „Zu prüfen“ ist ein eigener Bereich.</li>
+    <li>Am wenigsten Umbau, gleiche Fensteraufteilung.</li></ul></div>
+  <div class="explain" id="ex-c"><b>C · Startseite „Heute“</b>
+    <ul><li>Beim Öffnen: das nächste Meeting (mit Vorbereitung), was dich braucht (Ja/Nein direkt hier), die letzten Meetings.</li>
+    <li>Navigation oben; ein Meeting öffnet sich als ganze Seite mit „← Heute“.</li>
+    <li>Größter Umbau, fühlt sich am meisten wie eine eigene App an.</li></ul></div>
+
+  <!-- A -->
+  <div class="win on" id="win-a">
+    <div class="titlebar"><i></i><i></i><i></i><span>Palaver</span></div>
+    <div class="body">
+      <div class="rail">
+        <div class="brand"><span class="logo"></span>Palaver</div>
+        <div class="nav on"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="15" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>Meetings</div>
+        <div class="nav"><svg class="icon" viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg>Zu prüfen<span class="badge">3</span></div>
+        <div class="nav"><svg class="icon" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M16 4.5a3.5 3.5 0 0 1 0 7M21 20c0-2.6-1.6-4.8-4-5.6"/></svg>Personen</div>
+        <div class="nav"><svg class="icon" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Projekte</div>
+        <div class="nav"><svg class="icon" viewBox="0 0 24 24"><path d="M4 19V5a2 2 0 0 1 2-2h12v16H6a2 2 0 0 0-2 2zM8 7h6"/></svg>Glossar<span class="badge soft">5</span></div>
+        <div class="spacer"></div>
+        <div class="nav"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>Einstellungen</div>
+      </div>
+      <div class="col">
+        <h3>Meetings</h3>
+        <div class="search"><svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>Suchen oder Befehl<kbd>⌘K</kbd></div>
+        <div class="day">Gleich</div>
+        <div class="item upcoming"><b>1:1 mit Lea</b><span class="meta">14:00 · vorbereitet</span></div>
+        <div class="day">Heute</div>
+        <div class="list"></div>
+      </div>
+      <div class="main"><div class="meeting"></div></div>
+    </div>
+    <div class="toast"><span class="t"></span><button>Rückgängig</button><span class="bar"></span></div>
+  </div>
+
+  <!-- B -->
+  <div class="win" id="win-b">
+    <div class="titlebar"><i></i><i></i><i></i><span>Palaver</span></div>
+    <div class="body">
+      <div class="side">
+        <div class="top"><div class="brand"><span class="logo"></span>Palaver</div>
+          <svg class="icon gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg></div>
+        <div class="iconnav">
+          <span class="on"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="15" rx="3"/><path d="M3 10h18"/></svg>Meetings</span>
+          <span><svg class="icon" viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg>Prüfen<i class="badge">3</i></span>
+          <span><svg class="icon" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg>Personen</span>
+          <span><svg class="icon" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Projekte</span>
+          <span><svg class="icon" viewBox="0 0 24 24"><path d="M4 19V5a2 2 0 0 1 2-2h12v16H6a2 2 0 0 0-2 2z"/></svg>Glossar<i class="badge soft">5</i></span>
+        </div>
+        <div class="search"><svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>Suchen oder Befehl<kbd>⌘K</kbd></div>
+        <div class="day">Gleich</div>
+        <div class="item upcoming"><b>1:1 mit Lea</b><span class="meta">14:00 · vorbereitet</span></div>
+        <div class="day">Heute</div>
+        <div class="list"></div>
+      </div>
+      <div class="main"><div class="meeting"></div></div>
+    </div>
+    <div class="toast"><span class="t"></span><button>Rückgängig</button><span class="bar"></span></div>
+  </div>
+
+  <!-- C -->
+  <div class="win" id="win-c">
+    <div class="titlebar"><i></i><i></i><i></i><span>Palaver</span></div>
+    <div class="topbar">
+      <div class="brand"><span class="logo"></span>Palaver</div>
+      <div class="tabsC"><span class="on">Heute</span><span>Meetings</span><span>Personen</span><span>Projekte</span><span>Glossar <i class="badge soft">5</i></span></div>
+      <div class="search"><svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>Suchen oder Befehl<kbd>⌘K</kbd></div>
+    </div>
+    <div class="body">
+      <div class="home">
+        <div>
+          <h2>Guten Morgen, Timo</h2>
+          <div class="next"><small>In 25 Minuten · 14:00</small><b>1:1 mit Lea</b><small>Letztes Mal: Onboarding-Plan, 2 offene Punkte für dich</small><br><button class="tbtn">Vorbereitung ansehen →</button></div>
+          <h3 style="margin-top:20px">Braucht dich · 3</h3>
+          <div class="todo"><span class="av unknown" style="--c:var(--v2)">?</span><span class="q">Wer ist Sprecher 3 in „Northwind – Zwischenstand“?<small>Stimme zu 82 % wie Tom Kruse</small></span><button class="yes">Tom Kruse</button><button class="no">Jemand anderes</button></div>
+          <div class="todo"><span class="av" style="--c:var(--you)">P</span><span class="q">„Weekly Delivery“ gehört zu Projekt <b>ÖNW</b>?<small>Gleiche Teilnehmer wie 4 ÖNW-Meetings</small></span><button class="yes">Ja</button><button class="no">Nein</button></div>
+          <div class="todo"><span class="av" style="--c:var(--v0)">✂</span><span class="q">„Software Foundry“ läuft in „Weekly Delivery“ hinein?<small>Ab 7:12 andere Stimmen, Termin um 11:00</small></span><button class="yes">Ansehen</button><button class="no">Nein</button></div>
+        </div>
+        <div>
+          <h3>Zuletzt</h3>
+          <div class="list"></div>
+        </div>
+      </div>
+    </div>
+    <div class="toast"><span class="t"></span><button>Rückgängig</button><span class="bar"></span></div>
+  </div>
+
+  <div class="pick">
+    <div class="option" data-choice="a" onclick="toggleSelect(this)">A gefällt mir</div>
+    <div class="option" data-choice="b" onclick="toggleSelect(this)">B gefällt mir</div>
+    <div class="option" data-choice="c" onclick="toggleSelect(this)">C gefällt mir</div>
+  </div>
+</div>
+
+<script>
+const MEETINGS = [
+  { id: "m1", title: "Northwind – Zwischenstand", time: "16:09", dur: "52 min", who: "Anna Berger, Tom Kruse", proj: "ÖNW", dot: true },
+  { id: "m2", title: "Software Foundry", time: "16:01", dur: "7 min", who: "Henrik Weiß", proj: "", dot: true },
+  { id: "m3", title: "Weekly Delivery", time: "11:00", dur: "30 min", who: "6 Personen", proj: "ÖNW?", dot: false },
+  { id: "m4", title: "ACB Discovery Call", time: "09:30", dur: "45 min", who: "Mara Lind, Jonas Fuchs", proj: "ACB", dot: false },
+];
+let current = "m1";
+
+function listHTML() {
+  return MEETINGS.map((m) => `<div class="item${m.id === current ? " cur" : ""}" data-id="${m.id}" onclick="openM('${m.id}')">
+    ${m.dot ? '<span class="dot" title="Braucht dich"></span>' : ""}
+    <b>${m.title}</b><span class="meta"><span>${m.time}</span><span>${m.dur}</span><span>${m.who}</span></span>
+    ${m.proj ? `<span class="proj">${m.proj}</span>` : ""}</div>`).join("");
+}
+
+function meetingHTML(m, w) {
+  return `<div class="head"><div class="head-text"><h2>${m.title}</h2>
+      <div class="when"><span>Mi 28. Okt, ${m.time}</span><span>${m.dur}</span><span class="pill">✓ Geprüft</span></div>
+      <div class="chips"><span class="chip">${m.proj.replace("?", "") || "ÖNW"}</span><span class="chip unsure">Northwind ?</span><span class="chip add">+ Projekt</span></div></div>
+    <div class="toolbar">
+      <button class="tbtn"><svg class="icon" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg>Abspielen</button>
+      <button class="tbtn primary">✦ Notizen neu</button>
+      <button class="tbtn round" onclick="toggleMenu('${w}', event)" aria-label="Mehr">•••</button>
+      <div class="menu" id="menu-${w}">
+        <button><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="15" rx="3"/><path d="M3 10h18"/></svg>Termin ändern…</button>
+        <button><svg class="icon" viewBox="0 0 24 24"><path d="M8 7l-5 5 5 5M3 12h12"/></svg>Mit vorherigem verbinden<kbd>⌘J</kbd></button>
+        <button><svg class="icon" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12"/></svg>Teilen bei…</button>
+        <button><svg class="icon" viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg>Erneut prüfen</button>
+        <button><svg class="icon" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Exportieren…</button>
+        <hr>
+        <button class="danger" onclick="trash('${w}')"><svg class="icon" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>In den Papierkorb<kbd>⌘⌫</kbd></button>
+      </div>
+    </div></div>
+  <div class="attention"><b>3 Dinge zu prüfen</b> · 1 Stimme ohne Namen · Projekt unsicher · läuft evtl. ins nächste Meeting <span class="go">Ansehen ›</span></div>
+  <div class="ribbon">
+    ${[["Timo", "TS", "var(--you)", [[2, 10], [30, 6], [55, 12], [80, 8]], "Du"],
+       ["Anna Berger", "AB", "var(--v1)", [[12, 14], [40, 12], [70, 8]], "Kloud"],
+       ["Sprecher 3", "?", "var(--v2)", [[26, 3], [66, 3]], "Stimme 82 % wie Tom Kruse"]]
+      .map(([n, i, c, segs, sub]) => `<div class="lane" style="--c:${c}"><div class="who"><span class="av${i === "?" ? " unknown" : ""}">${i}</span>${n} <small>${sub}</small></div>
+        <div class="track">${segs.map(([l, wd]) => `<span style="left:${l}%;width:${wd}%"></span>`).join("")}</div><button class="more" title="Umbenennen, Anhören, Zusammenführen, Kein Sprecher">•••</button></div>`).join("")}
+  </div>
+  <div class="tabs"><span class="tab on">Notizen</span><span class="tab">Transkript</span><span class="tab">Coach</span></div>
+  <p class="summary">Der Zwischenstand zeigt: Die Migration liegt zwei Wochen hinter Plan, die Schnittstelle zum Altsystem ist das Nadelöhr. Anna schlägt vor, die Testphase zu verkürzen und dafür Pairing einzuplanen.</p>
+  <div class="cards"><div class="card"><h4>Entscheidungen</h4><ul><li>Testphase um eine Woche verkürzen</li></ul></div>
+    <div class="card"><h4>Nächste Schritte</h4><ul><li><b>Tom:</b> Schnittstelle dokumentieren</li><li><b>Timo:</b> Pairing-Plan bis Freitag</li></ul></div></div>`;
+}
+
+function render() {
+  for (const w of ["a", "b", "c"]) {
+    const win = document.getElementById(`win-${w}`);
+    win.querySelectorAll(".list").forEach((l) => (l.innerHTML = listHTML()));
+    const main = win.querySelector(".meeting");
+    const m = MEETINGS.find((x) => x.id === current) || MEETINGS[0];
+    if (main) main.innerHTML = meetingHTML(m, w);
+  }
+}
+
+function show(w) {
+  document.querySelectorAll(".switch button").forEach((b, i) => b.setAttribute("aria-selected", String("abc"[i] === w)));
+  document.querySelectorAll(".win").forEach((x) => x.classList.toggle("on", x.id === `win-${w}`));
+  document.querySelectorAll(".explain").forEach((x) => x.classList.toggle("on", x.id === `ex-${w}`));
+}
+
+function openM(id) { current = id; render(); }
+
+function toggleMenu(w, e) {
+  e.stopPropagation();
+  document.getElementById(`menu-${w}`).classList.toggle("open");
+}
+document.addEventListener("click", () => document.querySelectorAll(".menu.open").forEach((m) => m.classList.remove("open")));
+
+let toastTimer, removed = null;
+function trash(w) {
+  const win = document.getElementById(`win-${w}`);
+  const idx = MEETINGS.findIndex((x) => x.id === current);
+  const m = MEETINGS[idx];
+  win.querySelectorAll(`.item[data-id="${m.id}"]`).forEach((el) => el.classList.add("gone"));
+  setTimeout(() => {
+    removed = { m, idx };
+    MEETINGS.splice(idx, 1);
+    current = (MEETINGS[idx] || MEETINGS[idx - 1] || {}).id;
+    render();
+  }, 380);
+  const t = win.querySelector(".toast");
+  t.querySelector(".t").textContent = `„${m.title}“ ist im Papierkorb`;
+  t.classList.remove("on"); void t.offsetWidth; t.classList.add("on");
+  t.querySelector("button").onclick = () => undo(w);
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("on"), 6000);
+}
+function undo(w) {
+  const win = document.getElementById(`win-${w}`);
+  win.querySelector(".toast").classList.remove("on");
+  if (!removed) return;
+  MEETINGS.splice(removed.idx, 0, removed.m);
+  current = removed.m.id;
+  removed = null;
+  render();
+  win.querySelectorAll(`.item[data-id="${current}"]`).forEach((el) => el.classList.add("flash"));
+}
+render();
+</script>
+</body>
+</html>

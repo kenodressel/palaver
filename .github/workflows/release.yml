@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  # Build-only dry run: builds and smoke-installs the assets without
+  # publishing anything. The publish step below is gated on an actual tag.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  UV_FROZEN: "1"
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.2.0
+
+      - name: Set version from tag
+        # A dry run has no tag; it builds the version in __init__.py as is.
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i '' "s/^__version__ = \".*\"/__version__ = \"$VERSION\"/" palaver/__init__.py
+          grep -q "^__version__ = \"$VERSION\"" palaver/__init__.py \
+            || { echo "✗ Failed to set version in palaver/__init__.py"; exit 1; }
+          echo "✓ Version set to $VERSION"
+
+      - name: Install dependencies
+        run: uv sync --python 3.13 --extra dev
+
+      - name: Run tests
+        run: make test
+
+      - name: Build release assets
+        # Wheel (with the AEC library), requirements.txt exported from
+        # uv.lock, Meeting Transcribe.app zipped, install.sh.
+        run: make release
+
+      - name: Smoke-install the assets
+        # install.sh into a throwaway HOME, exactly as users run it; checks
+        # the installed wheel imports and the app has no build-machine paths.
+        run: make smoke-install
+
+      - name: Create GitHub Release
+        # Only on a real tag — every v* tag becomes the "latest" release that
+        # install.sh serves.
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            dist/palaver-*.whl
+            dist/requirements.txt
+            dist/Palaver.zip
+            dist/install.sh
+          generate_release_notes: true

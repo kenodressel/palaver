@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+env:
+  # Never re-resolve in CI: the suite runs against exactly what uv.lock says.
+  UV_FROZEN: "1"
+
+jobs:
+  test:
+    runs-on: macos-15  # Apple Silicon; the app needs macOS 15+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        # setup-uv publishes no major tags since v8 — pin the exact release.
+        uses: astral-sh/setup-uv@v10.2.0
+
+      - name: Install dependencies
+        run: uv sync --python 3.13 --extra dev
+
+      - name: Build the echo-cancellation library
+        run: make aec
+
+      - name: Install WebKit for the end-to-end tests
+        # tests/e2e drive the Meetings window's page in Playwright's WebKit.
+        run: uv run --extra dev python -m playwright install webkit
+
+      - name: Run tests
+        run: make test

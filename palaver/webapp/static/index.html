@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Palaver</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%235b3df5'/><rect x='16' y='24' width='34' height='12' rx='6' fill='%23fff'/><rect x='70' y='24' width='14' height='12' rx='6' fill='%23fff'/><rect x='34' y='44' width='34' height='12' rx='6' fill='%23ff7a5c'/><rect x='16' y='64' width='14' height='12' rx='6' fill='%233fd49a'/><rect x='50' y='64' width='34' height='12' rx='6' fill='%233fd49a'/></svg>">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body data-page="today">
+  <header class="topbar">
+    <button type="button" class="back" id="back" title="Back (⌘[)" disabled><span aria-hidden="true">‹</span> Back</button>
+    <div class="brand">
+      <svg class="brand-icon" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="22" fill="#5b3df5"/><rect x="16" y="24" width="34" height="12" rx="6" fill="#fff"/><rect x="70" y="24" width="14" height="12" rx="6" fill="#fff"/><rect x="34" y="44" width="34" height="12" rx="6" fill="#ff7a5c"/><rect x="16" y="64" width="14" height="12" rx="6" fill="#3fd49a"/><rect x="50" y="64" width="34" height="12" rx="6" fill="#3fd49a"/></svg>
+      <span class="brand-name">Palaver</span>
+    </div>
+    <!-- The pages; the window opens on Today. Its counter: the meetings that need you. -->
+    <nav class="views" aria-label="Pages">
+      <button type="button" data-view="today" aria-current="page">Today<span class="nav-count" hidden></span></button>
+      <button type="button" data-view="meetings">Meetings</button>
+      <button type="button" data-view="people">People</button>
+      <button type="button" data-view="projects">Projects</button>
+      <button type="button" data-view="glossary">Glossary</button>
+    </nav>
+    <button type="button" class="palette-btn" id="palette-btn" title="Find meetings, people and projects, or run a command"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span class="palette-btn-label">Search or command</span><kbd>⌘K</kbd></button>
+    <button type="button" class="mcp-status" id="mcp-status" hidden><span class="mcp-dot" aria-hidden="true"></span><span id="mcp-status-text"></span></button>
+    <button type="button" class="gear" id="settings-btn" aria-label="Settings" title="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+  </header>
+  <aside class="sidebar">
+    <div class="list-head">
+      <input id="search" class="search" type="search" placeholder="Search meetings, people, projects" aria-label="Search meetings" autocomplete="off"
+        title="People, projects, organizations and dates become filters: “Anna and Tom last month”, “what did we decide about pricing”. A name in quotes stays a word.">
+      <div id="search-chips" class="search-chips" aria-label="Search filters" hidden></div>
+      <div class="list-tools">
+        <select id="filter" class="filter" aria-label="Show"></select>
+        <button type="button" id="import-btn" class="btn btn-quiet small import-btn"
+          title="Import a meeting a colleague exported (a .palaver file); dropping it on the window works too">Import…</button>
+      </div>
+    </div>
+    <nav id="list" class="list" aria-label="Meetings"></nav>
+  </aside>
+  <main id="main" class="main" tabindex="-1">
+    <div class="empty"></div>
+  </main>
+  <footer id="player" class="player" hidden>
+    <button id="play" class="play" type="button" aria-label="Play"><span class="play-icon"></span></button>
+    <span id="clock" class="clock">0:00</span>
+    <input id="scrub" class="scrub" type="range" min="0" max="1" step="0.1" value="0" aria-label="Position">
+    <span id="duration" class="clock"></span>
+    <span id="now-speaking" class="now-speaking"></span>
+  </footer>
+  <audio id="audio" preload="none"></audio>
+  <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+  <script src="app.js" type="module"></script>
+</body>
+</html>
