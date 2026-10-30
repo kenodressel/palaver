@@ -81,7 +81,7 @@ publish: ## Create the GitHub release of this version from dist/upload.txt (need
 		if codesign -dv "$$T/Palaver.app" 2>&1 | grep -q "Signature=adhoc"; then rm -rf "$$T"; \
 			echo "✗ dist/palaver-app-$(VERSION).zip is signed ad hoc: run make release with PALAVER_SIGN_IDENTITY set"; \
 			exit 1; fi; rm -rf "$$T"
-	cd $(DIST) && gh release create "v$(VERSION)" $$(cat upload.txt) --generate-notes
+	cd $(DIST) && gh release create "v$(VERSION)" --repo kenodressel/palaver $$(cat upload.txt) --generate-notes
 
 clean: ## Remove build output (the runtime archive too: it takes minutes to build again)
 	rm -rf $(DIST) build $(AEC_DIR)/build
