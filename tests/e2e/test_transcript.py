@@ -167,7 +167,7 @@ def test_a_selection_offers_fix_spelling(page, app_server):
     # "pelican" selected, as a double-click would.
     page.evaluate("""() => {
       const said = document.querySelector('#main .turn[data-start="15"] .said');
-      const node = [...said.childNodes].find((n) => n.nodeType === Node.TEXT_NODE);
+      const node = [...said.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && n.textContent.includes('pelican'));
       const at = node.textContent.indexOf('pelican');
       const r = document.createRange();
       r.setStart(node, at);

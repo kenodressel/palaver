@@ -188,7 +188,12 @@ def test_reopen_from_settings_with_the_recommendations(page, app_server):
     goto(page, app_server, "#/settings")  # meetings exist: the first start opened nothing
     step = page.locator("#main .switch-row", has_text="Realtime transcription")
     expect(step).to_be_visible()
-    expect(page.locator("#main .setup-hint").first).to_contain_text("Recommended for this Mac")
+    # A switch set as recommended needs no word; one set otherwise says what is recommended.
+    expect(page.locator("#main .setup-hint")).to_have_count(0)
+    step.get_by_role("switch").click(force=True)  # the drawn track lies over the checkbox
+    expect(page.locator("#main .setup-hint").first).to_contain_text("Recommended for this Mac: On")
+    step.get_by_role("switch").click(force=True)  # the drawn track lies over the checkbox
+    expect(page.locator("#main .setup-hint")).to_have_count(0)
     page.get_by_role("button", name="Open setup assistant").click()
     step_title(page, "This Mac")
     primary(page).click()

@@ -23,7 +23,7 @@
   --surface: light-dark(#ffffff, #1a1830);
   --ink: light-dark(#14123a, #f2f0ff);
   --ink-2: light-dark(#5d5a7a, #a29fc0);
-  --ink-3: light-dark(#6b6890, #908dae);
+  --ink-3: light-dark(#625f86, #9895b6);  /* AA (4.5:1) for small text on every background, --selected too */
   --rule: light-dark(#e6e3f2, #2a2745);
   --hover: light-dark(#f1effa, #221f3b);
   --selected: light-dark(#e9e5ff, #2e2a55);
@@ -69,6 +69,8 @@ body {
 }
 
 button, input { font: inherit; color: inherit; }
+/* Hints in empty fields ("+ Project", "No description yet"): readable, not the system's pale grey. */
+::placeholder { color: var(--ink-3); opacity: 1; }
 
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
@@ -212,7 +214,8 @@ body:is([data-page="today"], [data-page="people"], [data-page="projects"], [data
 .item-state { color: var(--you); }
 .item-state.recording { color: var(--danger); }  /* red, as the Live pill on the page */
 .item-projects { display: block; margin-top: 2px; color: var(--you-ink); font-size: 12px; font-weight: 700; }
-.item-people { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item-people { display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; white-space: nowrap; }
+.item-people .person-token { flex: 0 1 auto; color: var(--ink-2); font-weight: 600; }
 .item-meta > span:not(.item-people) { flex: none; white-space: nowrap; }
 .item-summary {
   display: -webkit-box;
@@ -224,7 +227,8 @@ body:is([data-page="today"], [data-page="people"], [data-page="projects"], [data
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
-.item-todo { display: block; margin-top: 3px; color: var(--v3); font-size: 11.5px; font-weight: 600; }
+.item-todo { display: block; margin-top: 3px; color: color-mix(in srgb, var(--v3) 80%, var(--ink)); font-size: 11.5px;
+  font-weight: 600; }
 /* Drawn by us, not the system: the native pop-up button was cramped in
    the app's web view. */
 .filter {
@@ -339,11 +343,14 @@ h1 {
   color: var(--ink); font: inherit; letter-spacing: inherit; box-shadow: 0 0 0 2px var(--focus); }
 .title-input:focus { outline: none; }
 .title-input::placeholder { color: var(--ink-3); }
-/* Under a title of one's own: what the calendar calls the meeting. */
-.title-hint { margin-top: 4px; color: var(--ink-3); font-size: 13px; }
+/* Under a title the calendar does not use: what the calendar calls the meeting. */
+.title-hint { margin-top: 4px; color: var(--ink-2); font-size: 13px; }
 
-.when { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: 4px; color: var(--ink-2);
+/* "Wed, Oct 28 · 12:00 · 52 min · ✓ Reviewed" */
+.when { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 6px; color: var(--ink-2);
   font-variant-numeric: tabular-nums; }
+.when .sep { color: var(--ink-3); }
+.when .from { font-size: 13px; }
 
 /* Why it records, or how it started and stopped (#47). */
 .recorded { margin-top: 4px; color: var(--ink-3); font-size: 13px; }
@@ -377,8 +384,38 @@ h1 {
 .coach-warning { margin: 0; color: var(--ink); font-size: 13px; }
 .coach-error { display: inline; margin: 0 8px 0 0; color: var(--coral-ink); font-size: 13px; }
 
-.invitees { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; color: var(--ink-2); font-size: 13px; }
-.invitees .declined { text-decoration: line-through; color: var(--ink-3); }
+/* The people on the left, the projects on the right; under each other when narrow. */
+.people-row { display: flex; flex: 1 1 100%; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 10px 28px; margin-top: 4px; }
+.people-row .project-row { flex: 0 1 auto; margin: 0; }
+.people-row .invitees + .project-row { justify-content: flex-end; margin-left: auto; }
+.invitees { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; min-width: 0; font-size: 14px; }
+.prep .invitees { margin-top: 12px; }
+
+/* A person, the same wherever one is listed: the avatar in their colour with the name, as on the lanes.
+   Who did not speak (or is no person of the meeting): a grey outline. */
+.person-token { display: inline-flex; align-items: center; gap: 7px; min-width: 0; color: var(--ink); font-weight: 650;
+  white-space: nowrap; }
+.person-token .avatar { width: 26px; height: 26px; font-size: 10px; }
+.person-token.silent .avatar { border: 1.5px solid var(--ink-3); background: none; color: var(--ink-2); }
+.person-token.silent .person-name { color: var(--ink-2); font-weight: 500; }
+.person-token.small { gap: 5px; font-weight: 600; }
+.person-token.small .avatar { width: 18px; height: 18px; font-size: 8px; letter-spacing: 0; }
+.person-token.small .avatar.unknown { border-width: 1.5px; font-size: 10px; }
+.person-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.person-chip { display: inline-flex; align-items: center; gap: 4px; padding-left: 4px; }
+/* A name in running text (summary, sections, transcript): the person's colour, a little heavier; no chip.
+   Mixed with the ink, so it reads at AA on every background. */
+.name-mark { color: color-mix(in srgb, var(--c) 80%, var(--ink)); font-weight: 650; }
+
+/* About this recording: what the recording itself says, folded away at the bottom of the meeting. */
+.about { margin-top: 48px; padding-top: 14px; border-top: 1px solid var(--rule); color: var(--ink-2); font-size: 13px; }
+.about summary { width: fit-content; padding: 2px 8px 2px 0; border-radius: 6px; font-weight: 650; cursor: pointer; }
+.about summary:hover { color: var(--ink); }
+.about-lines { margin: 10px 0 0; padding: 0; list-style: none; }
+.about-lines li { margin: 4px 0; }
+.about-lines:empty { display: none; }
+.about .mcp-read { margin: 4px 0 0; }
 
 .btn {
   padding: 8px 16px;
@@ -436,8 +473,11 @@ h1 {
   color: var(--on-color);
   font-size: 11px;
   font-weight: 700;
+  font-style: normal;
+  line-height: 1;
   letter-spacing: 0.02em;
 }
+.avatar::before { content: attr(data-initials); }  /* drawn, not text: names copy without their initials */
 .avatar.unknown { border: 2px dashed var(--c); background: var(--hover); color: var(--ink-2); font-size: 14px; }
 
 .name-input {
@@ -571,7 +611,12 @@ h1 {
   box-shadow: inset 0 0 0 2px var(--v2);
   font: 14px/1.4 var(--sans);
 }
-.owner { font-weight: 650; }
+/* Who a next step is for: person tokens before the task. */
+.owner { margin-right: 4px; }
+/* WebKit puts a list item's bullet into the first box it finds, here the avatar, unless text comes first. */
+.owner::before { content: "\200b"; }
+.owner .person-token, .need-q .person-token { margin-right: 6px; vertical-align: middle; line-height: 1.2; }
+.need-q .person-token { margin: 0 0 0 3px; }
 .notes-empty { padding: 28px 0; font: 15px/1.5 var(--sans); color: var(--ink-2); }
 .notes-empty p { margin: 0 0 12px; }
 .error { color: var(--danger); }
@@ -754,7 +799,7 @@ button.mn-time:hover, button.mn-time:focus-visible { background: var(--selected)
 /* A line saying what just happened, in the flow of the page (.notice is a whole page). */
 .inline-notice { margin: 10px 0 6px; color: var(--ink-2); }
 .t { color: var(--ink-3); font-size: 12.5px; font-variant-numeric: tabular-nums; padding-top: 2px; }
-.speaker { display: block; color: var(--c); font-weight: 650; font-size: 12.5px; }
+.speaker { display: block; color: color-mix(in srgb, var(--c) 80%, var(--ink)); font-weight: 650; font-size: 12.5px; }
 .speaker .org { color: var(--ink-3); font-weight: 500; }
 .said { max-width: 72ch; }
 /* The live stream's tail: the other side's draft is not settled yet, so it is grey and slanted. */
@@ -781,7 +826,7 @@ button.mn-time:hover, button.mn-time:focus-visible { background: var(--selected)
   padding: 0 2px 0 8px;
   border: 1px dashed var(--v3);
   border-radius: 999px;
-  color: var(--v3);
+  color: color-mix(in srgb, var(--v3) 80%, var(--ink));
   font-size: 11.5px;
   white-space: nowrap;
 }
@@ -830,7 +875,10 @@ button.mn-time:hover, button.mn-time:focus-visible { background: var(--selected)
 .new-project:has(input[name="variants"]) { max-width: 600px; }  /* the glossary's two fields */
 .new-project .name-input { border-color: var(--rule); background: var(--surface); }
 .project .person-head { flex-wrap: wrap; }
-.people-line { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+.people-line { display: flex; flex: 0 1 auto; align-items: center; gap: 10px; min-width: 0; overflow: hidden;
+  white-space: nowrap; }
+.people-line .person-token, .item-people .person-token { color: var(--ink-2); }
+.quiet-invitees { display: flex; flex-wrap: wrap; gap: 6px 16px; }
 .spacer { flex: 1; }
 .filter.inline { margin: 0; padding: 2px 26px 2px 8px; background-position: right 9px center; font-size: 12.5px; }
 .description { margin: 4px 0 2px 6px; max-width: 72ch; }
@@ -1001,7 +1049,7 @@ button.mn-time:hover, button.mn-time:focus-visible { background: var(--selected)
 .lm-feature-label { font-weight: 600; }
 .lm-actions { display: inline-flex; flex-wrap: wrap; gap: 6px; }
 .btn.small { padding: 4px 12px; font-size: 12.5px; }
-.lm-key-set { color: var(--v1); font-weight: 600; }
+.lm-key-set { color: color-mix(in srgb, var(--v1) 80%, var(--ink)); font-weight: 600; }
 .lm-problem { color: var(--coral-ink); }
 .lm-log { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .lm-log .failed { color: var(--danger); }
@@ -1046,7 +1094,7 @@ button.mn-time:hover, button.mn-time:focus-visible { background: var(--selected)
 .mcp-section .settings-card { max-width: none; }
 .mcp-setup { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin: 0; font-weight: 600; }
 .mcp-setup p { margin: 0; }
-.mcp-setup.ok { color: var(--v1); }
+.mcp-setup.ok { color: color-mix(in srgb, var(--v1) 80%, var(--ink)); }
 .mcp-clients { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 0; padding: 0; list-style: none; }
 .mcp-client { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; }
 .mcp-client-name { font-weight: 600; }
@@ -1333,7 +1381,7 @@ button.variant.drop:hover .x, button.variant.drop:focus-visible .x { color: var(
    ([▶ Play] [Write notes] [⋯]); it moves under the title when the window is narrow. */
 .pill { display: inline-flex; align-items: center; gap: 6px; padding: 1px 10px; border-radius: 999px;
   background: var(--hover); color: var(--ink-2); font-size: 12.5px; font-weight: 650; white-space: nowrap; }
-.pill.reviewed { background: color-mix(in srgb, var(--v1) 14%, transparent); color: var(--v1); }
+.pill.reviewed { background: color-mix(in srgb, var(--v1) 14%, transparent); color: color-mix(in srgb, var(--v1) 75%, var(--ink)); }
 .pill.state { background: var(--selected); color: var(--you-ink); }
 .pill.live-badge { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
 .toolbar { display: flex; flex: none; align-items: center; gap: 6px; margin-left: auto; }
@@ -1416,8 +1464,8 @@ button.variant.drop:hover .x, button.variant.drop:focus-visible .x { color: var(
 .setup-check:first-child { border-top: 0; }
 .setup-mark { flex: none; display: inline-grid; place-items: center; width: 20px; height: 20px; margin-top: 1px;
   border-radius: 50%; background: var(--hover); color: var(--ink-3); font-size: 12px; font-weight: 800; }
-.setup-check.ok .setup-mark { background: color-mix(in srgb, var(--v1) 16%, transparent); color: var(--v1); }
-.setup-check.warn .setup-mark { background: color-mix(in srgb, var(--v2) 18%, transparent); color: var(--v2); }
+.setup-check.ok .setup-mark { background: color-mix(in srgb, var(--v1) 16%, transparent); color: color-mix(in srgb, var(--v1) 75%, var(--ink)); }
+.setup-check.warn .setup-mark { background: color-mix(in srgb, var(--v2) 18%, transparent); color: color-mix(in srgb, var(--v2) 75%, var(--ink)); }
 .setup-check.fail .setup-mark { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
 .setup-check-text { min-width: 0; overflow-wrap: anywhere; }
 .setup-check-name { font-weight: 650; }
@@ -1454,7 +1502,7 @@ button.variant.drop:hover .x, button.variant.drop:focus-visible .x { color: var(
 .setup-token p { margin: 0; }
 .setup-token code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .meta code { font: 0.95em ui-monospace, SFMono-Regular, Menlo, monospace; }
-.setup-hint.ok { color: var(--v1); }
+.setup-hint.ok { color: color-mix(in srgb, var(--v1) 80%, var(--ink)); }
 .setup-entry { margin-top: 14px; }
 .setup-entry .lm-row > span { flex: 1 1 280px; }
 @media (max-width: 760px) {
@@ -1489,11 +1537,9 @@ button.variant.drop:hover .x, button.variant.drop:focus-visible .x { color: var(
   animation: pulse 1.6s ease-in-out infinite; }
 .live-now h2 { margin: 8px 0 10px; font: 800 26px/1.1 var(--display); letter-spacing: -0.02em; }
 .live-speakers { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 10px; }
-.live-speaker { display: inline-flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 650; }
-.live-speaker .avatar { width: 24px; height: 24px; background: var(--c); color: var(--on-color); font-size: 10px; }
 .live-lines { display: flex; flex-direction: column; gap: 6px; padding-top: 10px; border-top: 1px solid var(--rule); }
 .live-line { margin: 0; padding-left: 10px; border-left: 3px solid var(--c); font-size: 14.5px; line-height: 1.45; }
-.live-line .speaker { color: var(--c); font-weight: 700; }
+.live-line .speaker { color: color-mix(in srgb, var(--c) 80%, var(--ink)); font-weight: 700; }
 
 /* The next meeting: dark, like a ticket. */
 .next-meeting { padding: 16px 20px 18px; border-radius: var(--card); background: var(--ink); color: var(--paper); }
@@ -1516,7 +1562,7 @@ button.variant.drop:hover .x, button.variant.drop:focus-visible .x { color: var(
   color: var(--you-ink); font-weight: 800; }
 .need-unnamed .need-mark, .need-speaker .need-mark { border: 2px dashed var(--v2); background: none; color: var(--ink-2); }
 .need-cut .need-mark { background: var(--coral-soft); color: var(--coral-ink); }
-.need-review .need-mark { background: color-mix(in srgb, var(--v1) 14%, transparent); color: var(--v1); }
+.need-review .need-mark { background: color-mix(in srgb, var(--v1) 14%, transparent); color: color-mix(in srgb, var(--v1) 75%, var(--ink)); }
 .need-body { min-width: 0; }
 .need-meeting { font-size: 12.5px; font-weight: 650; }
 .need-when { color: var(--ink-3); font-size: 12.5px; }

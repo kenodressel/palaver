@@ -31,10 +31,11 @@ test("yourLink is a link the user set: sure, final", () => {
     reason: "", unsure: false, label: "Speaker: Henrik (you)" });
 });
 
-test("the event chip shows the link, or asks when events overlapped", () => {
+test("the event chip asks about an unsure link, or which event when events overlapped; a sure one is no chip", () => {
   const sure = eventLinkView({ calendar: { title: "Northwind", link: link({ unsure: false, confidence: 0.9, reason: "time match" }) } });
-  assert.deepEqual(sure, { kind: "link", title: "Northwind", why: "time match", unsure: false, canConfirm: false });
+  assert.equal(sure, null);
   const unsure = eventLinkView({ calendar: { title: "Northwind", link: link() } });
+  assert.equal(unsure.why, "time match, 2 events overlapped");
   assert.equal(unsure.unsure, true);
   assert.equal(unsure.canConfirm, true);
   const choices = [{ key: "a|2026-10-27", title: "Contoso sync" }, { key: "l|2026-10-27", title: "Northwind" }];

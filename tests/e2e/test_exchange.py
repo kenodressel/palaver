@@ -112,7 +112,8 @@ def test_the_same_meeting_imported_asks_and_goes_beside_mine_then_undo_takes_it_
     imported = f"{A}-2"
     expect(list_item(page, imported)).to_be_visible()
     expect(heading(page)).to_have_text("Team standup")
-    expect(page.locator("#main .imported-line")).to_contain_text("Imported from Timo")
+    expect(page.locator("#main .when .from")).to_have_text("from Timo")  # the rest in About this recording
+    expect(page.locator("#main .about .imported-line")).to_contain_text("Imported from Timo")
     expect_toast(page, "“Team standup” imported from Timo")
     # Names come as hints, named by the sender: Anna was named by hand there.
     expect(page.locator('#main .lane-group[data-label="SPEAKER_00"] .inferred')).to_have_text("named by Timo")

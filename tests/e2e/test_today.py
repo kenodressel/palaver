@@ -54,7 +54,7 @@ def test_the_window_opens_on_today(page, shared_server):
 
     live = page.locator("#main .live-now")  # the call being recorded, large
     expect(live).to_contain_text("Hi Timo, wir starten mit dem Budget.")
-    expect(live.locator(".live-speaker")).not_to_have_count(0)
+    expect(live.locator(".live-speakers .person-token")).to_have_text(["Timo", "Speaker 1", "Speaker 2"])
 
     nxt = page.locator("#main .next-meeting")
     expect(nxt).to_contain_text("1:1 with Lea")

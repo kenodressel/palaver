@@ -10,7 +10,7 @@ import { meetingCommands, nextAfter, laneCommands, laneLines, linesText, namingT
   placeOf, hashOf, historyStep, navStart, navPush, navArrive, keyNav, mouseNav, inlinePlay,
   samePlace, undoStep, stopQuestionFor, stopAnswerText, recordingLine, audioWarnings, audioHints, gapsBefore,
   engineOptions, sendsText, accessLogText, testText, tokensText,
-  transcriberOptions, transcriptionSendsText, priceText, transcriptionTestText, monthText, transcribedText,
+  transcriberOptions, transcriptionSendsText, priceText, transcriptionTestText, monthText,
   clientName, mcpIndicator, mcpArgsText, mcpSizeText, mcpReadOf, logShown, logClients, logMeetings,
   clearedText, linkTitle, eventLinkView, eventChangeText,
   noteKind, relatedOnly, firstMoment, chipRemoved, indexingNotice, memoryRows, memoryTotalText, memoryPolling,
@@ -28,6 +28,9 @@ import { togglePalette, paletteOpen } from "./palette.js";
 import { reportMeeting, reportDraft, reportDoneText, actionCatalog } from "./logic.js";
 // Export and import of a meeting (#58).
 import { inferredText, importedLine, importedText, GLOBAL_COMMANDS } from "./logic.js";
+// One person, one look; the header's people and projects; About this recording (UI cleanup 2026-10-30).
+import { personColor, laneColors, attendeeTokens, meetingPeople, ownerTokens, nameMarks, projectView, aboutLines,
+  sameTitle } from "./logic.js";
 import { openExport, pickImport, wireDrop, importFile, askVoices, decideVoices } from "./exchange.js";
 
 async function api(path, body) {
@@ -67,11 +70,40 @@ function minutes(seconds) {
 }
 
 // A voice's badge: initials of its name ("Timo Strauß" → TS), a question mark while it has none.
+// Drawn by CSS from data-initials: not part of the text, so "Carla" copies and reads as "Carla", not "CCarla".
 function avatar(name) {
   const letters = (name || "").split(/[\s-]+/).filter((w) => /^\p{L}/u.test(w)).map((w) => w[0].toUpperCase());
   const text = letters.length > 1 ? letters[0] + letters[letters.length - 1] : letters[0];
-  return h("span", { class: text ? "avatar" : "avatar unknown", "aria-hidden": "true" }, text || "?");
+  return h("span", { class: text ? "avatar" : "avatar unknown", "aria-hidden": "true", "data-initials": text || "?" });
 }
+
+// A person, looking the same wherever one is listed: the avatar in their
+// colour (personColor) with the name beside it, as on the speaker lanes.
+// ``color`` null: someone who did not speak, or no person of the meeting (a
+// grey outline). ``small``: in a list item or a chip. ``named``: false for a
+// voice without a name ("Speaker 2"), whose avatar is a question mark.
+function personToken(name, color, { title = null, small = false, named = true } = {}) {
+  return h("span", { class: `person-token${color ? "" : " silent"}${small ? " small" : ""}`,
+    style: color ? `--c:${color}` : null, title },
+  avatar(named ? name : null), h("span", { class: "person-name" }, name));
+}
+
+// Text with the names of a meeting's people in their colour (``people``:
+// meetingPeople); no chips in running text.
+function withNames(text, people) {
+  const marks = nameMarks(text, people);
+  if (!marks.length) return text;
+  const out = [];
+  let at = 0;
+  for (const x of marks) {
+    out.push(text.slice(at, x.a), nameMark(x.name, x.color));
+    at = x.b;
+  }
+  out.push(text.slice(at));
+  return out;
+}
+
+const nameMark = (name, color) => h("span", { class: "name-mark", style: `--c:${color}` }, name);
 
 // Times on the 24-hour clock (15:00, not 3:00 PM), whatever the system's locale.
 const timeFmt = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
@@ -158,6 +190,8 @@ const state = {
   needs: null,     // what waits on the user, per meeting (/api/needs): Today, the strip, the dot, the counter
   todayLive: null, // the meeting being recorded, as Today's "Live now" shows it
   recent: loadRecent(),  // the places opened lately, for the palette
+  allInvitees: null, // the meeting whose invitees all show (a big round shows eight and "+N more")
+  aboutOpen: null, // the meeting whose "About this recording" is unfolded
   error: null,
 };
 
@@ -221,11 +255,13 @@ function shown(m) {
   return true;
 }
 
+// Who spoke, as small person tokens in their colours: the first three, "+N" for the rest.
 function personLine(m) {
   const shown = m.people.slice(0, 3);
   const nameless = m.nameless ?? m.unnamed;  // every voice without a name, a to-do or not
   const more = m.people.length - shown.length + nameless;
-  return shown.length ? shown.join(", ") + (more ? ` +${more}` : "") : nameless === 1 ? "1 speaker" : nameless ? `${nameless} speakers` : "";
+  if (!shown.length) return nameless === 1 ? "1 speaker" : nameless ? `${nameless} speakers` : "";
+  return [...shown.map((name) => personToken(name, personColor(name), { small: true })), more ? `+${more}` : null];
 }
 
 function todoLine(m) {
@@ -456,22 +492,19 @@ $("#search").addEventListener("input", (e) => {
 
 // --- meeting ---------------------------------------------------------------
 
-// A speaker keeps its colour while its meeting stays open: a merge, a removal
-// or their undo doesn't repaint the other lanes.
-let palette = { id: null, map: new Map() };
+// A named speaker has the person's colour, the same in every meeting; an
+// unnamed one keeps its meeting colour while the meeting stays open: a merge,
+// a removal or their undo doesn't repaint the other lanes (laneColors).
+let palette = { id: null, cache: new Map() };
 function colorOf(meeting) {
-  if (palette.id !== meeting.id) palette = { id: meeting.id, map: new Map() };
-  const map = palette.map;
-  for (const s of meeting.speakers) {
-    const key = s.label ?? "__you";
-    if (map.has(key)) continue;
-    const used = new Set(map.values());
-    const free = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => `var(--v${i})`).find((c) => !used.has(c));
-    const voices = [...map.keys()].filter((k) => k !== "__you").length;
-    map.set(key, s.is_user ? "var(--you)" : free || `var(--v${voices % 8})`);
-  }
+  if (palette.id !== meeting.id) palette = { id: meeting.id, cache: new Map() };
+  const map = laneColors(meeting.speakers, palette.cache);
   return (label) => map.get(label ?? "__you") || "var(--ink-2)";
 }
+
+// The user's own organization, as the meeting has it: never shown, it goes without saying.
+const ownOrgOf = (m) => m.speakers.find((s) => s.is_user)?.org || null;
+const othersOrg = (org, m) => (org && !sameTitle(org, ownOrgOf(m)) ? org : null);
 
 // ``how``: see historyStep; ``tab``: the tab to show, when going back to it.
 async function openMeeting(id, at, { how = "push", tab = null } = {}) {
@@ -527,6 +560,47 @@ function statusPill(m) {
     return h("span", { class: "pill reviewed", title: `Reviewed ${dayFmt.format(at)}, ${timeFmt.format(at)}` }, "✓ Reviewed");
   }
   return null;
+}
+
+// "Wed, Oct 28 · 12:00 · 52 min · ✓ Reviewed": when, how long, its one status;
+// "from Anna" on an imported meeting.
+function dateLine(m, start) {
+  const parts = [
+    start ? h("span", { title: `${dayFmt.format(start)}, ${timeFmt.format(start)}` }, shortDayFmt.format(start)) : null,
+    start ? h("span", {}, timeFmt.format(start)) : null,
+    m.duration ? h("span", {}, minutes(m.duration)) : null,
+    statusPill(m),
+    m.local_only ? h("span", { class: "pill local-only",
+      title: "Transcribed on this Mac, no cloud model gets this meeting, and Claude can't read it through MCP" },
+    "On this Mac only") : null,
+    m.imported ? h("span", { class: "from", title: importedLine(m.imported) }, `from ${m.imported.from}`) : null,
+  ].filter(Boolean);
+  return h("div", { class: "when" },
+    parts.flatMap((p, i) => (i ? [h("span", { class: "sep", "aria-hidden": "true" }, "·"), p] : [p])));
+}
+
+// The people on the left, the projects on the right; wrapping when narrow.
+function peopleRow(m) {
+  const tokens = attendeeTokens(m);
+  const projects = m.status === "ready" || m.live ? renderMeetingProjects(m) : null;
+  if (!tokens.length && !projects) return null;
+  return h("div", { class: "people-row" }, tokens.length ? renderInvitees(m, tokens) : null, projects);
+}
+
+// About this recording: what the recording itself says, folded away at the
+// bottom of the page; hidden while there is nothing to say. What Claude read
+// of it comes later (loadMcpReads) and shows it then.
+function aboutSection(m) {
+  const lines = aboutLines(m, state.recording);
+  const read = mcpReadLine(m.id);
+  const about = h("details", { class: "about", open: state.aboutOpen === m.id, hidden: !lines.length && read.hidden,
+    ontoggle: () => { state.aboutOpen = about.open ? m.id : null; } },
+  h("summary", {}, "About this recording"),
+  h("ul", { class: "about-lines" }, lines.map((l) => h("li", { class: `about-${l.kind}${l.kind === "imported" ? " imported-line" : ""}` },
+    l.text, l.kind === "audio" ? [" ", h("button", { type: "button", class: "link report-link",
+      onclick: () => reportFrom(m, l.text) }, "Report…")] : null))),
+  read);
+  return about;
 }
 
 // A run of this meeting that failed (transcribing, writing the notes) and was
@@ -595,33 +669,26 @@ function renderMeeting() {
   const color = colorOf(m);
   const start = m.start ? new Date(m.start) : null;
 
-  const people = m.calendar?.attendees || [];
+  // What the recording itself says (how it started, its audio, who transcribed it, what Claude read) is
+  // in About this recording at the bottom; only while it records does its line stay up here.
+  const live = m.status === "recording" || !!m.live;
   const hint = calendarHint(m);
   const head = h("header", { class: "head" },
     h("div", { class: "head-text" },
       renderTitle(m),
-      hint ? h("div", { class: "title-hint" }, hint) : null,
-      h("div", { class: "when" },
-        start ? h("span", {}, `${dayFmt.format(start)}, ${timeFmt.format(start)}`) : null,
-        m.duration ? h("span", {}, minutes(m.duration)) : null,
-        statusPill(m),
-        m.local_only ? h("span", { class: "pill local-only",
-          title: "Transcribed on this Mac, no cloud model gets this meeting, and Claude can't read it through MCP" },
-        "On this Mac only") : null),
+      hint ? h("div", { class: "title-hint", title: linkTitle(m.calendar?.link) }, hint) : null,
+      dateLine(m, start),
       renderEventLink(m),
-      recordingLine(m, state.recording) ? h("div", { class: "recorded" }, recordingLine(m, state.recording)) : null,
-      importedRow(m),
-      transcribedText(m.transcribed_by) ? h("div", { class: "recorded" }, transcribedText(m.transcribed_by)) : null,
+      live && recordingLine(m, state.recording) ? h("div", { class: "recorded" }, recordingLine(m, state.recording)) : null,
+      importedVoices(m),
       sharedLine(m),
-      audioWarnings(m, state.recording).map((text) => h("div", { class: "audio-warning", role: "status" }, text,
+      (live ? audioWarnings(m, state.recording) : []).map((text) => h("div", { class: "audio-warning", role: "status" }, text,
         h("button", { type: "button", class: "link report-link", onclick: () => reportFrom(m, text) }, "Report…"))),
       failureLine(m),
       audioHints(m, state.recording).map((text) => h("div", { class: "audio-hint" }, text)),
-      coachLive(m),
-      people.length ? renderInvitees(people) : null,
-      m.status === "ready" || m.live ? renderMeetingProjects(m) : null,
-      mcpReadLine(m.id)),
+      coachLive(m)),
     meetingToolbar(m),
+    peopleRow(m),  // the header's whole width, under the toolbar too
   );
 
   // Summary: what the language model wrote (✦, as on Write notes); Notes: mine.
@@ -650,7 +717,8 @@ function renderMeeting() {
     renderSharedAsk(m),
     m.status === "ready" || m.transcript.length ? renderRibbon(m, color) : null,
     tabs,
-    body);
+    body,
+    aboutSection(m));
   keepingTitle(() => $("#main").replaceChildren(page));
   restoreNotepadFocus(typing);
   updatePlayhead();
@@ -955,17 +1023,17 @@ function reloadAudio() {
 
 // --- export and import (#58) ---------------------------------------------------------
 
-// The line on an imported meeting, and the question about the voices that came with it.
-function importedRow(m) {
-  if (!m.imported) return null;
-  const voices = m.imported.voices || [];
-  return h("div", { class: "recorded imported-line" }, importedLine(m.imported),
-    voices.length ? h("span", { class: "imported-voices" },
-      ` · came with the voices of ${voices.map((v) => v.name).join(", ")}: `,
-      h("button", { type: "button", class: "btn btn-quiet small", onclick: (e) => answerVoices(m, true, e.currentTarget) },
-        "Add to Voice Bank"),
-      h("button", { type: "button", class: "btn btn-quiet small", onclick: (e) => answerVoices(m, false, e.currentTarget) },
-        "Don’t Add")) : null);
+// The question about the voices that came with an import, while it is open (who sent it is on the
+// date line, the rest of the import in About this recording).
+function importedVoices(m) {
+  const voices = m.imported?.voices || [];
+  if (!voices.length) return null;
+  return h("div", { class: "recorded imported-voices" },
+    `Came with the voices of ${voices.map((v) => v.name).join(", ")}: `,
+    h("button", { type: "button", class: "btn btn-quiet small", onclick: (e) => answerVoices(m, true, e.currentTarget) },
+      "Add to Voice Bank"),
+    h("button", { type: "button", class: "btn btn-quiet small", onclick: (e) => answerVoices(m, false, e.currentTarget) },
+      "Don’t Add"));
 }
 
 async function answerVoices(m, add, button) {
@@ -1117,26 +1185,30 @@ async function joinMeeting(m, side, from) {
   }
 }
 
-const GROUP_INVITEES = 8;
+const INVITEES_SHOWN = 8;
 
-// Who was invited: with their organization, grouped by it in a big round.
-function renderInvitees(people) {
-  const person = (a, org) => h("span", { class: a.response === "declined" ? "declined" : null,
-    title: a.response === "declined" ? `${a.name} declined` : a.organizer ? `${a.name} organized it` : null },
-    a.name, org && a.org ? h("span", { class: `org${a.org_link?.unsure ? " unsure-link" : ""}`, title: linkTitle(a.org_link) },
-      ` (${a.org})`) : null);
-  if (people.length < GROUP_INVITEES) {
-    return h("div", { class: "invitees", title: "Invited, from your calendar" }, people.map((a) => person(a, true)));
-  }
-  const groups = new Map();
-  for (const a of people) groups.set(a.org || "Other", [...(groups.get(a.org || "Other") || []), a]);
-  return h("div", { class: "invitees grouped", title: "Invited, from your calendar" },
-    [...groups].sort((x, y) => y[1].length - x[1].length).map(([org, members]) => h("div", { class: "invitee-group" },
-      h("span", { class: "invitee-org" }, `${org} (${members.length})`), members.map((a) => person(a, false)))));
+// Who was invited, as person tokens: who spoke first, in their colour; who
+// did not in a grey outline. A big round shows the first eight and "+N more".
+function renderInvitees(m, tokens) {
+  const all = state.allInvitees === m.id || tokens.length <= INVITEES_SHOWN + 1;
+  const shown = all ? tokens : tokens.slice(0, INVITEES_SHOWN);
+  return h("div", { class: "invitees", role: "group", "aria-label": "Invited, from your calendar" },
+    shown.map((t) => personToken(t.name, t.color, { title: t.title })),
+    shown.length < tokens.length ? h("button", { type: "button", class: "btn btn-quiet small more-invitees",
+      onclick: () => { state.allInvitees = m.id; renderMeeting(); } }, `+${tokens.length - shown.length} more`) : null);
 }
 
+// The meeting's projects: confirmed and unsure chips, the best suggestion
+// while none is confirmed; the other suggestions head the "+ Project" picker.
 function renderMeetingProjects(m) {
   const sure = (p) => p.by === "you";
+  const view = projectView(m);
+  const add = (typed) => {
+    const name = typed.trim();
+    if (!name) return;
+    const suggested = view.picker.find((p) => p.suggested && p.name === name);
+    setMeetingProject(m.id, suggested ? { project: suggested.id } : { name: typed });
+  };
   return h("div", { class: "project-row", "aria-label": "Projects" },
     m.projects.map((p) => h("span", { class: `project-chip${sure(p) ? "" : " unsure"}`, "data-project": p.id ?? "",
       title: sure(p) ? null : linkTitle(p.link) || `Sorted ${p.by === "model" ? "by the model" : `automatically: ${p.why}`}` },
@@ -1145,13 +1217,14 @@ function renderMeetingProjects(m) {
         onclick: () => setMeetingProject(m.id, { project: p.id }) }, "✓"),
       p.id == null ? null : h("button", { class: "chip-btn", title: `Not ${p.name}`, "aria-label": `Remove from ${p.name}`,
         onclick: () => setMeetingProject(m.id, { project: p.id, remove: true }) }, "×"))),
-    m.project_suggestions.map((s) => h("button", { class: "chip", style: "--c:var(--ink-3)", "data-project": s.id,
+    view.suggestions.map((s) => h("button", { class: "chip", style: "--c:var(--ink-3)", "data-project": s.id,
       title: `Alike: ${s.why}. Click to add.`, onclick: () => setMeetingProject(m.id, { project: s.id }) }, `${s.name}?`)),
     h("input", { class: "project-input", placeholder: "+ Project", list: "project-names", spellcheck: "false",
       "aria-label": "Add to a project, or name a new one",
       onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { e.target.value = ""; e.target.blur(); } },
-      onchange: (e) => e.target.value.trim() && setMeetingProject(m.id, { name: e.target.value }) }),
-    h("datalist", { id: "project-names" }, m.all_projects.map((p) => h("option", { value: p.name }))));
+      onchange: (e) => add(e.target.value) }),
+    h("datalist", { id: "project-names" }, view.picker.map((p) => h("option", { value: p.name,
+      label: p.suggested ? `Suggested${p.why ? ` · alike: ${p.why}` : ""}` : null }))));
 }
 
 // Renders again; focus that was on a chip goes to the same button if it is
@@ -1249,9 +1322,8 @@ function renderRibbon(m, color) {
         h("span", { class: "talk" }, minutes(s.talk_seconds)));
       more = moreButton(() => laneItems(m, s, color, more), `Actions for ${s.display}`);
     } else if (s.is_user) {
-      who = h("div", { class: "who" }, avatar(s.name),
-        h("span", { class: "you-name" }, s.name), s.org ? h("span", { class: "org" }, s.org) : null,
-        h("span", { class: "talk" }, minutes(s.talk_seconds)));
+      who = h("div", { class: "who" }, avatar(s.name),  // the user's own organization goes without saying
+        h("span", { class: "you-name" }, s.name), h("span", { class: "talk" }, minutes(s.talk_seconds)));
       // Several people at my microphone (#56): an in-person meeting around the laptop.
       more = laneCommands(m, s).some(Boolean) ? moreButton(() => laneItems(m, s, color, more), `Actions for ${s.display}`)
         : h("span", { class: "more-gap", "aria-hidden": "true" });
@@ -1267,7 +1339,8 @@ function renderRibbon(m, color) {
       // Hearing the voice is how to tell who it is: its play button stays in sight until the name is sure.
       who = h("div", { class: "who" }, avatar(s.name), input,
         inlinePlay(s) ? playVoiceButton(`Play voice of ${s.display}`, () => playVoice(s)) : null,
-        s.org ? h("span", { class: `org${s.org_link?.unsure ? " unsure-link" : ""}`, title: linkTitle(s.org_link) || s.org }, s.org) : null,
+        othersOrg(s.org, m) ? h("span", { class: `org${s.org_link?.unsure ? " unsure-link" : ""}`,
+          title: linkTitle(s.org_link) || s.org }, s.org) : null,
         byVoice ? h("span", { class: `named-by${s.link?.unsure ? " unsure-link" : ""}`, title: linkTitle(s.link) || byVoice },
           s.link?.unsure ? `by voice · ${Math.round(s.link.confidence * 100)}%` : "by voice") : null,
         h("span", { class: "talk" }, minutes(s.talk_seconds)));
@@ -1306,8 +1379,8 @@ function renderRibbon(m, color) {
     if (hints.length) {
       group.append(h("div", { class: "hints" },
         hints.map(([name, why]) => name == null ? h("span", { class: "hints-label" }, why)
-          : h("button", { class: "chip", title: `Name ${s.display} ${name}`, onclick: () => nameSpeaker(m.id, s, name) },
-            name, " ", h("small", {}, why)))));
+          : h("button", { class: "chip person-chip", title: `Name ${s.display} ${name}`, onclick: () => nameSpeaker(m.id, s, name) },
+            personToken(name, personColor(name), { small: true }), " ", h("small", {}, why)))));
     }
   }
   const folded = [];
@@ -1684,22 +1757,31 @@ function renderNotes(m, color) {
           : "The transcript changed after these notes were written."),
       h("button", { class: "btn", disabled: state.writing.has(m.id), onclick: () => writeNotes(m.id) }, writingText(m.id) ? "Writing notes…" : "Rewrite notes")));
   }
-  wrap.append(h("p", { class: "summary" }, n.summary));
+  // The meeting's people in their colour wherever the notes name them; a next step's owner as a person token.
+  const people = meetingPeople(m);
+  const named = (text) => withNames(text, people);
+  wrap.append(h("p", { class: "summary" }, named(n.summary)));
   // What was decided and who does what next: up front, before the detail.
   if (n.decisions.length || n.next_steps.length) {
     wrap.append(h("div", { class: "note-cards" },
       n.decisions.length ? h("div", { class: "note-card" }, h("h2", {}, n.decisions.length === 1 ? "Decision" : "Decisions"),
-        h("ul", {}, n.decisions.map((d, i) => h("li", { class: "decision" }, d,
+        h("ul", {}, n.decisions.map((d, i) => h("li", { class: "decision" }, named(d),
           (n.decisions_mine || []).includes(i) ? youMark() : null)))) : null,
       n.next_steps.length ? h("div", { class: "note-card todo" }, h("h2", {}, "Next steps"),
-        h("ul", {}, n.next_steps.map((s) =>
-          h("li", {}, s.owner ? [h("span", { class: "owner" }, s.owner), ": "] : null, s.task,
-            s.mine ? youMark() : null)))) : null));
+        h("ul", {}, n.next_steps.map((s) => {
+          const owners = ownerTokens(s.owner, people);
+          // The colon is for copying and screen readers; the token says it on screen.
+          return h("li", {}, owners.length ? h("span", { class: "owner", title: `For ${s.owner}` },
+            owners.flatMap((t, i) => [i ? h("span", { class: "visually-hidden" }, ", ") : null,
+              personToken(t.name, t.color, { small: true })]),
+            h("span", { class: "visually-hidden" }, ": ")) : null, named(s.task),
+          s.mine ? youMark() : null);
+        }))) : null));
   }
   for (const s of n.sections) {
     wrap.append(h("h2", {}, s.heading),
-      h("ul", {}, s.points.map((p) => h("li", {}, p.text, p.mine ? youMark() : null,
-        p.details.length ? h("ul", {}, p.details.map((d) => h("li", {}, d))) : null))));
+      h("ul", {}, s.points.map((p) => h("li", {}, named(p.text), p.mine ? youMark() : null,
+        p.details.length ? h("ul", {}, p.details.map((d) => h("li", {}, named(d)))) : null))));
   }
   return wrap;
 }
@@ -1718,7 +1800,8 @@ function renderTranscript(m, color) {
   }
   let last = null;
   const canCut = m.status === "ready" && !m.live;
-  const orgOf = new Map(m.speakers.filter((s) => s.org).map((s) => [s.name || s.display, s.org]));
+  const orgOf = new Map(m.speakers.filter((s) => othersOrg(s.org, m)).map((s) => [s.name || s.display, s.org]));
+  const people = meetingPeople(m);
   if (canCut && m.neighbours?.next && state.cutAt == null) {
     wrap.append(h("p", { class: "cut-hint" }, `Did this recording run into “${m.neighbours.next.title || "the next meeting"}”? `,
       "Use Split here on the first line that belongs to it."));
@@ -1755,7 +1838,7 @@ function renderTranscript(m, color) {
     h("span", { class: "bar" }),
     h("div", { class: "said" }, showName ? h("span", { class: "speaker" }, t.speaker,
       orgOf.get(t.speaker) ? h("span", { class: "org" }, ` · ${orgOf.get(t.speaker)}`) : null) : null,
-    state.editAt === t.start ? lineEditor(m, t) : lineText(t),
+    state.editAt === t.start ? lineEditor(m, t) : lineText(t, people),
     t.edited && state.editAt !== t.start ? h("span", { class: "edited", title: `Heard: “${t.heard}”` }, "edited") : null));
     into.append(turn);
   });
@@ -1942,15 +2025,16 @@ setInterval(async () => {
 
 // A line's text, marked where the glossary respelled it (what was heard
 // shows on hover) and where the transcriber was unsure of a word (dotted:
-// on recorded meetings, such words were wrong far more often).
-function lineText(t) {
-  const marks = lineMarks(t);
+// on recorded meetings, such words were wrong far more often); the names of
+// the meeting's ``people`` in their colour, never in place of those marks.
+function lineText(t, people = null) {
+  const marks = lineMarks(t, people);
   if (!marks.length) return t.text;
   const out = [];
   let at = 0;
   for (const x of marks) {
     const words = t.text.slice(x.a, x.b);
-    out.push(t.text.slice(at, x.a), x.kind === "glossed"
+    out.push(t.text.slice(at, x.a), x.kind === "name" ? nameMark(words, x.color) : x.kind === "glossed"
       ? h("span", { class: "glossed", title: `Glossary: heard “${x.heard}”` }, words)
       : h("span", { class: "unsure",
         title: "Palaver wasn't sure about this word. Double-click it, or use Fix spelling on the line." }, words));
@@ -2437,7 +2521,7 @@ function renderPeople() {
       const voices = g.voices.map((v) => [v.id, v.label]);
       const clip = g.voices.find((v) => v.clip);
       page.append(h("section", { class: "person", style: `--c:var(--v${i % 8})`, "data-voice": voices[0].join("|") },
-        h("div", { class: "person-head" }, h("span", { class: "swatch" }),
+        h("div", { class: "person-head" }, avatar(null),
           h("input", { class: "name-input", placeholder: "Who is this?", list: "names", spellcheck: "false",
             "aria-label": "Name for this voice",
             onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); },
@@ -2468,8 +2552,9 @@ function renderPeople() {
     page.append(h("p", { class: "notes-empty" }, "Nobody has a name yet. Name a speaker in a meeting, or a voice above."));
   }
   for (const p of d.people) {
-    page.append(h("section", { class: "person", style: "--c:var(--ink-2)", "data-person": p.name },
-      h("div", { class: "person-head" }, h("span", { class: "swatch" }),
+    // In their colour, as on the lanes and wherever else they are named.
+    page.append(h("section", { class: "person", style: `--c:${personColor(p.name, p.you ? p.name : null)}`, "data-person": p.name },
+      h("div", { class: "person-head" }, avatar(p.name),
         h("input", { class: "name-input", value: p.name, spellcheck: "false", "aria-label": `Rename ${p.name}`,
           title: "Rename everywhere; an existing name merges the two",
           onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { e.target.value = p.name; e.target.blur(); } },
@@ -2823,7 +2908,8 @@ function renderProjects() {
               { label: projectEditText(p, { name: e.target.value }), pid: p.id })
             : (e.target.value = p.name) }),
         h("span", { class: "meta" }, p.meetings.length === 1 ? "1 meeting" : `${p.meetings.length} meetings`),
-        p.people.length ? h("span", { class: "meta people-line" }, p.people.join(", ")) : null,
+        p.people.length ? h("span", { class: "meta people-line" },
+          p.people.map((name) => personToken(name, personColor(name), { small: true }))) : null,
         h("span", { class: "spacer" }),
         more = moreButton(() => projectItems(state.projects, p, more), `Actions for ${p.name}`)),
       h("div", { class: "description" },
@@ -2920,7 +3006,8 @@ function renderCoach(m) {
       c.interruptions.by_me_at.length ? h("div", { class: "moments" },
         c.interruptions.by_me_at.map((x) => at(x.start, `${clock(x.start)} (${x.who})`))) : null),
     c.quiet_invitees.length ? card("Barely heard",
-      h("p", {}, c.quiet_invitees.map((q) => `${q.name} (${q.seconds} s)`).join(", ")),
+      h("p", { class: "quiet-invitees" }, c.quiet_invitees.map((q) => h("span", {},
+        personToken(q.name, q.seconds ? personColor(q.name) : null, { small: true }), ` ${q.seconds} s`))),
       h("p", { class: "meta" }, "Invited, but said little or nothing — or not named in this meeting yet.")) : null));
   wrap.append(h("p", {}, h("button", { class: "link", onclick: () => openCoach() }, "All meetings →")));
   return wrap;
@@ -3351,8 +3438,10 @@ function renderPrep() {
       h("div", { class: "when" },
         h("span", {}, `${dayFmt.format(start)}, ${timeFmt.format(start)}–${timeFmt.format(new Date(e.end))}`),
         e.series ? h("span", {}, "recurring") : null),
-      e.attendees.length ? h("div", { class: "invitees" }, e.attendees.map((a) => h("span",
-        { class: a.response === "declined" ? "declined" : null }, a.name))) : null)));
+      e.attendees.length ? h("div", { class: "invitees" }, e.attendees.filter((a) => a.response !== "declined").map((a) =>
+        // Someone already known has their colour; the rest a grey outline until they speak.
+        personToken(a.name, state.names.some((n) => sameTitle(n, a.name)) ? personColor(a.name) : null,
+          { title: a.organizer ? `${a.name} · organized it` : a.name }))) : null)));
   if (state.error) page.append(h("p", { class: "error" }, state.error));
   // Notes before the meeting: they join its recording once it is recorded.
   page.append(notepad(`p:${e.key}`, `/api/upcoming/${encodeURIComponent(e.key)}/my-notes`,
@@ -3810,6 +3899,9 @@ async function changeSetting(key, value) {
   try {
     state.settings = await api("/api/settings", { [key]: value });
     state.error = null;
+    // Whether each switch follows the recommendation now: a hint shows only under one that does not.
+    const rec = await api("/api/setup/recommendations").catch(() => null);
+    if (rec?.recommendations) state.recommended = rec.recommendations;
   } catch (err) {
     state.error = `Not saved: ${err.message}`;
   }
@@ -4289,7 +4381,11 @@ async function loadMcpReads(id) {
     return;
   }
   const slot = document.querySelector(`#main .mcp-read[data-id="${CSS.escape(id)}"]`);
-  if (slot) slot.replaceWith(mcpReadLine(id));
+  if (!slot) return;
+  const line = mcpReadLine(id);
+  slot.replaceWith(line);
+  const about = line.closest("details.about");  // shown once it has something to say
+  if (about) about.hidden = line.hidden && !about.querySelector(".about-lines li");
 }
 
 // The Settings log filtered by a meeting: that meeting's entries from the server.
@@ -5035,8 +5131,8 @@ function liveNowCard(first = false) {
         m.live?.until ? `transcribed up to ${clock(m.live.until)}` : null].filter(Boolean).join(" · ")),
       h("button", { type: "button", class: "tbtn", onclick: () => openMeeting(m.id) }, "Open")),
     h("h2", {}, titleOf(m)),
-    h("div", { class: "live-speakers" }, m.speakers.map((s) => h("span", { class: "live-speaker", style: `--c:${color(s.label)}` },
-      avatar(s.name), s.display || s.name || labelDisplay(s.label)))),
+    h("div", { class: "live-speakers" }, m.speakers.map((s) => personToken(s.display || s.name || labelDisplay(s.label),
+      color(s.label), { named: !!s.name }))),
     lines.length ? h("div", { class: "live-lines" }, lines.map((t) => h("p", { class: "live-line", style: `--c:${color(t.label)}` },
       h("span", { class: "speaker" }, t.speaker), " ", t.text)))
       : h("p", { class: "lede" }, "Nothing transcribed yet."));
@@ -5099,21 +5195,30 @@ function needCard({ key, meeting, item }, fresh = true) {
       h("button", { type: "button", class: "link need-meeting", onclick: () => openMeeting(meeting.id) },
         meeting.title || fallbackTitle(meeting)),
       start ? h("span", { class: "need-when" }, ` · ${dayLabel(start)}, ${timeFmt.format(start)}`) : null,
-      h("p", { class: "need-q" }, q.text),
+      h("p", { class: "need-q" }, needText(q.text, item)),
       q.detail ? h("p", { class: "need-detail" }, q.detail) : null),
     h("div", { class: "need-answers" }, needAnswers(card, meeting, item)));
   return card;
+}
+
+// "Is Speaker 3 Carla?": the name it asks about as the person looks everywhere.
+function needText(text, item) {
+  if (item.kind !== "speaker" || !item.name) return text;
+  const at = text.lastIndexOf(item.name);
+  if (at < 0) return text;
+  return [text.slice(0, at), personToken(item.name, personColor(item.name), { small: true }), text.slice(at + item.name.length)];
 }
 
 function needAnswers(card, meeting, item) {
   const title = meeting.title || fallbackTitle(meeting);
   const answer = (label, run, cls = "btn small") => h("button", { type: "button", class: cls,
     onclick: (e) => answerNeed(card, e.currentTarget, run) }, label);
+  const person = (name) => personToken(name, personColor(name), { small: true });
   const go = (label, run) => h("button", { type: "button", class: "btn btn-quiet small", onclick: run }, label);
   switch (item.kind) {
     case "unnamed": return [
       item.clip ? playVoiceButton(`Play voice of ${item.display}`, () => playClip(meeting.id, item.clip)) : null,
-      ...(item.guesses || []).map((name) => answer(name, () => nameNeed(meeting, item, name), "chip need-chip")),
+      ...(item.guesses || []).map((name) => answer(person(name), () => nameNeed(meeting, item, name), "chip need-chip person-chip")),
       h("input", { class: "name-input need-name", list: "names", placeholder: "Name", spellcheck: "false",
         "aria-label": `Name for ${item.display}`,
         onkeydown: (e) => {

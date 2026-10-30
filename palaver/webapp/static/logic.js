@@ -78,10 +78,16 @@ export function retitledText(m, shown) {
   return m.title_from === "you" ? `Renamed to “${shown}”` : `Title back to “${shown}”`;
 }
 
-// The quiet line under a title of one's own: what the calendar calls the meeting.
+// Two titles that say the same, whatever their case and the spaces around them.
+export const sameTitle = (a, b) => String(a ?? "").trim().toLocaleLowerCase() === String(b ?? "").trim().toLocaleLowerCase();
+
+// The quiet line under the title when the calendar calls the meeting otherwise
+// (a title of one's own, the sender's, the notes'). None while the event chip
+// asks about the event: it names it already.
 export function calendarHint(m) {
   const event = m.calendar?.title;
-  return m.title_from === "you" && event && event !== m.title ? `Calendar: ${event}` : null;
+  if (!event || sameTitle(event, m.title) || eventLinkView(m)) return null;
+  return `Calendar: ${event}`;
 }
 
 // The meeting to show once ``id`` is gone from ``list``: the one below it,
@@ -268,8 +274,10 @@ export function lineCommands(m, i, fixable) {
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // Where a line is marked: words the glossary respelled ({heard}: the variant
-// heard) and words the transcriber was unsure of, in order, never overlapping.
-export function lineMarks(t) {
+// heard), words the transcriber was unsure of, and, given ``people`` (name →
+// colour, see meetingPeople), the names of the meeting's people ({color});
+// in order, never overlapping, a name never in place of the other two.
+export function lineMarks(t, people = null) {
   const marks = (t.glossed || []).map(([a, b, heard]) => ({ a, b, kind: "glossed", heard }));
   if (t.unsure?.length) {
     const re = new RegExp(`(?<![\\p{L}\\p{N}])(?:${t.unsure.map(escapeRe).join("|")})(?![\\p{L}\\p{N}])`, "giu");
@@ -277,6 +285,10 @@ export function lineMarks(t) {
       const a = x.index, b = a + x[0].length;
       if (!marks.some((y) => a < y.b && b > y.a)) marks.push({ a, b, kind: "unsure" });
     }
+  }
+  const known = [...marks];
+  for (const x of people ? nameMarks(t.text, people) : []) {
+    if (!known.some((y) => x.a < y.b && x.b > y.a)) marks.push({ ...x, kind: "name" });
   }
   marks.sort((x, y) => x.a - y.a);
   let end = 0;  // where the last mark kept ends
@@ -847,15 +859,17 @@ export function yourLink(kind, target) {
     label: `${KIND_TEXT[kind] || kind}: ${target} (you)` };
 }
 
-// What the event chip of a meeting shows: the event and why (a ✓ when unsure),
-// or the question which event it was, when several overlapped; null when neither.
+// What the event chip of a meeting shows: an event Palaver is unsure of and
+// why, with ✓ and Change…, or the question which event it was, when several
+// overlapped; null when neither. A sure event is no chip: the title or the
+// quiet "Calendar:" line names it, and About this recording says how it was linked.
 export function eventLinkView(m) {
   if (m.event_question?.choices?.length) {
     return { kind: "question", why: m.event_question.reason, choices: m.event_question.choices };
   }
   const link = m.calendar?.link;
-  if (!link) return null;
-  return { kind: "link", title: m.calendar.title, why: linkWhy(link), unsure: !!link.unsure, canConfirm: !!link.unsure };
+  if (!link?.unsure) return null;
+  return { kind: "link", title: m.calendar.title, why: linkWhy(link), unsure: true, canConfirm: true };
 }
 
 // The toast after the event was chosen: ``key`` null is "none of these",
@@ -1063,7 +1077,7 @@ export function summaryCounts(checks) {
 export function recommendedHint(recs, id) {
   const r = (recs || []).find((x) => x.id === id);
   if (!r) return null;
-  if (r.matches) return { matches: true, text: "Recommended for this Mac." };
+  if (r.matches) return null;  // followed already: a green "Recommended" under every switch was noise
   return { matches: false, text: `Recommended for this Mac: ${r.label}. ${r.reason}` };
 }
 
@@ -1414,4 +1428,173 @@ export function actionCatalog() {
     ...named("voice", voiceCommands({ voices: [{ clip: 1 }] })),
     ...named("term", termCommands()),
   ])].sort();
+}
+
+// --- one person, one look (UI cleanup 2026-10-30) ---------------------------------------
+
+// A named person's colour, one of the eight speaker colours (--v0…--v7),
+// from the name alone: the same in every meeting, on every page. FNV-1a over
+// the name in lower case with single spaces, mixed as MurmurHash3 finishes
+// (FNV's low bits alone spread names badly); pinned by the tests, as a change
+// would repaint everyone.
+export function personHue(name) {
+  let h = 0x811c9dc5;
+  for (const ch of String(name ?? "").trim().replace(/\s+/g, " ").toLowerCase()) {
+    h ^= ch.codePointAt(0);
+    h = Math.imul(h, 0x01000193);
+  }
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return (h >>> 0) % 8;
+}
+
+// The colour a name shows in, the violet of "you" for the user's own
+// (``you``: the user's name, when known); null without a name.
+export function personColor(name, you = null) {
+  if (!String(name ?? "").trim()) return null;
+  if (you && sameTitle(name, you)) return "var(--you)";
+  return `var(--v${personHue(name)})`;
+}
+
+const PALETTE = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => `var(--v${i})`);
+const laneKey = (s) => s.label ?? "__you";
+
+// Each lane's colour (key: the label, "__you" for the user's): the person's
+// for a named voice, violet for the user. An unnamed voice, or several
+// people on one microphone, takes a colour of the meeting no named person
+// of it has; ``cache`` (one per open meeting) keeps that colour while the
+// meeting stays open, so a merge, a removal or a name given elsewhere
+// repaints no other lane.
+export function laneColors(speakers, cache) {
+  const out = new Map();
+  for (const s of speakers) {
+    if (s.is_user) out.set(laneKey(s), "var(--you)");
+    else if (s.name && !s.shared) out.set(laneKey(s), personColor(s.name));
+  }
+  const named = new Set(out.values());
+  for (const s of speakers) {
+    const key = laneKey(s);
+    if (out.has(key)) continue;
+    if (!cache.has(key)) {
+      const used = new Set([...named, ...cache.values()]);
+      cache.set(key, PALETTE.find((c) => !used.has(c)) || PALETTE.find((c) => !named.has(c)) || PALETTE[cache.size % 8]);
+    }
+    out.set(key, cache.get(key));
+  }
+  return out;
+}
+
+const firstName = (name) => String(name ?? "").trim().split(/\s+/)[0];
+
+// The named voice of the meeting an invitee is: the same name, or their first
+// name alone when no other invitee has it ("Anna" for Anna Berger).
+function speakerOf(a, m) {
+  const voices = (m.speakers || []).filter((s) => s.name && !s.is_user && !s.shared);
+  const same = voices.find((s) => sameTitle(s.name, a.name));
+  if (same) return same;
+  const first = firstName(a.name);
+  if (!first || sameTitle(first, a.name)) return null;
+  const sharing = (m.calendar?.attendees || []).filter((x) => sameTitle(firstName(x.name), first));
+  return sharing.length === 1 ? voices.find((s) => sameTitle(s.name, first)) || null : null;
+}
+
+// The header's people: the invitees, as tokens. Who spoke (a named voice of the
+// meeting) comes first, in their lane's colour; who did not has no colour (a
+// grey outline). The user's own organization is left out, another goes into
+// the tooltip; who declined and did not speak is not listed.
+export function attendeeTokens(m) {
+  const own = (m.speakers || []).find((s) => s.is_user)?.org;
+  const tokens = [];
+  for (const a of m.calendar?.attendees || []) {
+    const voice = speakerOf(a, m);
+    if (!voice && a.response === "declined") continue;
+    const about = [a.name];
+    if (a.org && !(own && sameTitle(a.org, own))) about.push(a.org);
+    if (a.organizer) about.push("organized it");
+    if (a.response === "declined") about.push("declined");
+    if (!voice) about.push("invited, no named voice");
+    tokens.push({ name: a.name, spoke: !!voice, color: voice ? personColor(voice.name) : null, title: about.join(" · ") });
+  }
+  return [...tokens.filter((t) => t.spoke), ...tokens.filter((t) => !t.spoke)];
+}
+
+// The named people of a meeting and their colours (name → colour): the user,
+// the named voices, and the invitees they are by full name. What the notes
+// and the transcript mark, and whom a next step's owner can be.
+export function meetingPeople(m) {
+  const out = new Map();
+  const you = (m.speakers || []).find((s) => s.is_user)?.name;
+  for (const s of m.speakers || []) {
+    if (s.name && !s.shared && !out.has(s.name)) out.set(s.name, personColor(s.name, you));
+  }
+  for (const a of m.calendar?.attendees || []) {
+    const voice = speakerOf(a, m);
+    if (voice && !out.has(a.name)) out.set(a.name, out.get(voice.name));
+  }
+  return out;
+}
+
+// Who a next step is for, as tokens: a person of the meeting, several ("Anna
+// and Carla"), or, when that is not it, the words as written with no colour.
+export function ownerTokens(owner, people) {
+  const text = String(owner ?? "").trim();
+  if (!text) return [];
+  const find = (name) => [...people].find(([known]) => sameTitle(known, name));
+  const whole = find(text);
+  if (whole) return [{ name: whole[0], color: whole[1] }];
+  const parts = text.split(/\s*(?:,|&|\+|\/|\band\b|\bund\b)\s*/u).filter(Boolean);
+  const found = parts.map(find);
+  if (parts.length > 1 && found.every(Boolean)) return found.map(([name, color]) => ({ name, color }));
+  return [{ name: text, color: null }];
+}
+
+// Where the names of ``people`` (name → colour) stand in ``text``: exact,
+// as whole words, the longest name first; [{a, b, name, color}].
+export function nameMarks(text, people) {
+  const names = [...(people?.keys() || [])].filter(Boolean).sort((x, y) => y.length - x.length);
+  if (!text || !names.length) return [];
+  const re = new RegExp(`(?<![\\p{L}\\p{N}])(?:${names.map(escapeRe).join("|")})(?![\\p{L}\\p{N}])`, "gu");
+  return [...text.matchAll(re)].map((x) => ({ a: x.index, b: x.index + x[0].length, name: x[0], color: people.get(x[0]) }));
+}
+
+// The projects beside the people. With a project the user confirmed, the
+// suggestions leave the row for the top of the "+ Project" picker; without,
+// the best one stays as a dashed chip. ``picker``: the suggestions left, then
+// every other project not on the meeting.
+export function projectView(m) {
+  const on = new Set((m.projects || []).map((p) => p.id));
+  const suggestions = (m.project_suggestions || []).filter((s) => !on.has(s.id));
+  const confirmed = (m.projects || []).some((p) => p.by === "you");
+  const shown = confirmed ? [] : suggestions.slice(0, 1);
+  const offered = new Set(suggestions.map((s) => s.id));
+  return {
+    suggestions: shown,
+    picker: [
+      ...suggestions.slice(shown.length).map((s) => ({ id: s.id, name: s.name, why: s.why, suggested: true })),
+      ...(m.all_projects || []).filter((p) => !on.has(p.id) && !offered.has(p.id))
+        .map((p) => ({ id: p.id, name: p.name, suggested: false })),
+    ],
+  };
+}
+
+// "About this recording", folded away at the bottom of the meeting: how it
+// started and stopped (#47), how the event was linked, who transcribed it
+// (#54), what went wrong with its audio (#50), where it was imported from
+// (#58). While it records, its own line and warnings stay in the header.
+// What Claude read of it (#45) is added by the page.
+export function aboutLines(m, recording, fmt = null) {
+  const live = m.status === "recording" || !!m.live;
+  const lines = [];
+  if (!live && m.recorded) lines.push({ kind: "recorded", text: m.recorded });
+  const link = m.calendar?.link;
+  if (link && !link.unsure && !m.event_question?.choices?.length) lines.push({ kind: "event", text: linkTitle(link) });
+  const transcribed = transcribedText(m.transcribed_by);
+  if (transcribed) lines.push({ kind: "transcribed", text: transcribed });
+  if (!live) for (const text of audioWarnings(m, recording)) lines.push({ kind: "audio", text });
+  const imported = fmt ? importedLine(m.imported, fmt) : importedLine(m.imported);
+  if (imported) lines.push({ kind: "imported", text: imported });
+  return lines;
 }

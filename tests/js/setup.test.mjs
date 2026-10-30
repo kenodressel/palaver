@@ -117,11 +117,11 @@ test("the summary counts what is set up", () => {
   assert.equal(summaryCounts([{ status: "ok" }]), "Everything is set up.");
 });
 
-test("Settings shows the recommendation beside a switch", () => {
+test("Settings shows the recommendation beside a switch set otherwise; one it follows needs no word", () => {
   const recs = [rec("realtime", "calls", false, true, { label: "Off", reason: "The M1 is below an M2 Pro." }),
     rec("record_teams", "record", true, true, { label: "On" })];
   assert.deepEqual(recommendedHint(recs, "realtime"), { matches: false, text: "Recommended for this Mac: Off. The M1 is below an M2 Pro." });
-  assert.deepEqual(recommendedHint(recs, "record_teams"), { matches: true, text: "Recommended for this Mac." });
+  assert.equal(recommendedHint(recs, "record_teams"), null);
   assert.equal(recommendedHint(recs, "nope"), null);
   assert.equal(recommendedHint(null, "realtime"), null);
 });

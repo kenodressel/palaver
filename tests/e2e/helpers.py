@@ -86,6 +86,16 @@ def line_tool(page: Page, start: float, name: str) -> Locator:
     return row.locator(f'.line-tool[data-name="{name}"]')
 
 
+def about(page: Page) -> Locator:
+    """"About this recording", folded away at the bottom of the meeting."""
+    return page.locator("#main details.about")
+
+
+def about_line(page: Page, kind: str) -> Locator:
+    """A line of About this recording: recorded, event, transcribed, audio, imported."""
+    return about(page).locator(f".about-{kind}")
+
+
 def speakers_in_transcript(page: Page) -> list[str]:
     """Who said each line, as the transcript shows it (the name is on a speaker's first line)."""
     return page.locator("#main .transcript .turn").evaluate_all("""rows => {

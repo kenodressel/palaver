@@ -9,7 +9,7 @@ from datetime import timedelta
 
 from playwright.sync_api import expect
 
-from .helpers import expect_toast, heading, lane, list_item, open_meeting, run_from_menu, undo_in_toast
+from .helpers import about_line, expect_toast, heading, lane, list_item, open_meeting, run_from_menu, undo_in_toast
 from .recordings import A, B, C, _at
 
 
@@ -18,13 +18,12 @@ def _event(title: str, start, minutes: int, uid: str, *people: str) -> dict:
             "attendees": [{"name": p, "email": f"{p.lower()}@x.com"} for p in people], "uid": uid}
 
 
-def test_the_event_chip_says_how_the_event_was_linked(page, shared_server):
-    open_meeting(page, shared_server, A)
-    chip = page.locator("#main .event-link .link-chip")
-    expect(chip).to_contain_text("Team standup")
-    expect(chip).not_to_have_class("link-chip unsure")
-    # Stored before links kept a reason: said so, not shown as unsure.
-    expect(chip).to_have_attribute("title", "Event: Team standup · linked before Palaver kept reasons")
+def test_a_sure_event_the_title_names_is_no_chip_about_says_how_it_was_linked(page, shared_server):
+    open_meeting(page, shared_server, A)  # "Team standup", the event's title
+    expect(page.locator("#main .event-link")).to_have_count(0)
+    expect(page.locator("#main .title-hint")).to_have_count(0)
+    # Stored before links kept a reason: said so, folded away at the bottom.
+    expect(about_line(page, "event")).to_have_text("Event: Team standup · linked before Palaver kept reasons")
 
 
 def test_overlapping_events_are_asked_not_guessed(page, app_server):
@@ -43,9 +42,8 @@ def test_overlapping_events_are_asked_not_guessed(page, app_server):
     asking.get_by_role("button", name="Northwind").click()
     expect_toast(page, "Event changed to “Northwind”")
     expect(heading(page)).to_have_text("Northwind")
-    chip = page.locator("#main .event-link .link-chip")
-    expect(chip).to_contain_text("you")
-    expect(chip).not_to_have_class("link-chip unsure")
+    expect(page.locator("#main .event-link")).to_have_count(0)  # answered: the title names it
+    expect(about_line(page, "event")).to_have_text("Event: Northwind (you)")
     expect(list_item(page, B).locator(".item-title")).to_have_text("Northwind")
     assert [q for q in app_server.api("/api/questions") if q["meeting"] == B] == []
 
@@ -77,8 +75,8 @@ def test_an_unsure_event_is_confirmed_in_place(page, app_server):
                                             " · 60% sure. Not sure: confirm or change it.")
     chip.get_by_role("button", name="Confirm the event Design review, part two").click()
     expect_toast(page, "Event confirmed: “Design review, part two”")
-    expect(chip).not_to_have_class("link-chip unsure")
-    expect(chip.locator(".link-why")).to_have_text("you")
+    expect(page.locator("#main .event-link")).to_have_count(0)  # sure now: nothing left to ask
+    expect(about_line(page, "event")).to_have_text("Event: Design review, part two (you)")
 
     undo_in_toast(page)
     expect(page.locator("#main .event-link .link-chip")).to_have_class("link-chip unsure")
