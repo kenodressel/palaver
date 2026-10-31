@@ -3912,11 +3912,11 @@ async function openSettings(how = "push") {
   const here = leaveMeeting("settings", "#/settings", how);
   try {
     let rec;
-    [state.settings, state.lm, state.tr, , , rec, state.update] = await Promise.all([api("/api/settings"),
+    [state.settings, state.lm, state.tr, , , rec, state.update, state.calendar] = await Promise.all([api("/api/settings"),
       api("/api/language-model"), api("/api/transcription"), refreshMcp(), refreshMemory(),
       // "Recommended for this Mac" (#55): the setup assistant's recommendations; the page works without them.
       api("/api/setup/recommendations").catch(() => null),
-      api("/api/update").catch(() => null)]);
+      api("/api/update").catch(() => null), api("/api/setup/calendar").catch(() => null)]);
     state.recommended = rec?.recommendations || null;
     state.error = state.lmError = state.trError = null;
   } catch (err) {
@@ -3924,6 +3924,46 @@ async function openSettings(how = "push") {
   }
   if (movedOn(here)) return;
   renderSettings();
+  watchCalendar();
+}
+
+// The calendar on the Settings page (it was in the menu bar's menu): connected,
+// or a button that asks macOS, or opens System Settings once refused. Until it
+// is connected the page looks every 1.5 s, so a "yes" anywhere shows here.
+function calendarCard() {
+  const cal = state.calendar;
+  const t = permissionText(cal);
+  return h("div", { class: "gloss-card settings-card", id: "calendar-card" },
+    h("div", { class: "lm-row" },
+      h("span", {}, h("strong", {}, "Calendar"), " ", h("span", { class: `setup-check-detail calendar-${t.status}` }, t.text), h("br"),
+        h("span", { class: "meta" }, "Each meeting's title and invitees come from the macOS calendar, on this Mac. Palaver never changes anything in it.")),
+      cal && cal.state !== "granted" ? h("button", { type: "button", class: "btn", onclick: (e) => connectCalendarHere(e.currentTarget) },
+        cal.state === "denied" ? "Open System Settings" : "Connect Calendar") : null));
+}
+
+async function connectCalendarHere(button) {
+  try {
+    const answer = await working(button, api("/api/setup/calendar", { action: "connect" }));
+    if (answer.opened_settings) toast("System Settings is open at Calendars: allow Palaver there, and this page follows.");
+  } catch (err) {
+    errorToast(`Calendar not connected: ${err.message}`);
+    return;
+  }
+  watchCalendar();
+}
+
+function watchCalendar() {
+  clearTimeout(state.calendarTimer);
+  if (state.view !== "settings" || !state.calendar || state.calendar.state === "granted") return;
+  state.calendarTimer = setTimeout(async () => {
+    const now = await api("/api/setup/calendar").catch(() => null);
+    if (state.view !== "settings") return;
+    if (now && now.state !== state.calendar?.state) {
+      state.calendar = now;
+      $("#calendar-card")?.replaceWith(calendarCard());
+    }
+    watchCalendar();
+  }, 1500);
 }
 
 async function changeSetting(key, value) {
@@ -3975,6 +4015,8 @@ function renderSettings() {
         settingSwitch("record_teams", "Record Teams calls automatically"),
         settingSwitch("record_slack", "Record Slack huddles automatically"),
         h("p", { class: "meta" }, "Start recording now in the menu bar works either way.")),
+      h("h2", {}, "Calendar"),
+      calendarCard(),
       h("h2", {}, "Live"),
       h("div", { class: "gloss-card settings-card" },
         settingSwitch("realtime", "Realtime transcription"),

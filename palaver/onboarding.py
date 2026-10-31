@@ -567,7 +567,7 @@ _FIXES = {
     "system_audio": {"unverified": "checked on the first recording, or run the test recording",
                      "denied": _PRIVACY + "Screen & System Audio Recording → under System Audio Recording Only, "
                                           "allow Palaver"},
-    "calendar": {"not_asked": "Connect Calendar here, or in Palaver's menu bar menu",
+    "calendar": {"not_asked": "Connect Calendar in Settings or in the setup assistant",
                  "denied": _PRIVACY + "Calendars → allow Palaver (full access)"},
     "notifications": {"unknown": "System Settings → Notifications → Palaver: allow notifications",
                       "denied": "System Settings → Notifications → Palaver: allow notifications"},

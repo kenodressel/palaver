@@ -189,18 +189,17 @@ AUTO_RECORD = (
 )
 OPEN_TITLE = "Open Meetings"
 UPDATE_TITLE = "Check for Updates…"  # #60: with the version; "Update available (0.3.1)" when there is one
-CALENDAR_TITLE = "Connect Calendar…"
+SETTINGS_TITLE = "Settings…"  # the window's Settings: the record switches, the calendar and the rest
 REPORT_TITLE = "Report a Problem…"  # #59: the window's report form
 QUIT_TITLE = "Quit"
 
 
 def menu_layout() -> list[str | None]:
     """The menu under the status line and the live lines, by first title
-    (None: a separator): the record switches, starting and stopping, the
-    window, reporting a problem. The old quick settings (latest folder,
-    Notion page, log) are the window's business now (#37)."""
-    return [*(title for _, title in AUTO_RECORD), START_TITLE, KEEP_TITLE, None,
-            OPEN_TITLE, CALENDAR_TITLE, REPORT_TITLE, None, UPDATE_TITLE, QUIT_TITLE]
+    (None: a separator): starting and stopping, the window, Settings,
+    reporting a problem, the update. Settings themselves (the record
+    switches, the calendar) are the window's (#37)."""
+    return [START_TITLE, KEEP_TITLE, None, OPEN_TITLE, SETTINGS_TITLE, REPORT_TITLE, None, UPDATE_TITLE, QUIT_TITLE]
 
 
 def auto_record_states(defaults: settings.Settings, current=None) -> dict[str, bool]:
@@ -209,8 +208,6 @@ def auto_record_states(defaults: settings.Settings, current=None) -> dict[str, b
     return {key: bool(getattr(s, key)) for key, _ in AUTO_RECORD}
 
 
-# The app each record switch is about, as the daemon names a call's app.
-SWITCH_APP = {"record_teams": "teams", "record_slack": "slack"}
 
 
 def with_record_switches(status: dict, states: dict[str, bool]) -> dict:
@@ -219,14 +216,6 @@ def with_record_switches(status: dict, states: dict[str, bool]) -> dict:
     if status["state"] == "idle" and not any(states.values()):
         return {**status, "state": "paused"}
     return status
-
-
-def toggle_auto_record(key: str, defaults: settings.Settings) -> bool:
-    """A record switch clicked in the menu: flipped and saved, as the
-    Settings page saves it. Returns whether it is on now."""
-    on = not getattr(settings.load(defaults), key)
-    settings.update({key: on})
-    return on
 
 
 # The Calendar app may sync an event after the recording was processed:
@@ -523,17 +512,14 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
             self._click_installed = False
             self.status_item = rumps.MenuItem("Starting…")
             self.live_items = [rumps.MenuItem("") for _ in range(MENU_LINES)]
-            self.record_items = {key: rumps.MenuItem(title, callback=self.toggle_record) for key, title in AUTO_RECORD}
             self.manual_item = rumps.MenuItem(START_TITLE, callback=self.toggle_manual)
             self.keep_item = rumps.MenuItem(KEEP_TITLE, callback=self.keep_recording)
-            self.calendar_item = rumps.MenuItem(CALENDAR_TITLE, callback=self.connect_calendar)
             self.update_item = rumps.MenuItem(UPDATE_TITLE, callback=self.install_update)
             self._calendar_retried = time.monotonic()  # connecting looks everything up first
-            self._refresh_calendar_item()
-            items = {**{title: self.record_items[key] for key, title in AUTO_RECORD},
-                     START_TITLE: self.manual_item, KEEP_TITLE: self.keep_item,
+            self._check_calendar()
+            items = {START_TITLE: self.manual_item, KEEP_TITLE: self.keep_item,
                      OPEN_TITLE: rumps.MenuItem(OPEN_TITLE, callback=self.open_meetings, key="m"),
-                     CALENDAR_TITLE: self.calendar_item,
+                     SETTINGS_TITLE: rumps.MenuItem(SETTINGS_TITLE, callback=self.open_settings, key=","),
                      REPORT_TITLE: rumps.MenuItem(REPORT_TITLE, callback=self.report_problem),
                      UPDATE_TITLE: self.update_item,
                      QUIT_TITLE: rumps.MenuItem(QUIT_TITLE, callback=self.quit)}
@@ -598,8 +584,8 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
             threading.Thread(target=self._attach_calendar_events, args=(since,), daemon=True).start()
 
         def refresh(self):
-            if not self._calendar_connected:  # picks up consent given in the dialog
-                self._refresh_calendar_item()
+            if not self._calendar_connected:  # picks up consent given in Settings or the setup assistant
+                self._check_calendar()
             switches = auto_record_states(record_defaults, record_settings)
             status = with_record_switches(self.daemon.status(), switches)
             now = datetime.now().astimezone()
@@ -623,8 +609,6 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
                 if said is not None:
                     self._check_asked = False
                     notify.notify(*said)
-            for key, on in switches.items():
-                self.record_items[key].state = on  # also when switched in the window's Settings
             lines = []
             if status["state"] == "recording" and status.get("folder"):
                 if self._tracked_folder != status["folder"]:
@@ -646,13 +630,6 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
                 )
                 item._menuitem.setHidden_(not text)
 
-        def toggle_record(self, sender):
-            key = next(k for k, item in self.record_items.items() if item is sender)
-            sender.state = toggle_auto_record(key, record_defaults)
-            if not sender.state:  # its call stops now, as the old switch did ("auto_off")
-                self.daemon.switched_off(SWITCH_APP[key])
-            self.refresh()
-
         def toggle_manual(self, sender):
             action = manual_action(sender.title, self.daemon.status()["state"] == "recording")
             if action == "stop":
@@ -665,7 +642,8 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
             self.daemon.answer_stop_question("keep")
             self.refresh()
 
-        def _refresh_calendar_item(self):
+        def _check_calendar(self):
+            """Once access is given (in the window), earlier recordings get their events."""
             try:
                 connected = calendar_access()
             except Exception:
@@ -673,8 +651,6 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
             if connected and not getattr(self, "_calendar_connected", False) and cfg.calendar_enabled:
                 threading.Thread(target=self._attach_calendar_events, daemon=True).start()
             self._calendar_connected = connected
-            self.calendar_item.title = "Calendar connected" if connected else "Connect Calendar…"
-            self.calendar_item.set_callback(None if connected else self.connect_calendar)
 
         def _attach_calendar_events(self, since=None):
             from .calendar_eventkit import events_between
@@ -685,17 +661,11 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
             except Exception as exc:  # the next start tries again
                 print(f"warning: attaching calendar events failed: {exc}")
 
-        def connect_calendar(self, _sender):
-            def done(granted):  # on an EventKit thread: notify, the menu updates on the next tick
-                if granted:
-                    notify.notify("Calendar connected", "Meetings get their title and invitees from your calendar.")
-                else:
-                    notify.notify("No calendar access", "Allow it in System Settings → Privacy & Security → Calendars.")
-
-            request_calendar_access(done)
-
         def open_meetings(self, _sender):
             open_window(self.web.url())
+
+        def open_settings(self, _sender):
+            open_window(self.web.url("settings"))  # "#/settings"
 
         def install_update(self, _sender):
             """Install the update there is; with none known, check now (the

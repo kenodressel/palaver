@@ -137,3 +137,14 @@ def test_settings_say_how_palaver_updates_and_uninstalling_asks_first(page, app_
     expect(box.get_by_role("button", name="Uninstall")).to_be_focused()
     box.get_by_role("button", name="Cancel").click()
     expect(box).to_have_count(0)
+
+
+def test_settings_connect_the_calendar_and_follow_a_yes_given_elsewhere(page, app_server):
+    """The calendar moved from the menu bar's menu to Settings."""
+    goto(page, app_server, "#/settings")
+    card = page.locator("#calendar-card")
+    expect(card).to_contain_text("not connected")
+    card.get_by_role("button", name="Connect Calendar").click()
+    expect(card).to_contain_text("connected (read only)")  # macOS's dialog answered: the page follows
+    expect(card.get_by_role("button")).to_have_count(0)
+    assert app_server.probe.calendar.asked == 1

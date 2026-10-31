@@ -10,7 +10,6 @@ from palaver import settings
 from palaver.menubar import (
     auto_record_states,
     with_record_switches,
-    toggle_auto_record,
     AUTO_RECORD,
     START_TITLE,
     STOP_TITLE,
@@ -62,23 +61,22 @@ def test_status_line():
     assert status_line(_status(transcribing=True, queued=["a"]), NOW) == "Transcribing (1 more queued)"
 
 
-def test_the_menu_has_no_old_quick_settings_and_the_switches_of_the_settings_page():
+def test_the_menu_starts_and_stops_and_leaves_settings_to_the_window():
     layout = menu_layout()
     assert layout == [
-        "Record Teams calls automatically",
-        "Record Slack huddles automatically",
         START_TITLE,
         "Keep recording",
         None,
         "Open Meetings",
-        "Connect Calendar…",
+        "Settings…",
         "Report a Problem…",
         None,
         "Check for Updates…",  # with the version; "Update available (…)" when there is one (#60)
         "Quit",
     ]
     for gone in ("Open latest transcript in Notion", "Open latest recording folder", "Open log",
-                 "Record Teams calls and Slack huddles automatically"):
+                 "Record Teams calls and Slack huddles automatically", "Record Teams calls automatically",
+                 "Record Slack huddles automatically", "Connect Calendar…"):
         assert gone not in layout
     assert [key for key, _ in AUTO_RECORD] == ["record_teams", "record_slack"]  # the Settings page's switches
 
@@ -86,13 +84,8 @@ def test_the_menu_has_no_old_quick_settings_and_the_switches_of_the_settings_pag
 def test_the_record_switches_are_the_settings_pages():
     defaults = settings.Settings(record_slack=False)  # config.toml said no Slack
     assert auto_record_states(defaults) == {"record_teams": True, "record_slack": False}
-    assert toggle_auto_record("record_teams", defaults) is False
-    assert settings.load(defaults).record_teams is False
+    settings.update({"record_teams": False})  # switched in the window's Settings: the status says it
     assert auto_record_states(defaults) == {"record_teams": False, "record_slack": False}
-    assert toggle_auto_record("record_slack", defaults) is True
-    assert settings.read_raw() == {"record_teams": False, "record_slack": True}  # only what was switched
-    settings.update({"record_teams": True})  # switched in the window's Settings: the menu shows it
-    assert auto_record_states(defaults)["record_teams"] is True
 
 
 def _log(tmp_path: Path, events: list[dict]) -> Path:

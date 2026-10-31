@@ -41,8 +41,9 @@ changed:
 
 **Updates.** Palaver looks for a new release at start and every 6 hours (one
 anonymous request for the release's `manifest.json`; turn it off in Settings →
-Updates). When there is one, the menu bar menu says "Update available
-(version)" and Settings shows what's new. A click downloads only the changed
+Updates). The menu bar menu has "Check for Updates… (Palaver version)" to
+look now; when there is one, it says "Update available (version)" and
+Settings shows what's new. A click downloads only the changed
 layers, checks each against the manifest's SHA-256, and installs at the next
 moment nothing records, transcribes or writes notes; then Palaver restarts.
 A failed download or install keeps the version you have and says why. Running
@@ -409,7 +410,7 @@ job still running) is listed in the meeting's `cloud-pending.json` and
 deleted at the start of the next `process`. Uploads and new jobs are never
 sent twice after a timeout or a server error.
 
-**Calendar.** With "Connect Calendar…" in the menu, a recording is matched
+**Calendar.** With "Connect Calendar" in Settings (or the setup assistant), a recording is matched
 to the event in the macOS Calendar app that overlaps it most (any account
 added there, e.g. Microsoft Exchange; read-only, on this Mac). The event's
 title becomes the meeting's title, its invitees are listed and offered as
@@ -483,7 +484,7 @@ the app) transcribes the last 10 s every second. The Meetings window shows
 the other side's words about 2–3 s after they are said, and your own words
 once their echo is filtered out. It is only for watching live: the final
 transcript is made as before, and nothing depends on the stream. Switch it
-in the settings page (the gear next to the Palaver name): "Realtime
+in the settings page (the gear at the top right, or "Settings…" ⌘, in the menu bar menu): "Realtime
 transcription" applies from the next recording; "Record Teams calls
 automatically" and "Record Slack huddles automatically" apply at once.
 Settings are stored in `~/.config/palaver/settings.json`, not in
