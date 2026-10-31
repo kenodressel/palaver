@@ -2548,13 +2548,13 @@ function renderPeople() {
     page.append(h("h2", {}, "Organizations"),
       h("p", { class: "lede" }, "From the invitees’ email addresses. Rename one, e.g. “Fabrikamcontoso” → “Fabrikam Contoso”."),
       h("ul", { class: "data-list orgs" },
-        h("li", { class: "data-head org-row", "aria-hidden": "true" }, h("span", {}, "Organization"), h("span", {}, "People"),
+        h("li", { class: "data-head org-row", "aria-hidden": "true" }, h("span", {}, "Organization"), h("span", { class: "num" }, "People"),
           h("span", {}, "Email domain")),
         d.organizations.map((o) => h("li", { class: "data-row org-row" },
           h("input", { class: "cell-input org-input", value: o.name, spellcheck: "false", "aria-label": `Name of ${o.key}`,
             onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); },
             onchange: (e) => changeOrgs("/api/organizations", { key: o.key, name: e.target.value }) }),
-          h("span", { class: "meta" }, `${o.people} ${o.people === 1 ? "person" : "people"}`),
+          h("span", { class: "meta num" }, String(o.people)),
           h("span", { class: "meta" }, o.key === "extern" ? "private addresses" : o.key)))));
   }
   page.append(h("datalist", { id: "org-names" }, [...new Set([...(d.organizations || []).map((o) => o.name),
@@ -2564,7 +2564,10 @@ function renderPeople() {
   if (!d.people.length) {
     page.append(h("p", { class: "notes-empty" }, "Nobody has a name yet. Name a speaker in a meeting, or a voice above."));
   }
-  const named = h("div", { class: "data-list people-list" });
+  const named = h("div", { class: "data-list people-list" },
+    h("div", { class: "data-head person-cols", "aria-hidden": "true" }, h("span", {}), h("span", {}, "Name"),
+      h("span", {}, "Organization"), h("span", { class: "num" }, "Meetings"), h("span", { class: "num" }, "Talk"),
+      h("span", {}, "Voice"), h("span", {})));
   if (d.people.length) page.append(named);
   for (const p of d.people) {
     // In their colour, as on the lanes and wherever else they are named.
@@ -2581,7 +2584,8 @@ function renderPeople() {
           title: p.org_given ? "Given by hand; empty it to use the email address again" : "From the email address; type to change",
           onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); },
           onchange: (e) => changeOrgs("/api/people/org", { name: p.name, org: e.target.value }) }),
-        h("span", { class: "meta person-count" }, p.meetings.length === 1 ? "1 meeting" : `${p.meetings.length} meetings`),
+        h("span", { class: "meta person-count num", title: p.meetings.length === 1 ? "1 meeting" : `${p.meetings.length} meetings` },
+          String(p.meetings.length)),
         h("span", { class: "meta person-talk" }, minutes(p.talk_seconds)),
         h("span", { class: "meta person-voice", title: p.voice_samples ? "Recognized by voice in new meetings"
           : "Too little speech yet to learn the voice" }, p.voice_samples ? "voice known" : "voice not learned yet"),
