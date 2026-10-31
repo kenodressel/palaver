@@ -3,8 +3,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { placeOf, hashOf, SETUP_STEPS, setupStepAfter, setupStepBefore, stepRecs, recommendedChanges,
-  chosenChanges, gbText, downloadsText, downloadProgress, permissionText, summaryCounts, recommendedHint,
+import { placeOf, hashOf, SETUP_STEPS, setupStepAfter, setupStepBefore, recommendedChanges,
+  chosenChanges, gbText, downloadsText, downloadProgress, permissionText, recommendedHint,
   setupOfferText, testRecordingText, seedChecked, optionLabel, stepButtons, engineOptions, sendsText }
   from "../../palaver/webapp/static/logic.js";
 
@@ -20,22 +20,13 @@ test("the assistant has a hash per step", () => {
   assert.equal(hashOf({ view: "setup" }), "#/setup");
 });
 
-test("steps go forward and back, from the Mac to the summary", () => {
-  const ids = SETUP_STEPS.map((s) => s.id);
-  assert.equal(ids[0], "mac");
-  assert.equal(ids.at(-1), "summary");
-  assert.ok(ids.includes("test") && ids.includes("downloads"));
-  assert.equal(setupStepAfter("mac"), "models");
-  assert.equal(setupStepAfter("summary"), null);
-  assert.equal(setupStepBefore("models"), "mac");
-  assert.equal(setupStepBefore("mac"), null);
-  assert.equal(setupStepAfter("nonsense"), "mac");
-});
-
-test("a step's recommendations", () => {
-  const recs = [rec("realtime", "calls", true, true), rec("record_teams", "record", true, false)];
-  assert.deepEqual(stepRecs({ recommendations: recs }, "calls").map((r) => r.id), ["realtime"]);
-  assert.deepEqual(stepRecs(null, "calls"), []);
+test("three steps: you, the recommended package, the test", () => {
+  assert.deepEqual(SETUP_STEPS.map((s) => s.id), ["you", "recommended", "test"]);
+  assert.equal(setupStepAfter("you"), "recommended");
+  assert.equal(setupStepAfter("test"), null);
+  assert.equal(setupStepBefore("recommended"), "you");
+  assert.equal(setupStepBefore("you"), null);
+  assert.equal(setupStepAfter("nonsense"), "you");
 });
 
 test("Use recommended changes only what differs; notes wait for a cloud model rather than stay on Gemma", () => {
@@ -109,12 +100,6 @@ test("a permission in a line", () => {
   assert.deepEqual(permissionText(undefined), { status: "warn", text: "not checked" });
   assert.deepEqual(permissionText({ state: "fallback", detail: "works with a fallback" }),
     { status: "warn", text: "works with a fallback" });
-});
-
-test("the summary counts what is set up", () => {
-  const checks = [{ status: "ok" }, { status: "ok" }, { status: "warn" }, { status: "fail" }];
-  assert.equal(summaryCounts(checks), "2 set up, 2 to do");
-  assert.equal(summaryCounts([{ status: "ok" }]), "Everything is set up.");
 });
 
 test("Settings shows the recommendation beside a switch set otherwise; one it follows needs no word", () => {

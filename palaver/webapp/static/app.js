@@ -14,8 +14,8 @@ import { meetingCommands, nextAfter, laneCommands, laneLines, linesText, namingT
   clientName, mcpIndicator, mcpArgsText, mcpSizeText, mcpReadOf, logShown, logClients, logMeetings,
   clearedText, linkTitle, eventLinkView, eventChangeText,
   noteKind, relatedOnly, firstMoment, chipRemoved, indexingNotice, memoryRows, memoryTotalText, memoryPolling,
-  SETUP_STEPS, setupStepAfter, setupStepBefore, stepRecs, stepButtons, gbText, downloadsText,
-  downloadProgress, permissionText, summaryCounts, recommendedHint, setupOfferText, testRecordingText, seedChecked,
+  SETUP_STEPS, setupStepAfter, setupStepBefore, stepButtons, gbText, downloadsText,
+  downloadProgress, permissionText, recommendedHint, setupOfferText, testRecordingText, seedChecked,
   optionLabel, liveCoachFor, speakingText, questionsNote, questionButton, heartbeat, notesFromJobs,
   titleChange, withTitle, retitledText, calendarHint, TITLE_MAX } from "./logic.js";
 import { notepad, flushNotepads, leaveNotepads, notepadFocus, restoreNotepadFocus } from "./mynotes.js";
@@ -3940,7 +3940,7 @@ function setupCard() {
     h("div", { class: "lm-row" },
       h("span", {}, h("strong", {}, "Setup assistant"), h("br"),
         h("span", { class: "meta" }, "The settings worth choosing up front, recommended for this Mac, with the downloads and a test recording.")),
-      h("button", { type: "button", class: "btn", onclick: () => openSetup("mac") }, "Open setup assistant")));
+      h("button", { type: "button", class: "btn", onclick: () => openSetup() }, "Open setup assistant")));
 }
 
 function renderSettings() {
@@ -4628,6 +4628,8 @@ const setup = {
   picks: {},              // recommendation id -> the value picked under Customize
   customizing: new Set(), // recommendation ids whose alternatives are open
   seed: null,             // glossary terms from the calendar that are ticked
+  autostart: null,        // step 2's "Start Palaver at login" (null: on, as recommended)
+  customizeAll: false,    // step 2 shows every choice with its alternatives
   error: null,
   timer: null,            // polling the downloads or the test recording
 };
@@ -4646,7 +4648,10 @@ async function openSetup(step = null, how = "push") {
   const here = leaveMeeting("setup", hashOf({ view: "setup", step }), how);
   if (setup.step !== step) { setup.picks = {}; setup.customizing.clear(); }
   setup.step = step;
-  if (!setup.page || step === "mac" || step === "summary" || step === "downloads") await loadSetup();
+  if (!setup.page || step === "recommended") {
+    renderSetup();  // at once: the last look, or "Looking at this Mac…" (a look takes a few seconds)
+    await loadSetup();
+  }
   if (movedOn(here)) return;
   renderSetup();
   $("#main").scrollTop = 0;
@@ -4666,8 +4671,13 @@ async function finishSetup(how, button = null) {
     return;
   }
   clearTimeout(setup.timer);
+  const downloading = setup.page?.downloads?.status?.running;
   setup.page = null;
-  toast(how === "done" ? "Setup done. Change any of it in Settings." : "Setup skipped. It is in Settings when you want it.");
+  setup.autostart = null;
+  setup.customizeAll = false;
+  toast(how !== "done" ? "Setup skipped. It is in Settings when you want it."
+    : downloading ? "Setup done. The models finish downloading in the background; Settings shows how far."
+      : "Setup done. Change any of it in Settings.");
   openToday();
 }
 
@@ -4795,130 +4805,103 @@ async function applySetup(changes, button, next) {
   setupGo(next);
 }
 
-function statTile(label, value, note) {
-  return h("div", { class: "setup-stat" }, h("span", { class: "setup-stat-label" }, label),
-    h("span", { class: "setup-stat-value" }, value), note ? h("span", { class: "meta" }, note) : null);
+const SETUP_VIEWS = {
+  you(p, next) { return youStep(p, next); },
+  recommended(p, next) { return recommendedStep(p, next); },
+  test(p, next) { return testStep(p, next); },
+};
+
+// What a choice is once the step's button is clicked (``changes``: what it
+// sets; anything else stays as it is), and whether that is the recommendation.
+function packValue(r, changes) {
+  const value = Object.hasOwn(changes, r.id) ? changes[r.id] : r.current;
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const o = (r.options || []).find((x) => same(x.value, value));
+  return { label: same(value, r.value) ? r.label : o ? o.label : currentLabel(r), recommended: same(value, r.value) };
 }
 
-const PERMISSIONS = [["microphone", "Microphone"], ["system_audio", "System audio"], ["calendar", "Calendar"],
-  ["notifications", "Notifications"]];
-const APP_NAMES = [["teams", "Microsoft Teams"], ["slack", "Slack"], ["claude_code", "Claude Code"],
-  ["claude_desktop", "Claude Desktop"]];
+const needsToken = (d) => d.needed.some((m) => m.id === "pyannote") && d.hf_token.needed && !d.hf_token.set;
 
-const SETUP_VIEWS = {
-  mac(p, next) {
-    const hw = p.hardware;
-    return {
-      lede: "Palaver looked at this Mac to recommend what to run on it. Nothing was changed, and nothing was asked of macOS.",
-      body: [
-        h("div", { class: "setup-stats" },
-          statTile("Chip", hw.short, hw.apple_silicon ? null : "Local models need Apple Silicon"),
-          statTile("Memory", `${hw.memory_gb} GB`),
-          statTile("Free disk", `${Math.round(hw.free_disk_gb)} GB`)),
-        h("h2", {}, "Permissions"),
-        h("ul", { class: "setup-checks" }, PERMISSIONS.map(([key, name]) => {
-          if (key === "calendar") return calendarRow(p);
-          const t = permissionText(p.permissions[key]);
-          return checkRow(name, t.status, t.text, p.permissions[key]?.fix
-            || p.summary.find((c) => c.name === name)?.fix || "");
+// Step 2: all Palaver would set on this Mac as one package, taken with one
+// click (the downloads start with it); Customize opens each choice with its
+// alternatives. Login start and where meetings live are part of it.
+function recommendedStep(p, next) {
+  const hw = p.hardware;
+  const recs = p.recommendations.filter((r) => r.id !== "disk");
+  const disk = p.recommendations.find((r) => r.id === "disk");
+  const d = p.downloads;
+  const s = p.storage;
+  const cloud = s.cloud.filter((c) => c.choice !== "local");
+  const fits = d.free_disk_gb >= d.total_gb;
+  const { primary, secondary } = stepButtons(recs, setup.picks);
+  const autostart = h("input", { type: "checkbox", role: "switch", class: "switch-input", "data-key": "autostart",
+    onchange: (e) => { setup.autostart = e.target.checked; } });
+  autostart.checked = setup.autostart ?? true;
+  return {
+    lede: `What Palaver recommends for this ${hw.short} with ${hw.memory_gb} GB. Change any of it later in Settings.`,
+    body: [
+      hw.apple_silicon ? null : h("p", { class: "error" }, "Local models need Apple Silicon: on this Mac, notes need a cloud model."),
+      setup.customizeAll ? h("div", { class: "setup-recs" }, recs.map(recCard))
+        : h("ul", { class: "setup-pack" }, recs.map((r) => {
+          const v = packValue(r, primary.changes);
+          return h("li", { class: "setup-pack-item", "data-rec": r.id, title: r.reason },
+            h("span", { class: "setup-pack-title" }, r.title),
+            h("span", { class: "setup-pack-value" }, v.label,
+              v.recommended ? null : h("span", { class: "meta" }, ` · recommended: ${r.label}`),
+              v.recommended && r.needs_setup ? h("span", { class: "meta" }, " · needs setting up in Settings") : null));
         })),
-        h("p", { class: "meta" }, "macOS asks for the microphone and system audio the first time Palaver records."),
-        h("h2", {}, "Apps"),
-        h("ul", { class: "setup-checks" }, APP_NAMES.map(([key, name]) =>
-          checkRow(name, p.installed[key] ? "ok" : "none", p.installed[key] ? "installed" : "not installed", ""))),
-      ],
-      primary: { label: "Continue", run: () => setupGo(next) },
-    };
-  },
-  models(p, next) {
-    const recs = stepRecs(p, "models");
-    return {
-      lede: "What runs on this Mac and what could go to a cloud service. Local is the default; nothing goes to the cloud unless you choose it.",
-      body: recs.map(recCard),
-      primary: recsPrimary(recs.filter((r) => r.id !== "disk"), next),
-    };
-  },
-  downloads(p, next) {
-    const d = p.downloads;
-    const status = d.status;
-    const started = status.models.length > 0;
-    const fits = d.free_disk_gb >= d.total_gb;
-    return {
-      lede: "The models for your choices, with their sizes. They download in the background only when you agree; you can keep working meanwhile.",
-      body: [
-        h("p", { class: "setup-downloads" }, downloadsText(d.needed)),
-        d.needed.length ? h("ul", { class: "setup-checks" }, d.needed.map((m) =>
-          checkRow(m.label, "warn", `${gbText(m.disk_gb)}, for ${m.purpose}`, m.note ? `The catch: ${m.note}.` : ""))) : null,
-        d.needed.length ? h("p", { class: fits ? "meta" : "meta error" },
-          `${Math.round(d.free_disk_gb)} GB free on this Mac.${fits ? "" : " Free up space first."}`) : null,
-        d.needed.some((m) => m.id === "pyannote") && d.hf_token.needed && !d.hf_token.set ? h("div", { class: "gloss-card settings-card setup-token" },
-          h("p", {}, h("strong", {}, "pyannote needs a Hugging Face token. "),
-            "Its model is gated: accept its terms on Hugging Face once, then set the token as ",
-            h("code", {}, d.hf_token.where), ". Palaver never shows the token."),
-          h("p", {}, h("a", { href: d.hf_token.terms, target: "_blank", rel: "noopener" }, "The model's page on Hugging Face"))) : null,
-        started ? downloadStatus(status) : null,
-      ],
-      primary: d.needed.length && !started && fits
-        ? { label: `Download ${gbText(d.total_gb)}`, run: (button) => startDownloads(d.needed.map((m) => m.id), button) }
-        : { label: "Continue", run: () => setupGo(next) },
-      skip: d.needed.length && !started ? "Not now" : null,
-    };
-  },
-  calls(p, next) {
-    const recs = stepRecs(p, "calls");
-    return { lede: "How much Palaver does while a call runs, next to the call itself.", body: recs.map(recCard),
-      primary: recsPrimary(recs, next) };
-  },
-  record(p, next) {
-    const recs = stepRecs(p, "record");
-    return {
-      lede: "Which calls start a recording by themselves. Start recording now in the menu bar works either way.",
-      body: recs.map(recCard), primary: recsPrimary(recs, next),
-    };
-  },
-  you(p, next) { return youStep(p, next); },
-  claude(p, next) {
-    const recs = stepRecs(p, "claude");
-    return {
-      lede: "Claude Code and Claude Desktop can read your meetings through Palaver's MCP server: search, notes, transcripts, projects and people. Meetings kept on this Mac are never shown. Every read is listed in Settings → Claude access.",
-      body: recs.map(recCard), primary: recsPrimary(recs, next),
-    };
-  },
-  privacy(p, next) {
-    const s = p.storage;
-    const autostart = h("input", { type: "checkbox", role: "switch", class: "switch-input", "data-key": "autostart",
-      onchange: (e) => setAutostart(e.target.checked, e.target) });
-    autostart.checked = s.autostart;
-    const cloud = s.cloud.filter((c) => c.choice !== "local");
-    return {
-      lede: "Where your meetings live and what may leave this Mac.",
-      body: [
-        h("ul", { class: "setup-checks" },
-          checkRow("Recordings", "ok", s.recordings, ""),
-          checkRow("Audio", "ok", `kept ${s.retention_days} days after a meeting is done, then pruned (set in config.toml)`, ""),
-          checkRow("Cloud", cloud.length ? "warn" : "ok", cloud.length
-            ? `${cloud.map((c) => c.label).join(" and ")} use a cloud model`
-            : "nothing leaves this Mac: every feature runs here", cloud.length ? "Change it in Settings → Language model" : "")),
-        h("p", { class: "meta" }, "When you choose a cloud model, a meeting marked “Keep on This Mac” still never goes there, and Claude can't read it through MCP."),
-        h("div", { class: "gloss-card settings-card" },
-          h("label", { class: "switch-row" }, h("span", { class: "switch-label" }, "Start Palaver at login"),
-            autostart, h("span", { class: "switch-track", "aria-hidden": "true" })),
-          h("p", { class: "meta" }, "Calls are only recorded while Palaver runs.")),
-      ],
-      primary: { label: "Continue", run: () => setupGo(next) },
-    };
-  },
-  test(p, next) { return testStep(p, next); },
-  summary(p) {
-    return {
-      lede: summaryCounts(p.summary),
-      body: [h("ul", { class: "setup-checks setup-summary" }, p.summary.map((c) => checkRow(c.name, c.status, c.detail, c.fix))),
-        h("p", { class: "meta" }, "The same check runs in a terminal as ", h("code", {}, "palaver doctor"), ". The setup assistant is in Settings.")],
-      primary: { label: "Done", run: (button) => finishSetup("done", button) },
-      skip: null,
-    };
-  },
-};
+      h("button", { type: "button", class: "btn btn-quiet small setup-customize-all", "aria-expanded": String(!!setup.customizeAll),
+        onclick: () => { setup.customizeAll = !setup.customizeAll; rerenderSetup(".setup-customize-all"); } },
+        setup.customizeAll ? "Show the summary" : "Customize"),
+      h("div", { class: "gloss-card settings-card" },
+        h("label", { class: "switch-row" }, h("span", { class: "switch-label" }, "Start Palaver at login"),
+          autostart, h("span", { class: "switch-track", "aria-hidden": "true" })),
+        h("p", { class: "meta" }, "Calls are only recorded while Palaver runs.")),
+      h("p", { class: "meta" }, cloud.length
+        ? `${cloud.map((c) => c.label).join(" and ")} use a cloud model; everything else runs on this Mac. Meetings are kept in ${s.recordings}.`
+        : `Everything runs on this Mac: nothing leaves it. Meetings are kept in ${s.recordings}, their audio ${s.retention_days} days.`),
+      d.needed.length ? h("p", { class: fits ? "meta setup-downloads" : "meta setup-downloads error" },
+        `${downloadsText(d.needed)} ${Math.round(d.free_disk_gb)} GB free on this Mac.${fits ? " They download in the background." : " Free up space first."}`) : null,
+      disk ? h("p", { class: "meta error" }, disk.reason) : null,
+      needsToken(d) ? h("div", { class: "gloss-card settings-card setup-token" },
+        h("p", {}, h("strong", {}, "pyannote needs a Hugging Face token. "),
+          "Its model is gated: accept its terms on Hugging Face once, then set the token as ",
+          h("code", {}, d.hf_token.where), ". Palaver never shows the token."),
+        h("p", {}, h("a", { href: d.hf_token.terms, target: "_blank", rel: "noopener" }, "The model's page on Hugging Face"))) : null,
+      d.status.models.length ? downloadStatus(d.status) : null,
+    ],
+    primary: { label: primary.label, run: (button) => applyRecommended(primary.changes, button, next),
+      secondary: secondary && { label: secondary.label, run: (button) => applyRecommended(secondary.changes, button, next) } },
+  };
+}
+
+// The package's one click: the settings, login start, then the downloads they
+// need. Stays on the step when the models can't download yet (disk, token).
+async function applyRecommended(changes, button, next) {
+  const want = setup.autostart ?? true;
+  try {
+    await working(button, (async () => {
+      if (Object.keys(changes).length) await api("/api/setup/apply", { changes });
+      if (want !== setup.page.storage.autostart) await api("/api/setup/autostart", { on: want });
+      await loadSetup();
+      const d = setup.page.downloads;
+      if (d.needed.length && !d.status.models.length && d.free_disk_gb >= d.total_gb && !needsToken(d)) {
+        d.status = await api("/api/setup/downloads", { models: d.needed.map((m) => m.id) });
+      }
+    })());
+  } catch (err) {
+    setup.error = `Not saved: ${err.message}`;
+    rerenderSetup();
+    return;
+  }
+  setup.error = null;
+  const d = setup.page.downloads;
+  if (d.needed.length && !d.status.models.length) {  // a model that can't come yet: say why here
+    rerenderSetup();
+    return;
+  }
+  setupGo(next);
+}
 
 function youStep(p, next) {
   const prof = p.profile;
@@ -5016,7 +4999,7 @@ async function setAutostart(on, input) {
 
 function downloadStatus(status) {
   const total = downloadProgress(status);
-  return h("div", { class: "setup-progress", id: "setup-live", role: "status" },
+  return h("div", { class: "setup-progress", id: "setup-downloads", role: "status" },
     h("div", { class: "setup-bar", "aria-hidden": "true" }, h("span", { style: `width: ${Math.round(total * 100)}%` })),
     h("ul", { class: "setup-checks" }, status.models.map((m) => {
       const row = checkRow(m.label,
@@ -5048,8 +5031,9 @@ function testStep(p, next) {
   const done = t.state === "done" || t.state === "failed" || t.state === "aborted";
   const primary = t.state === "recording" ? { label: "Stop", run: (b) => runTest("stop", b) }
     : t.state === "checking" ? { label: "Checking…", disabled: true }
-      : done ? { label: "Continue", run: () => setupGo(next) }
+      : done ? { label: "Done", run: () => setupGo(next) }
         : { label: "Start test recording", run: (b) => runTest("start", b) };
+  const downloads = setup.page.downloads.status;
   return {
     lede: "Optional: a short recording to check both tracks. It plays no sound. Click Start, say one sentence in your normal voice, then click Stop. The recording is deleted after the check.",
     body: [
@@ -5058,9 +5042,11 @@ function testStep(p, next) {
         h("span", {}, testRecordingText(t) || (done ? "" : "Not started.")),
         done ? h("button", { type: "button", class: "btn small", onclick: (e) => runTest("start", e.currentTarget) }, "Test again") : null),
       t.checks ? h("ul", { class: "setup-checks" }, t.checks.map((c) => checkRow(c.name, c.status, c.detail, c.fix))) : null,
-      h("p", { class: "meta" }, "Palaver records your microphone and the sound of your Mac as two tracks. As nothing plays during the test, the second track stays quiet: what counts is that it was recorded."),
+      h("p", { class: "meta" }, "Palaver records your microphone and the sound of your Mac as two tracks. As nothing plays during the test, the second track stays quiet: what counts is that it was recorded. macOS asks for both the first time."),
+      downloads.models.length ? downloadStatus(downloads) : null,
     ],
     primary,
+    skip: t.state === "idle" ? "Skip the test" : null,
   };
 }
 
@@ -5079,9 +5065,9 @@ async function runTest(action, button) {
 function watchSetup() {
   clearTimeout(setup.timer);
   if (state.view !== "setup" || !setup.page) return;
-  const downloading = setup.step === "downloads" && setup.page.downloads.status.running;
+  const downloading = ["recommended", "test"].includes(setup.step) && setup.page.downloads.status.running;
   const testing = setup.step === "test" && ["recording", "checking"].includes(setup.page.test.state);
-  const calendar = ["mac", "you"].includes(setup.step) && setup.page.permissions?.calendar?.state !== "granted";
+  const calendar = setup.step === "you" && setup.page.permissions?.calendar?.state !== "granted";
   if (!downloading && !testing && !calendar) return;
   setup.timer = setTimeout(async () => {
     if (state.view !== "setup") return;
@@ -5099,7 +5085,7 @@ function watchSetup() {
     }
     try {
       if (downloading) setup.page.downloads.status = await api("/api/setup/downloads");
-      else {
+      if (testing) {
         const before = setup.page.test.state;
         setup.page.test = await api("/api/setup/test");
         if (before !== setup.page.test.state) {
@@ -5109,9 +5095,10 @@ function watchSetup() {
         }
       }
     } catch { /* the next round tries again */ }
+    const progress = document.getElementById("setup-downloads");
+    if (downloading && progress) progress.replaceWith(downloadStatus(setup.page.downloads.status));
     const live = document.getElementById("setup-live");
-    if (downloading && live) live.replaceWith(downloadStatus(setup.page.downloads.status));
-    else if (live) live.replaceWith(testStep(setup.page, null).body[0]);
+    if (testing && live) live.replaceWith(testStep(setup.page, null).body[0]);
     if (downloading && !setup.page.downloads.status.running) rerenderSetup();
     watchSetup();
   }, testing ? 500 : downloading ? 1000 : 1500);
@@ -5170,7 +5157,7 @@ async function checkSetupOffer() {
   if (!offer) return;
   const place = placeOf(location.hash);
   if (offer.why === "first") {
-    if (place.view === "today" || (place.view === "meetings" && !place.id)) openSetup("mac", "replace");
+    if (place.view === "today" || (place.view === "meetings" && !place.id)) openSetup(null, "replace");
     return;
   }
   try {
@@ -5179,7 +5166,7 @@ async function checkSetupOffer() {
   } catch { /* said again after a reload */ }
   const text = setupOfferText(offer, offer.labels || {});
   if (!text || place.view === "setup") return;
-  const step = offer.why === "missing" ? "downloads" : "mac";
+  const step = "recommended";  // a new Mac, a missing model: what to run here
   toast(text, { action: { label: offer.why === "missing" ? "Download…" : "Review", run: () => openSetup(step) } });
 }
 

@@ -963,19 +963,12 @@ export function questionsNote(answer) {
 
 // --- the setup assistant (#55) ---------------------------------------------------------
 
-// The steps, in order: each shows its recommendations with the reason, the
-// alternatives (Customize) and a way to skip.
+// The steps, in order: who you are (and the calendar), what Palaver recommends
+// for this Mac as one package (Customize shows each choice), an optional test.
 export const SETUP_STEPS = [
-  { id: "mac", title: "This Mac" },
-  { id: "models", title: "Models" },
-  { id: "downloads", title: "Downloads" },
-  { id: "calls", title: "During calls" },
-  { id: "record", title: "What to record" },
   { id: "you", title: "You and your calendar" },
-  { id: "claude", title: "Claude" },
-  { id: "privacy", title: "Storage and privacy" },
+  { id: "recommended", title: "Recommended for this Mac" },
   { id: "test", title: "Test recording" },
-  { id: "summary", title: "Summary" },
 ];
 const stepIndex = (id) => SETUP_STEPS.findIndex((s) => s.id === id);
 
@@ -989,10 +982,6 @@ export function setupStepAfter(id) {
 export function setupStepBefore(id) {
   const i = stepIndex(id);
   return i > 0 ? SETUP_STEPS[i - 1].id : null;
-}
-
-export function stepRecs(page, step) {
-  return (page?.recommendations || []).filter((r) => r.step === step);
 }
 
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -1064,12 +1053,6 @@ const PERMISSION_STATUS = { granted: "ok", denied: "fail", fallback: "warn" };
 export function permissionText(p) {
   if (!p) return { status: "warn", text: "not checked" };
   return { status: PERMISSION_STATUS[p.state] || "warn", text: p.detail || p.state.replace(/_/g, " ") };
-}
-
-export function summaryCounts(checks) {
-  const ok = checks.filter((c) => c.status === "ok").length;
-  if (ok === checks.length) return "Everything is set up.";
-  return `${ok} set up, ${checks.length - ok} to do`;
 }
 
 // Settings: "Recommended for this Mac" beside a switch (the same
