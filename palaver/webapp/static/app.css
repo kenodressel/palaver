@@ -474,6 +474,7 @@ h1 {
 .name-input:focus { border-color: var(--focus); background: var(--paper); outline: none; }
 .you-name { padding: 3px 6px; font-weight: 700; }
 .talk { color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.who .talk { margin-left: auto; padding-left: 8px; }  /* one column for every lane, the user's too */
 
 .icon-btn {
   flex: none;
@@ -575,7 +576,7 @@ h1 {
 .note-card.todo { background: var(--coral-soft); }
 .note-card.todo h2 { color: var(--coral-ink); }
 .note-card ul { padding-left: 1.1em; }
-.note-card .decision { font: 600 16.5px/1.4 var(--display); }
+.note-card .decision { font: 500 16px/1.45 var(--display); }
 .note-card li + li { margin-top: 6px; }
 .notes ul { margin: 0; padding-left: 1.2em; }
 .notes li { margin: 4px 0; }
@@ -1125,7 +1126,6 @@ button.variant.drop .x { color: var(--ink-3); font-size: 14px; line-height: 1; }
 button.variant.drop:hover, button.variant.drop:focus-visible { background: var(--coral-soft); color: var(--coral-ink); }
 button.variant.drop:hover .x, button.variant.drop:focus-visible .x { color: var(--coral-ink); }
 .arrow { color: var(--ink-3); }
-.term-input { flex: 0 1 220px; min-width: 120px; font-weight: 650; border-color: var(--rule); background: var(--paper); }
 .example {
   display: block;
   width: 100%;
@@ -1143,9 +1143,54 @@ button.variant.drop:hover .x, button.variant.drop:focus-visible .x { color: var(
 .example:hover { background: var(--hover); }
 .example mark { background: none; color: var(--ink); font-weight: 700; }
 .gloss-actions { display: flex; align-items: center; gap: 12px; margin-top: 2px; }
-.term-row { position: relative; flex-wrap: wrap; gap: 6px; padding: 4px 40px 4px 0; }
-.term-row > .more { position: absolute; top: 4px; right: 0; }  /* top right, also when the row wraps */
-.note-input { width: 150px; }
+
+/* --- tables: glossary terms, organizations, people --------------------------------------
+   One card, rows on fixed columns with a hairline between them, a quiet
+   header. Fields read as text until the row is pointed at or one has focus. */
+.data-list { margin: 0; padding: 4px 0; border-radius: 20px; background: var(--surface); list-style: none; }
+.lede + .data-list { margin-top: 14px; }
+.data-row, .data-head { display: grid; align-items: center; column-gap: 14px; padding: 7px 18px; }
+.data-row + .data-row, .data-list > .person + .person { border-top: 1px solid var(--rule); }
+.data-head { padding-top: 10px; padding-bottom: 6px; color: var(--ink-3); font-size: 11.5px; font-weight: 650;
+  letter-spacing: 0.04em; text-transform: uppercase; }
+.cell-input { width: 100%; min-width: 0; padding: 3px 6px; margin-left: -6px; border: 1px solid transparent;
+  border-radius: 8px; background: none; color: var(--ink); font: inherit; text-overflow: ellipsis; }
+.cell-input::placeholder { color: transparent; }
+:is(.data-row, .person-head):is(:hover, :focus-within) .cell-input { border-color: var(--rule); }
+:is(.data-row, .person-head):is(:hover, :focus-within) .cell-input::placeholder { color: var(--ink-3); }
+.cell-input:focus { border-color: var(--focus); outline: none; background: var(--paper); }
+
+.terms .term-row { grid-template-columns: minmax(130px, 210px) minmax(0, 1fr) minmax(110px, 200px) 28px; align-items: start; }
+.terms .data-row > * { min-height: 30px; }
+.term-input { font-weight: 650; }
+.term-variants { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; padding-top: 3px; }
+.term-variants .add-variant { width: 110px; margin-left: 0; font-size: 12.5px; }
+.term-row:not(:hover, :focus-within) .add-variant { width: 0; padding: 0; border: 0; }  /* takes no line of its own */
+.note-input { color: var(--ink-2); font-size: 13px; }
+.terms .more { justify-self: end; }
+
+.orgs .org-row { grid-template-columns: minmax(160px, 280px) 90px minmax(0, 1fr); }
+.org-input { font-weight: 650; }
+
+.people-list .person { margin: 0; padding: 8px 18px 6px; border-radius: 0; background: none; }
+.people-list .person-head { display: grid; align-items: center; column-gap: 12px;
+  grid-template-columns: 30px minmax(0, 240px) minmax(0, 150px) 82px 64px minmax(0, 1fr) 28px; }
+.people-list .person-name-cell { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.people-list .person-head .name-input { flex: 1; font-size: 15px; font-weight: 700; }
+.people-list .person-org { color: var(--ink-2); font-size: 13px; font-weight: 500; }
+.people-list .person-talk { text-align: right; }
+.people-list .person-head .more { justify-self: end; }
+.people-list .appearances { margin: 2px 0 4px; padding-left: 4px; }  /* ▶ under the avatar, the title under the name */
+.people-list .appearance-row { grid-template-columns: 26px minmax(0, 1fr) 110px 150px; column-gap: 12px; }
+.people-list .appearance { min-height: 26px; font-size: 14px; }
+
+/* A project's meetings: title, how it got there, the day, then ✓ × at the right (shown when pointed at). */
+.appearances .project-meeting { display: grid; grid-template-columns: minmax(0, 1fr) auto 110px 52px; column-gap: 12px; }
+.project .appearances { padding-left: 6px; }  /* name, people, description and meetings start on one line */
+.project .description { margin-left: 0; }
+.project-meeting-day { text-align: right; }
+.row-actions { display: flex; justify-content: flex-end; gap: 2px; }
+.project-meeting:not(:hover, :focus-within) .row-actions .chip-btn:last-child { opacity: 0; }
 
 /* Fixing a spelling in a meeting: a small card by the selected words. */
 .respell {
@@ -1498,7 +1543,7 @@ button.variant.drop:hover .x, button.variant.drop:focus-visible .x { color: var(
 
 /* --- Today (UI spec, phase 2) ------------------------------------------------ */
 
-.today { max-width: 1180px; margin: 0 auto; padding: 26px 40px 80px; }
+.today { max-width: 980px; margin: 0 auto; padding: 28px 40px 80px; }
 .today-head h1 { margin: 0 0 14px; font: 800 38px/1.05 var(--display); letter-spacing: -0.03em; }
 .today-head .eyebrow { margin: 0; }
 .today-cols { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 26px; align-items: start; }

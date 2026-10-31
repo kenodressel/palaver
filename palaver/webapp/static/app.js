@@ -68,6 +68,7 @@ async function refreshTouched(ids) {
 function minutes(seconds) {
   if (!seconds) return "";
   const m = Math.round(seconds / 60);
+  if (m === 0) return "<1 min";
   return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`;
 }
 
@@ -332,7 +333,7 @@ const needsOf = (id) => needsSummary(state.needs?.meetings.find((x) => x.id === 
 
 // A meeting in the list (and in Today's "Recent"): what it was, who, its state,
 // projects, summary, what is left to do; a dot when something needs the user.
-function meetingItem(m, current) {
+function meetingItem(m, current, { withDay = false } = {}) {
   const date = m.start ? new Date(m.start) : null;
   const stateText = state.writing.has(m.id) ? "Writing notes…" : STATE_TEXT[m.status];
   const who = personLine(m);
@@ -344,7 +345,7 @@ function meetingItem(m, current) {
       h("span", { class: "visually-hidden" }, `Needs you: ${needs.parts.join(", ")}`)) : null,
     h("span", { class: "item-title" }, m.title || fallbackTitle(m)),
     h("span", { class: "item-meta" },
-      date ? h("span", {}, timeFmt.format(date)) : null,
+      date ? h("span", {}, withDay ? whenText(m.start) : timeFmt.format(date)) : null,  // the list has day headers; Recent has not
       m.duration ? h("span", {}, minutes(m.duration)) : null,
       who ? h("span", { class: "item-people" }, who) : null,
       m.imported ? h("span", { class: "item-state", title: `Imported from ${m.imported.from}` },
@@ -2469,11 +2470,15 @@ function markCurrent(el, on) {
 // column is there under Meetings only).
 function setView(view) {
   state.view = view;
+  markTab(view);
+  commands.publish();
+}
+
+function markTab(view) {
   const tab = view === "review" ? "meetings" : view;
   for (const b of document.querySelectorAll(".views [data-view]")) markCurrent(b, b.dataset.view === tab);
   markCurrent($("#settings-btn"), view === "settings");
   document.body.dataset.page = tab;
-  commands.publish();
 }
 
 // ``focus``: a person to scroll to; ``how``: see historyStep.
@@ -2519,18 +2524,20 @@ function renderPeople() {
 
   if (d.unknown.length) {
     page.append(h("h2", {}, "Heard in several meetings, no name yet"));
+    const voicesList = h("div", { class: "data-list people-list" });
+    page.append(voicesList);
     d.unknown.forEach((g, i) => {
       const voices = g.voices.map((v) => [v.id, v.label]);
       const clip = g.voices.find((v) => v.clip);
-      page.append(h("section", { class: "person", style: `--c:var(--v${i % 8})`, "data-voice": voices[0].join("|") },
+      voicesList.append(h("section", { class: "person", style: `--c:var(--v${i % 8})`, "data-voice": voices[0].join("|") },
         h("div", { class: "person-head" }, avatar(null),
           h("input", { class: "name-input", placeholder: "Who is this?", list: "names", spellcheck: "false",
             "aria-label": "Name for this voice",
             onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); },
             onchange: (e) => e.target.value.trim() && nameVoices(voices, e.target.value) }),
-          clip ? playVoiceButton("Play this voice", () => playClip(clip.id, clip.clip)) : null,
-          h("span", { class: "meta" }, `${g.voices.length} meetings`),
-          h("span", { class: "meta" }, minutes(g.talk_seconds)),
+          clip ? playVoiceButton("Play this voice", () => playClip(clip.id, clip.clip)) : h("span", { class: "person-org" }),
+          h("span", { class: "meta person-count" }, `${g.voices.length} meetings`),
+          h("span", { class: "meta person-talk" }, minutes(g.talk_seconds)),
           h("span", { class: "spacer" }),
           moreButton(() => voiceItems(g, voices), "Actions for this voice")),
         h("ul", { class: "appearances" }, g.voices.map((v) => appearance(v, "this voice")))));
@@ -2540,11 +2547,15 @@ function renderPeople() {
   if (d.organizations?.length) {
     page.append(h("h2", {}, "Organizations"),
       h("p", { class: "lede" }, "From the invitees’ email addresses. Rename one, e.g. “Fabrikamcontoso” → “Fabrikam Contoso”."),
-      h("ul", { class: "appearances orgs" }, d.organizations.map((o) => h("li", { class: "appearance" },
-        h("input", { class: "name-input org-input", value: o.name, spellcheck: "false", "aria-label": `Name of ${o.key}`,
-          onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); },
-          onchange: (e) => changeOrgs("/api/organizations", { key: o.key, name: e.target.value }) }),
-        h("span", { class: "meta" }, `${o.people} ${o.people === 1 ? "person" : "people"} · ${o.key === "extern" ? "private addresses" : o.key}`)))));
+      h("ul", { class: "data-list orgs" },
+        h("li", { class: "data-head org-row", "aria-hidden": "true" }, h("span", {}, "Organization"), h("span", {}, "People"),
+          h("span", {}, "Email domain")),
+        d.organizations.map((o) => h("li", { class: "data-row org-row" },
+          h("input", { class: "cell-input org-input", value: o.name, spellcheck: "false", "aria-label": `Name of ${o.key}`,
+            onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); },
+            onchange: (e) => changeOrgs("/api/organizations", { key: o.key, name: e.target.value }) }),
+          h("span", { class: "meta" }, `${o.people} ${o.people === 1 ? "person" : "people"}`),
+          h("span", { class: "meta" }, o.key === "extern" ? "private addresses" : o.key)))));
   }
   page.append(h("datalist", { id: "org-names" }, [...new Set([...(d.organizations || []).map((o) => o.name),
     ...d.people.map((p) => p.org).filter(Boolean)])].map((n) => h("option", { value: n }))));
@@ -2553,24 +2564,27 @@ function renderPeople() {
   if (!d.people.length) {
     page.append(h("p", { class: "notes-empty" }, "Nobody has a name yet. Name a speaker in a meeting, or a voice above."));
   }
+  const named = h("div", { class: "data-list people-list" });
+  if (d.people.length) page.append(named);
   for (const p of d.people) {
     // In their colour, as on the lanes and wherever else they are named.
-    page.append(h("section", { class: "person", style: `--c:${personColor(p.name, p.you ? p.name : null)}`, "data-person": p.name },
+    named.append(h("section", { class: "person", style: `--c:${personColor(p.name, p.you ? p.name : null)}`, "data-person": p.name },
       h("div", { class: "person-head" }, avatar(p.name),
-        h("input", { class: "name-input", value: p.name, spellcheck: "false", "aria-label": `Rename ${p.name}`,
-          title: "Rename everywhere; an existing name merges the two",
-          onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { e.target.value = p.name; e.target.blur(); } },
-          onchange: (e) => e.target.value.trim() ? renamePerson(p.name, e.target.value) : (e.target.value = p.name) }),
-        p.you ? h("span", { class: "pill", title: "One of your names (an earlier one counts too)" }, "You") : null,
-        h("input", { class: "project-input org-input", value: p.org || "", placeholder: "+ Organization", list: "org-names",
+        h("span", { class: "person-name-cell" },
+          h("input", { class: "cell-input name-input", value: p.name, spellcheck: "false", "aria-label": `Rename ${p.name}`,
+            title: "Rename everywhere; an existing name merges the two",
+            onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { e.target.value = p.name; e.target.blur(); } },
+            onchange: (e) => e.target.value.trim() ? renamePerson(p.name, e.target.value) : (e.target.value = p.name) }),
+          p.you ? h("span", { class: "pill", title: "One of your names (an earlier one counts too)" }, "You") : null),
+        h("input", { class: "cell-input org-input person-org", value: p.org || "", placeholder: "+ Organization", list: "org-names",
           spellcheck: "false", "aria-label": `Organization of ${p.name}`,
           title: p.org_given ? "Given by hand; empty it to use the email address again" : "From the email address; type to change",
           onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); },
           onchange: (e) => changeOrgs("/api/people/org", { name: p.name, org: e.target.value }) }),
-        h("span", { class: "meta" }, p.meetings.length === 1 ? "1 meeting" : `${p.meetings.length} meetings`),
-        h("span", { class: "meta" }, minutes(p.talk_seconds)),
-        h("span", { class: "meta" }, p.voice_samples ? "voice known" : "too little speech to learn the voice"),
-        h("span", { class: "spacer" }),
+        h("span", { class: "meta person-count" }, p.meetings.length === 1 ? "1 meeting" : `${p.meetings.length} meetings`),
+        h("span", { class: "meta person-talk" }, minutes(p.talk_seconds)),
+        h("span", { class: "meta person-voice", title: p.voice_samples ? "Recognized by voice in new meetings"
+          : "Too little speech yet to learn the voice" }, p.voice_samples ? "voice known" : "voice not learned yet"),
         moreButton(() => personItems(p), `Actions for ${p.name}`)),
       h("ul", { class: "appearances" }, p.meetings.map((x) => appearance(x, p.name)))));
   }
@@ -2818,14 +2832,17 @@ function projectItems(d, p, from) {
 
 function projectMeeting(p, x) {
   const sure = x.by === "you";
-  return h("li", { class: "appearance", "data-meeting": x.id },
-    h("button", { class: "link", onclick: () => openMeeting(x.id) }, meetingTitle(x)),
-    x.start ? h("span", { class: "meta" }, dayFmt.format(new Date(x.start))) : null,
-    sure ? null : h("span", { class: "meta", title: x.why || null }, x.by === "model" ? "sorted by the model" : "sorted automatically"),
-    sure ? null : h("button", { class: "chip-btn", title: "Yes, it belongs here", "aria-label": `Confirm ${meetingTitle(x)}`,
-      onclick: (e) => setProjectMeeting(x, p, {}, e.currentTarget) }, "✓"),
-    h("button", { class: "chip-btn", title: `Take it out of ${p.name}`, "aria-label": `Remove ${meetingTitle(x)}`,
-      onclick: (e) => setProjectMeeting(x, p, { remove: true }, e.currentTarget) }, "×"));
+  return h("li", { class: "appearance project-meeting", "data-meeting": x.id },
+    h("button", { class: "link appearance-title", title: meetingTitle(x), onclick: () => openMeeting(x.id) }, meetingTitle(x)),
+    h("span", { class: "meta project-meeting-by", title: x.why || null },
+      sure ? "" : x.by === "model" ? "sorted by the model" : "sorted automatically"),
+    h("span", { class: "meta project-meeting-day", title: x.start ? dayFmt.format(new Date(x.start)) : null },
+      x.start ? shortDayFmt.format(new Date(x.start)) : ""),
+    h("span", { class: "row-actions" },
+      sure ? null : h("button", { class: "chip-btn", title: "Yes, it belongs here", "aria-label": `Confirm ${meetingTitle(x)}`,
+        onclick: (e) => setProjectMeeting(x, p, {}, e.currentTarget) }, "✓"),
+      h("button", { class: "chip-btn", title: `Take it out of ${p.name}`, "aria-label": `Remove ${meetingTitle(x)}`,
+        onclick: (e) => setProjectMeeting(x, p, { remove: true }, e.currentTarget) }, "×")));
 }
 
 // A meeting put in project ``p``, confirmed in it or taken out, from the Projects page.
@@ -3264,27 +3281,31 @@ function renderGlossary() {
   }
   page.append(h("h2", {}, "Terms"));
   if (!d.terms.length) page.append(h("p", { class: "notes-empty" }, "No terms yet. Accept a suggestion, or add one above."));
-  page.append(h("ul", { class: "appearances terms" }, d.terms.map((t) => {
-    let more;
-    return h("li", { class: "appearance term-row", "data-term": t.id },
-      h("input", { class: "name-input term-input", value: t.term, spellcheck: "false", "aria-label": `Rename ${t.term}`,
-        onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { e.target.value = t.term; e.target.blur(); } },
-        onchange: (e) => e.target.value.trim() ? changeTerm(t, { term: e.target.value }, `${t.term} was not renamed`)
-          : (e.target.value = t.term) }),
-      t.variants.map((v) => h("span", { class: "variant" }, v,
-        h("button", { class: "chip-btn", title: `Stop respelling “${v}”`, "aria-label": `Remove ${v}`,
-          onclick: () => changeTerm(t, { remove_variant: v }, `“${v}” was not removed`) }, "×"))),
-      h("input", { class: "project-input", placeholder: "+ heard as", spellcheck: "false", "aria-label": `Add a spelling of ${t.term}`,
-        onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); },
-        onchange: (e) => e.target.value.trim() && changeTerm(t, { add_variants: [e.target.value.trim()] }, `“${e.target.value.trim()}” was not added`) }),
-      h("input", { class: "project-input note-input", value: t.note || "", placeholder: "+ note", spellcheck: "true",
-        "aria-label": `Note on ${t.term}`, title: t.note || "A note on what it is",
-        onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { e.target.value = t.note || ""; e.target.blur(); } },
-        onchange: (e) => e.target.value.trim() !== (t.note || "")
-          && changeTerm(t, { note: e.target.value.trim() }, `The note on ${t.term} was not saved`) }),
-      h("span", { class: "spacer" }),
-      more = moreButton(() => termItems(t, more), `Actions for ${t.term}`));
-  })));
+  else page.append(h("ul", { class: "data-list terms" },
+    h("li", { class: "data-head term-row", "aria-hidden": "true" }, h("span", {}, "Term"), h("span", {}, "Heard as"),
+      h("span", {}, "Note"), h("span", {})),
+    d.terms.map((t) => {
+      let more;
+      // Fields read as text until pointed at: the table stays calm, every cell still edits in place.
+      return h("li", { class: "data-row term-row", "data-term": t.id },
+        h("input", { class: "cell-input term-input", value: t.term, spellcheck: "false", "aria-label": `Rename ${t.term}`,
+          onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { e.target.value = t.term; e.target.blur(); } },
+          onchange: (e) => e.target.value.trim() ? changeTerm(t, { term: e.target.value }, `${t.term} was not renamed`)
+            : (e.target.value = t.term) }),
+        h("div", { class: "term-variants" },
+          t.variants.map((v) => h("span", { class: "variant" }, v,
+            h("button", { class: "chip-btn", title: `Stop respelling “${v}”`, "aria-label": `Remove ${v}`,
+              onclick: () => changeTerm(t, { remove_variant: v }, `“${v}” was not removed`) }, "×"))),
+          h("input", { class: "cell-input add-variant", placeholder: "+ heard as", spellcheck: "false", "aria-label": `Add a spelling of ${t.term}`,
+            onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); },
+            onchange: (e) => e.target.value.trim() && changeTerm(t, { add_variants: [e.target.value.trim()] }, `“${e.target.value.trim()}” was not added`) })),
+        h("input", { class: "cell-input note-input", value: t.note || "", placeholder: "+ note", spellcheck: "true",
+          "aria-label": `Note on ${t.term}`, title: t.note || "A note on what it is",
+          onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { e.target.value = t.note || ""; e.target.blur(); } },
+          onchange: (e) => e.target.value.trim() !== (t.note || "")
+            && changeTerm(t, { note: e.target.value.trim() }, `The note on ${t.term} was not saved`) }),
+        more = moreButton(() => termItems(t, more), `Actions for ${t.term}`));
+    })));
   $("#main").replaceChildren(page);
 }
 
@@ -5282,7 +5303,7 @@ function recentSection() {
   const latest = state.meetings.slice(0, 6);
   return h("section", { class: "recent", "aria-label": "Recent" },
     h("h2", { class: "today-h" }, "Recent"),
-    latest.length ? latest.map((m) => meetingItem(m, null)) : h("p", { class: "lede" }, "No recordings yet."),
+    latest.length ? latest.map((m) => meetingItem(m, null, { withDay: true })) : h("p", { class: "lede" }, "No recordings yet."),
     state.meetings.length > latest.length
       ? h("button", { type: "button", class: "link small", onclick: () => goTo("meetings") }, "All meetings →") : null);
 }
@@ -6003,8 +6024,8 @@ usage.catalog("palette", ["open", "meeting", "person", "project", "page", "searc
   ...GLOBAL_COMMANDS.map((c) => `command.${c.id}`),
   ...Object.keys(meetingCommands({})).map((name) => `command.${name}`)]);
 
-await loadList();
-await loadNames();
+markTab(placeOf(location.hash).view);  // the page asked for, while its data comes
+await Promise.all([loadList(), loadNames()]);
 loadReview();
 loadModelJobs();
 route("replace", history.state).then(checkSetupOffer);  // a reload comes back to the tab and scroll position it had
