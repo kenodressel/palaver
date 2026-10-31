@@ -501,7 +501,10 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
                 launch_helper=lambda kind, key, args: model_jobs.launch(
                     model_jobs.jobs_root(cfg.output_dir), kind, key,
                     model_jobs.helper_argv(kind, args, cli_options, output_dir=cfg.output_dir)))
+            # The setup assistant's Connect Calendar button: asked here, the process that reads it.
+            app_calendar = onboarding.Calendar(ask=lambda: on_main(lambda: request_calendar_access(lambda granted: None)))
             calls.update(
+                calendar=lambda args: app_calendar.connect() if args.get("action") == "connect" else app_calendar.status(),
                 update_check=lambda args: self.updates.check(),
                 update_install=lambda args: self.updates.install(),
                 uninstall=lambda args: on_main(lambda: self.updates.uninstall(

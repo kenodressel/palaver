@@ -77,6 +77,20 @@ def test_the_name_from_config_toml_is_kept(tmp_path):
     assert api.setup_page(a)["profile"] == {**api.setup_page(a)["profile"], "name": "Timo", "name_from": "config"}
 
 
+def test_connect_calendar_asks_macos_once_then_opens_system_settings(app):
+    cal = app.probe.calendar
+    assert api.setup_calendar(app, {"action": "connect"}) == {"state": "not_asked", "detail": "not connected",
+                                                               "asked": True}
+    assert cal.asked == 1 and api.setup_calendar(app, {})["state"] == "granted"
+    assert api.setup_page(app)["permissions"]["calendar"]["state"] == "granted"
+    assert "asked" not in api.setup_calendar(app, {"action": "connect"}) and cal.asked == 1  # connected: nothing
+    app.probe._permissions["calendar"] = {"state": "denied", "detail": "not allowed"}
+    assert api.setup_calendar(app, {"action": "connect"})["opened_settings"] is True
+    assert cal.opened_settings == 1 and cal.asked == 1  # macOS asks no more once refused
+    with pytest.raises(api.Refused):
+        api.setup_calendar(app, {"action": "grant"})
+
+
 def test_the_glossary_seed_comes_from_the_calendar(app):
     terms = {t["term"]: t["kind"] for t in api.setup_page(app)["glossary"]}
     assert terms == {"Stefan Dornbusch": "person", "Contoso": "organization", "Northwind": "title",
@@ -398,6 +412,9 @@ def test_http_setup_routes(server, app):
     assert _req(server, "/api/setup/glossary", {"terms": ["Northwind"]})[1]["added"] == 1
     assert _req(server, "/api/setup/autostart", {"on": True})[0] == 200
     assert _req(server, "/api/setup/test")[1]["state"] == "idle"
+    assert _req(server, "/api/setup/calendar")[1]["state"] == "not_asked"
+    assert _req(server, "/api/setup/calendar", {"action": "connect"})[1]["asked"] is True
+    assert _req(server, "/api/setup/calendar")[1]["state"] == "granted"
     assert _req(server, "/api/setup/downloads")[1] == {"running": False, "models": []}
     assert _req(server, "/api/setup/finish", {"how": "skipped"})[0] == 200
     assert _req(server, "/api/setup/offer")[1] == {"offer": None}

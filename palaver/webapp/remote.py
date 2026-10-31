@@ -169,6 +169,30 @@ class RemoteRecording:
             LOGGER.info("the app did not answer the record switch %s", app)
 
 
+class RemoteCalendar:
+    """The calendar permission as the recording process has it, and asked
+    for there: that is the process that reads the calendar."""
+
+    def __init__(self, socket_path: Path | None = None):
+        self._socket_path = socket_path or appctl.APP_SOCKET
+
+    def status(self) -> dict:
+        try:
+            return appctl.call("calendar", {}, path=self._socket_path)
+        except (appctl.CallFailed, appctl.CallRefused):
+            from ..onboarding import calendar_permission
+
+            return calendar_permission()
+
+    def connect(self) -> dict:
+        try:
+            return appctl.call("calendar", {"action": "connect"}, path=self._socket_path, timeout=ANSWER_TIMEOUT)
+        except appctl.CallRefused as exc:
+            raise ValueError(str(exc)) from None
+        except appctl.CallFailed:
+            raise ValueError(NO_ANSWER) from None
+
+
 class RemoteTest:
     """The setup assistant's test recording (#55), recorded by the
     recording process: the server needs no mic or system audio permission,

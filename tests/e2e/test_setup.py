@@ -6,6 +6,7 @@ downloads, no microphone, no sound."""
 from __future__ import annotations
 
 import json
+import re
 import threading
 from datetime import datetime, timedelta
 
@@ -265,3 +266,35 @@ def test_a_cloud_model_that_is_not_set_up_leaves_notes_off(page, fresh):
     # Notes wait for a cloud model: never left on Gemma, and Gemma is not downloaded.
     assert settings.read_raw()["engines"] == {"notes": "pending", "projects": "pending"}
     expect(page.locator(".setup-downloads")).not_to_contain_text("Gemma")
+
+
+def test_connect_calendar_in_the_assistant(page, fresh):
+    page.goto(fresh.url + "#/setup/mac")
+    step_title(page, "This Mac")
+    row = page.locator("#main .setup-check", has_text="Calendar")
+    row.get_by_role("button", name="Connect Calendar").click()
+    expect(row).to_have_class(re.compile(r"\bok\b"))  # macOS's dialog answered: the page follows by itself
+    expect(row).to_contain_text("connected (read only)")
+    expect(row.get_by_role("button")).to_have_count(0)
+    assert fresh.probe.calendar.asked == 1
+
+
+def test_a_calendar_connected_from_the_menu_shows_and_keeps_what_was_typed(page, fresh):
+    page.goto(fresh.url + "#/setup/you")
+    step_title(page, "You and your calendar")
+    row = page.locator("#main .setup-check", has_text="Calendar")
+    expect(row.get_by_role("button", name="Connect Calendar")).to_be_visible()
+    page.locator("#setup-name").fill("Timo S.")
+    fresh.probe.calendar.grant()  # Connect Calendar… in the menu bar
+    expect(row).to_have_class(re.compile(r"\bok\b"), timeout=5000)
+    expect(page.locator("#setup-name")).to_have_value("Timo S.")
+    assert fresh.probe.calendar.asked == 0
+
+
+def test_a_refused_calendar_opens_system_settings(page, fresh):
+    fresh.probe._permissions["calendar"] = {"state": "denied", "detail": "not allowed"}
+    page.goto(fresh.url + "#/setup/mac")
+    row = page.locator("#main .setup-check", has_text="Calendar")
+    row.get_by_role("button", name="Open System Settings").click()
+    expect_toast(page, re.compile("System Settings is open at Calendars"))
+    assert fresh.probe.calendar.opened_settings == 1 and fresh.probe.calendar.asked == 0

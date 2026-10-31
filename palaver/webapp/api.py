@@ -3406,6 +3406,21 @@ def setup_test(app, body: dict) -> dict[str, Any]:
     return app.probe.test.status()
 
 
+def setup_calendar(app, body: dict) -> dict[str, Any]:
+    """The calendar permission: {"action": "connect"} (the button) asks
+    macOS for it, or opens System Settings once refused; without one, its
+    state, which the page looks at until it is connected."""
+    action = body.get("action")
+    if action == "connect":
+        try:
+            return app.probe.calendar.connect()
+        except ValueError as exc:
+            raise Refused(str(exc)) from None
+    if action is not None:
+        raise Refused('action must be "connect"')
+    return app.probe.calendar.status()
+
+
 # --- Report a Problem and usage (#59) -------------------------------------------------------
 
 MAX_USAGE_EVENTS = 200

@@ -17,7 +17,7 @@ import pytest
 
 from palaver import appctl
 from palaver.webapp import api
-from palaver.webapp.remote import RemoteRecording, RemoteTest
+from palaver.webapp.remote import RemoteCalendar, RemoteRecording, RemoteTest
 from palaver.webapp.server import App, make_server
 
 from .test_webapp import MEETING, _meeting, _post, _req
@@ -151,6 +151,33 @@ def test_the_setup_test_recording_goes_to_the_recording_process(short_dir):
             t.start(busy=lambda: True)
     finally:
         srv.close()
+
+
+def test_the_calendar_is_asked_for_by_the_recording_process(short_dir):
+    got = []
+
+    def calendar(args):
+        got.append(args)
+        return {"state": "granted" if got[-1] else "not_asked"}
+
+    srv = appctl.serve(short_dir / "app.sock", {"calendar": calendar})
+    try:
+        c = RemoteCalendar(short_dir / "app.sock")
+        assert c.status() == {"state": "not_asked"}
+        assert c.connect() == {"state": "granted"}
+        assert got == [{}, {"action": "connect"}]
+    finally:
+        srv.close()
+
+
+def test_the_calendar_without_a_recording_process(short_dir, monkeypatch):
+    from palaver import onboarding
+
+    monkeypatch.setattr(onboarding, "calendar_permission", lambda: {"state": "granted", "detail": "here"})
+    c = RemoteCalendar(short_dir / "app.sock")
+    assert c.status()["state"] == "granted"  # the page still shows what this process sees
+    with pytest.raises(ValueError, match="did not answer"):
+        c.connect()
 
 
 def test_the_setup_test_without_a_recording_process(short_dir):

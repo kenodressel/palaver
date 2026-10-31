@@ -329,12 +329,13 @@ def serve(cfg, cli_options: list[str], *, listen_fd: int | None = None, ready_fd
           app_socket: Path | None = None, port: int = 0) -> int:
     """`palaver webapp-serve`: the window's server, until SIGTERM (or the app is gone)."""
     from . import api, build_app
-    from .remote import RemoteRecording, RemoteTest
+    from .remote import RemoteCalendar, RemoteRecording, RemoteTest
     from .server import make_server, sweep_leftovers
 
     recording = RemoteRecording(socket_path=app_socket)
     app = build_app(cfg, cli_options, recording=recording)
     app.probe.test = RemoteTest(app_socket)  # recorded by the app: this process needs no mic
+    app.probe.calendar = RemoteCalendar(app_socket)  # the app reads the calendar: it asks for it
     sock = socket.socket(fileno=listen_fd) if listen_fd is not None else None
     server = make_server(app, port, sock=sock)
 

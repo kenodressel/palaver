@@ -4665,6 +4665,48 @@ async function finishSetup(how, button = null) {
 }
 
 const markOf = { ok: "✓", warn: "!", fail: "✕" };
+// The calendar's row: its button asks macOS (or, once refused, opens System
+// Settings at Calendars). Until it is connected the page keeps looking, so a
+// connection made from the menu bar or System Settings shows here too.
+function calendarRow(p) {
+  const cal = p.permissions.calendar;
+  const t = permissionText(cal);
+  const fix = cal?.state === "denied" ? (cal.fix || p.summary.find((c) => c.name === "Calendar")?.fix || "") : "";
+  const row = checkRow("Calendar", t.status, t.text, fix);
+  if (cal?.state !== "granted") {
+    row.append(h("button", { type: "button", class: "btn small setup-connect", onclick: (e) => connectCalendar(e.currentTarget) },
+      cal?.state === "denied" ? "Open System Settings" : "Connect Calendar"));
+  }
+  return row;
+}
+
+async function connectCalendar(button) {
+  let answer;
+  try {
+    answer = await working(button, api("/api/setup/calendar", { action: "connect" }));
+  } catch (err) {
+    errorToast(`Calendar not connected: ${err.message}`, { action: { label: "Try again", run: () => connectCalendar() } });
+    return;
+  }
+  if (answer.opened_settings) toast("System Settings is open at Calendars: allow Palaver there, and this page follows.");
+  watchSetup();
+}
+
+// The calendar connected while the page looked: the step again with what the
+// calendar brings (organization, names for the glossary), keeping what was typed.
+async function calendarConnected() {
+  const before = setup.page.profile || {};
+  const typed = { "setup-name": [document.getElementById("setup-name")?.value, before.name],
+    "setup-org": [document.getElementById("setup-org")?.value, before.organization] };
+  await loadSetup();
+  setup.seed = null;  // ticked again from the calendar's names
+  rerenderSetup();
+  for (const [id, [value, was]] of Object.entries(typed)) {
+    const field = document.getElementById(id);
+    if (field && value != null && value !== (was || "")) field.value = value;
+  }
+}
+
 function checkRow(name, status, detail, fix) {
   return h("li", { class: `setup-check ${status}` },
     h("span", { class: "setup-mark", "aria-hidden": "true" }, markOf[status] || "·"),
@@ -4768,6 +4810,7 @@ const SETUP_VIEWS = {
           statTile("Free disk", `${Math.round(hw.free_disk_gb)} GB`)),
         h("h2", {}, "Permissions"),
         h("ul", { class: "setup-checks" }, PERMISSIONS.map(([key, name]) => {
+          if (key === "calendar") return calendarRow(p);
           const t = permissionText(p.permissions[key]);
           return checkRow(name, t.status, t.text, p.permissions[key]?.fix
             || p.summary.find((c) => c.name === name)?.fix || "");
@@ -4888,7 +4931,6 @@ function youStep(p, next) {
   const org = h("input", { class: "lm-input", id: "setup-org", value: prof.organization || "", autocomplete: "organization" });
   const from = { app: "As you set it in Palaver.", config: "From config.toml.", macOS: "From your macOS account." }[prof.name_from] || "";
   const cal = p.permissions.calendar;
-  const t = permissionText(cal);
   return {
     lede: "Your name is how you show up in transcripts; colleagues of your organization are recognized by it.",
     body: [
@@ -4899,7 +4941,7 @@ function youStep(p, next) {
         h("label", { class: "lm-field", for: "setup-org" }, h("span", { class: "lm-label" }, "Your organization"), org),
         h("p", { class: "meta" }, prof.organization ? "From your own address in the calendar." : "From your email domain, once the calendar is connected.")),
       h("h2", {}, "Calendar"),
-      h("ul", { class: "setup-checks" }, checkRow("Calendar", t.status, t.text, cal?.fix || p.summary.find((c) => c.name === "Calendar")?.fix || "")),
+      h("ul", { class: "setup-checks" }, calendarRow(p)),
       h("p", { class: "meta" }, "Palaver reads each meeting's title and invitees from the macOS calendar, on this Mac, to name meetings and the people in them. It never changes anything in your calendar."),
       h("h2", {}, "Names to spell right"),
       p.glossary.length
@@ -5032,9 +5074,22 @@ function watchSetup() {
   if (state.view !== "setup" || !setup.page) return;
   const downloading = setup.step === "downloads" && setup.page.downloads.status.running;
   const testing = setup.step === "test" && ["recording", "checking"].includes(setup.page.test.state);
-  if (!downloading && !testing) return;
+  const calendar = ["mac", "you"].includes(setup.step) && setup.page.permissions?.calendar?.state !== "granted";
+  if (!downloading && !testing && !calendar) return;
   setup.timer = setTimeout(async () => {
     if (state.view !== "setup") return;
+    if (!downloading && !testing) {
+      try {
+        const now = await api("/api/setup/calendar");
+        if (now.state !== setup.page.permissions.calendar?.state) {
+          await calendarConnected();
+          watchSetup();
+          return;
+        }
+      } catch { /* the next round looks again */ }
+      watchSetup();
+      return;
+    }
     try {
       if (downloading) setup.page.downloads.status = await api("/api/setup/downloads");
       else {
@@ -5052,7 +5107,7 @@ function watchSetup() {
     else if (live) live.replaceWith(testStep(setup.page, null).body[0]);
     if (downloading && !setup.page.downloads.status.running) rerenderSetup();
     watchSetup();
-  }, testing ? 500 : 1000);
+  }, testing ? 500 : downloading ? 1000 : 1500);
 }
 
 function stepper(at) {

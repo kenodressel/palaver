@@ -188,6 +188,8 @@ def _handler(app: App, port: int) -> type[BaseHTTPRequestHandler]:
                     return self._json(api.setup_downloads(app))
                 if url.path == "/api/setup/test":
                     return self._json(api.setup_test(app, {}))
+                if url.path == "/api/setup/calendar":
+                    return self._json(api.setup_calendar(app, {}))
                 if url.path == "/api/recording/question":
                     return self._json(api.recording_question(app.recording))
                 if url.path == "/api/recording/coach":
@@ -565,7 +567,8 @@ def _handler(app: App, port: int) -> type[BaseHTTPRequestHandler]:
             routes = {"/api/setup/apply": api.apply_setup, "/api/setup/profile": api.setup_profile,
                       "/api/setup/glossary": api.seed_glossary, "/api/setup/autostart": api.setup_autostart,
                       "/api/setup/finish": api.finish_setup, "/api/setup/downloads": api.start_downloads,
-                      "/api/setup/test": api.setup_test}
+                      "/api/setup/test": api.setup_test,
+                      "/api/setup/calendar": api.setup_calendar}
             if self.path not in routes:
                 return self._error(HTTPStatus.NOT_FOUND, "not found")
             return self._json(routes[self.path](app, body))

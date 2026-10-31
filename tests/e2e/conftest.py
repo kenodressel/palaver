@@ -253,6 +253,15 @@ def _serve(root: Path):
     return srv, served
 
 
+@pytest.fixture(autouse=True)
+def no_installed_palaver(monkeypatch):
+    """The window as from a checkout: update.json of a Palaver installed on
+    this Mac (~/Library/Application Support/palaver) is not the tests'."""
+    from palaver import updater
+
+    monkeypatch.setattr(updater, "read_status", lambda home=None: None)
+
+
 @pytest.fixture
 def app_server(tmp_path):
     """The app over fresh recordings, for a test that changes them."""

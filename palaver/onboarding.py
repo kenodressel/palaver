@@ -567,7 +567,7 @@ _FIXES = {
     "system_audio": {"unverified": "checked on the first recording, or run the test recording",
                      "denied": _PRIVACY + "Screen & System Audio Recording → under System Audio Recording Only, "
                                           "allow Palaver"},
-    "calendar": {"not_asked": "Connect Calendar… in Palaver's menu bar menu",
+    "calendar": {"not_asked": "Connect Calendar here, or in Palaver's menu bar menu",
                  "denied": _PRIVACY + "Calendars → allow Palaver (full access)"},
     "notifications": {"unknown": "System Settings → Notifications → Palaver: allow notifications",
                       "denied": "System Settings → Notifications → Palaver: allow notifications"},
@@ -1101,6 +1101,7 @@ class Probe:
 
         self.downloads = Downloads(repo_of=self.repo_of, marker=install_layout.downloads_marker())
         self.test = TestRecording()
+        self.calendar = Calendar()
 
     def repo_of(self, m: Model) -> str:
         """The model's repo, as config.toml may override it."""
@@ -1134,7 +1135,7 @@ class Probe:
     def permissions(self, output_dir: Path) -> dict[str, dict]:
         from .doctor import check_system_audio
 
-        out = {"microphone": _microphone(), "calendar": _calendar()}
+        out = {"microphone": _microphone(), "calendar": self.calendar.status()}
         system = check_system_audio(output_dir)
         if system.status == "ok":
             out["system_audio"] = {"state": "granted", "detail": system.detail}
@@ -1203,7 +1204,7 @@ def _microphone() -> dict:
         status, {"state": "denied", "detail": "not allowed"})
 
 
-def _calendar() -> dict:
+def calendar_permission() -> dict:
     try:
         import EventKit
 
@@ -1218,6 +1219,38 @@ def _calendar() -> dict:
         return {"state": "denied", "detail": "write-only access: Palaver can't read events"}
     return {"state": "denied", "detail": "not allowed"}
 
+
+
+CALENDAR_SETTINGS = "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars"
+
+
+def _ask_calendar() -> None:
+    from .calendar_eventkit import request_access
+
+    request_access(lambda granted: None)  # the page sees the answer on its next look
+
+
+class Calendar:
+    """The calendar permission for the setup assistant's button: asked for
+    by the app (``ask``, macOS shows its dialog once); once refused, macOS
+    asks no more, so the button opens System Settings at Calendars."""
+
+    def __init__(self, ask: Callable[[], None] | None = None, open_settings: Callable[[], None] | None = None):
+        self._ask = ask or _ask_calendar
+        self._open_settings = open_settings or (lambda: subprocess.run(["open", CALENDAR_SETTINGS], check=False))
+
+    def status(self) -> dict:
+        return calendar_permission()
+
+    def connect(self) -> dict:
+        now = self.status()
+        if now["state"] == "not_asked":
+            self._ask()
+            return {**now, "asked": True}
+        if now["state"] == "denied":
+            self._open_settings()
+            return {**now, "opened_settings": True}
+        return now
 
 # --- the helper process: `python -m palaver.onboarding download|transcribe` ---------------------------
 

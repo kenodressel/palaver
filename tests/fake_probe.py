@@ -37,6 +37,28 @@ class FakeRecorder:
         return self.result
 
 
+class FakeCalendar(ob.Calendar):
+    """The fake Mac's calendar permission: asking for it is a click on Allow."""
+
+    def __init__(self, permissions: dict):
+        self._permissions = permissions
+        self.asked = self.opened_settings = 0
+        super().__init__(ask=self._allow, open_settings=self._open)
+
+    def status(self) -> dict:
+        return dict(self._permissions["calendar"])
+
+    def grant(self) -> None:  # as from the menu bar, or System Settings
+        self._permissions["calendar"] = {"state": "granted", "detail": "connected (read only)"}
+
+    def _allow(self) -> None:
+        self.asked += 1
+        self.grant()
+
+    def _open(self) -> None:
+        self.opened_settings += 1
+
+
 class FakeProbe:
     def __init__(self, hardware: ob.Hardware | None = None, installed: ob.Installed | None = None,
                  downloaded: frozenset[str] = frozenset({"pyannote"}), permissions: dict | None = None,
@@ -59,6 +81,7 @@ class FakeProbe:
         self.recorder = FakeRecorder()
         self.downloads = ob.Downloads(fetch=self._fetch, progress=lambda repo: 0, done=lambda m: True)
         self.test = ob.TestRecording(capture=self.recorder.capture, analyze=self.recorder.analyze)
+        self.calendar = FakeCalendar(self._permissions)
         self.hardware_calls = 0
         self.hf_token = True
         self.cfg = None

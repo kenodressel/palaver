@@ -1468,6 +1468,7 @@ button.variant.drop:hover .x, button.variant.drop:focus-visible .x { color: var(
 .setup-check.warn .setup-mark { background: color-mix(in srgb, var(--v2) 18%, transparent); color: color-mix(in srgb, var(--v2) 75%, var(--ink)); }
 .setup-check.fail .setup-mark { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
 .setup-check-text { min-width: 0; overflow-wrap: anywhere; }
+.setup-connect { margin-left: auto; flex: none; align-self: center; }
 .setup-check-name { font-weight: 650; }
 .setup-check-detail { color: var(--ink-2); }
 .setup-fix { display: block; margin-top: 2px; color: var(--ink-3); font-size: 12.5px; }
