@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { updateView } from "../../palaver/webapp/static/logic.js";
+import { updateIndicator, updateView } from "../../palaver/webapp/static/logic.js";
 
 const available = { version: "0.2.0", notes: "Faster notes.", download_bytes: 5 * 2 ** 20 };
 
@@ -31,4 +31,20 @@ test("a checkout has no updates and no button", () => {
 test("a check that failed is said quietly", () => {
   assert.deepEqual(updateView({ state: "idle", current: "0.1.0", check_error: "offline" }),
     { text: "Palaver 0.1.0. Could not look for updates: offline", action: "check" });
+});
+
+test("the top bar shows an update while there is one to install or one installing", () => {
+  assert.deepEqual(updateIndicator({ state: "available", current: "0.1.0", available }),
+    { text: "Update 0.2.0", title: "Palaver 0.2.0 is available (5 MB). You have 0.1.0." });
+  assert.equal(updateIndicator({ state: "downloading", available, done_bytes: 2.5 * 2 ** 20 }).text, "Updating · 50 %");
+  assert.equal(updateIndicator({ state: "ready", available, waiting_for: "recording" }).text, "Update waits");
+  assert.equal(updateIndicator({ state: "installing", available }).text, "Updating…");
+  assert.equal(updateIndicator({ state: "failed", available, error: "Download failed: offline." }).text, "Update failed");
+});
+
+test("the top bar shows nothing up to date, while checking, from a checkout or before a check", () => {
+  for (const u of [{ state: "up_to_date", current: "0.1.0" }, { state: "checking", current: "0.1.0" },
+    { state: "idle", current: "0.1.0" }, { state: "unsupported" }, { state: "failed", error: "x" }, null]) {
+    assert.equal(updateIndicator(u), null);
+  }
 });

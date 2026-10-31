@@ -1,9 +1,10 @@
 """Updates from inside the app (#60).
 
 The menu bar app checks the latest release's manifest.json at start and
-every 6 hours (unless turned off in Settings), and says so in the menu and
-in Settings when there is a newer one. Nothing downloads until the user
-clicks. Then only what changed is downloaded and checked against the
+every 6 hours (unless turned off in Settings), and says so in the menu, in
+the window's top bar and in Settings when there is a newer one; a
+notification tells about each new release once. Nothing downloads until
+the user clicks. Then only what changed is downloaded and checked against the
 manifest's sha256: the app always, the runtime when its id changed, a
 model the user has when its version changed. The new app is swapped in by
 a small script after Palaver quits, only when it is idle: never while it
@@ -79,6 +80,7 @@ class Updater:
         self.wanted = False  # the user asked for it: install at the next idle moment
         self.waiting_for: str | None = None
         self.failed_version: str | None = None  # the release whose download or swap failed
+        self.announced: str | None = (previous or {}).get("announced")  # the release a notification told about
         if self.state != UNSUPPORTED and previous and previous.get("state") == FAILED and previous.get("from_swap"):
             self.state, self.error = FAILED, str(previous.get("error") or "The update failed.")
             self.failed_version = (previous.get("available") or {}).get("version")
@@ -119,6 +121,16 @@ class Updater:
             else:
                 self.state, self.plan, self.error = AVAILABLE, plan, None
         return self._changed()
+
+    def announce(self) -> str | None:
+        """The release a notification should tell about: an available one
+        not told about yet, once (update.json keeps it across restarts)."""
+        with self._lock:
+            if self.state != AVAILABLE or self.plan is None or self.plan.version == self.announced:
+                return None
+            self.announced = self.plan.version
+        self._changed()
+        return self.announced
 
     # --- installing -------------------------------------------------------------------------
 
@@ -208,6 +220,7 @@ class Updater:
                 "check_error": self.check_error,
                 "checked_at": self.checked_at,
                 "automatic": self._enabled(),
+                "announced": self.announced,
             }
 
     def _changed(self) -> dict:
@@ -259,6 +272,12 @@ def check_result(status: dict) -> tuple[str, str] | None:
     if state in (AVAILABLE, FAILED) and version:
         return f"Palaver {version} is available", "Choose “Update available” in Palaver's menu to install it."
     return "Palaver is up to date", f"Palaver {status.get('current')} is the latest version."
+
+
+def announcement(version: str) -> tuple[str, str]:
+    """The notification an automatic check sends for a new release; a click
+    opens the window's Settings at Updates."""
+    return f"Palaver {version} is available", "Click to see what's new and install it."
 
 
 # --- on disk ---------------------------------------------------------------------------------

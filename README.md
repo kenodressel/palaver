@@ -42,8 +42,9 @@ changed:
 **Updates.** Palaver looks for a new release at start and every 6 hours (one
 anonymous request for the release's `manifest.json`; turn it off in Settings →
 Updates). The menu bar menu has "Check for Updates… (Palaver version)" to
-look now; when there is one, it says "Update available (version)" and
-Settings shows what's new. A click downloads only the changed
+look now. A new release is announced once with a notification; until it is
+installed the menu says "Update available (version)", the window's top bar
+shows "Update (version)", and Settings shows what's new. A click downloads only the changed
 layers, checks each against the manifest's SHA-256, and installs at the next
 moment nothing records, transcribes or writes notes; then Palaver restarts.
 A failed download or install keeps the version you have and says why. Running

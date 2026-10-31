@@ -30,7 +30,7 @@ import { reportMeeting, reportDraft, reportDoneText, actionCatalog } from "./log
 import { inferredText, importedLine, importedText, GLOBAL_COMMANDS } from "./logic.js";
 import { openExport, pickImport, wireDrop, importFile, askVoices, decideVoices, dialog } from "./exchange.js";
 // Updates and uninstalling (#60).
-import { updateView } from "./logic.js";
+import { updateIndicator, updateView } from "./logic.js";
 // One person, one look; the header's people and projects; About this recording (UI cleanup 2026-10-30).
 import { personColor, laneColors, attendeeTokens, meetingPeople, ownerTokens, nameMarks, projectView, aboutLines,
   sameTitle } from "./logic.js";
@@ -3922,6 +3922,7 @@ async function openSettings(how = "push") {
       api("/api/setup/recommendations").catch(() => null),
       api("/api/update").catch(() => null), api("/api/setup/calendar").catch(() => null)]);
     state.recommended = rec?.recommendations || null;
+    showUpdateIndicator();
     state.error = state.lmError = state.trError = null;
   } catch (err) {
     state.error = `Settings could not be loaded: ${err.message}`;
@@ -4098,10 +4099,39 @@ function pollUpdate() {
     } catch {
       return;
     }
+    showUpdateIndicator();
     document.getElementById("update-section")?.replaceWith(renderUpdateSection());
     if (["checking", "downloading", "ready", "installing"].includes(state.update?.state)) pollUpdate();
   }, 1000);
 }
+
+// "Update 0.3.7" in the top bar, on every page; a click shows it in Settings.
+// The menu bar app checks (at start, every 6 hours); the window reads what it found.
+async function refreshUpdate() {
+  try {
+    state.update = await api("/api/update");
+  } catch {
+    return;
+  }
+  showUpdateIndicator();
+}
+
+function showUpdateIndicator() {
+  const shown = updateIndicator(state.update);
+  const button = $("#update-status");
+  button.hidden = !shown;
+  if (!shown) return;
+  $("#update-status-text").textContent = shown.text;
+  button.title = shown.title;
+  button.setAttribute("aria-label", shown.title);
+}
+
+async function openUpdate() {
+  await openSettings();
+  document.getElementById("update-section")?.scrollIntoView({ block: "start" });
+}
+
+$("#update-status").addEventListener("click", () => openUpdate());
 
 function openUninstall() {
   const models = h("input", { type: "checkbox" });
@@ -5946,7 +5976,10 @@ async function route(how = "none", entry = null) {
   else if (place.view === "people") await openPeople(place.focus, how);
   else if (place.view === "projects") await openProjects(place.focus, how);
   else if (place.view === "glossary") await openGlossary(how);
-  else if (place.view === "settings") await openSettings(how);
+  else if (place.view === "settings") {
+    await openSettings(how);
+    if (place.section) document.getElementById(`${place.section}-section`)?.scrollIntoView({ block: "start" });
+  }
   else if (place.view === "review") await openReview(entry?.reviewAt ?? 0, how);
   else if (place.view === "coach") await openCoach(how);
   else if (place.view === "prep") await openPrep(place.key, how);
@@ -5995,6 +6028,8 @@ async function refreshLive() {
 setInterval(() => { if (state.view !== "review") loadReview(); }, 30000);
 setInterval(refreshMcp, 10000);
 refreshMcp();
+setInterval(refreshUpdate, 60000);
+refreshUpdate();
 
 // Said once per browser: the search index is being built for the first time.
 const INDEXING_KEY = "palaver.search.indexingSaid";

@@ -129,7 +129,7 @@ button, input { font: inherit; color: inherit; }
 .palette-btn-label { flex: 1; min-width: 0; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .palette-btn kbd, .palette kbd { flex: none; padding: 1px 6px; border-radius: 6px; background: var(--hover); color: var(--ink-2);
   font: 600 11px var(--sans); }
-.palette-btn + .mcp-status, .palette-btn ~ .gear { margin-left: 0; }
+.palette-btn ~ .update-status, .palette-btn ~ .mcp-status, .palette-btn ~ .gear { margin-left: 0; }
 @media (max-width: 1100px) {  /* the tabs first: the field shrinks to its icon and key */
   .palette-btn { flex: none; }
   .palette-btn-label { display: none; }
@@ -1048,7 +1048,7 @@ button.mn-time:hover, button.mn-time:focus-visible { background: var(--selected)
 
 /* Claude access (MCP): "MCP · 2" left of the gear while clients are connected;
    the access log in Settings; a quiet "Read by …" line on a meeting. */
-.mcp-status {
+.mcp-status, .update-status {
   flex: none;
   display: inline-flex;
   align-items: center;
@@ -1065,9 +1065,11 @@ button.mn-time:hover, button.mn-time:focus-visible { background: var(--selected)
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
-.mcp-status:hover { background: var(--hover); color: var(--ink); }
-.mcp-status[hidden] { display: none; }
-.mcp-status:not([hidden]) + .gear { margin-left: 0; }
+.mcp-status:hover, .update-status:hover { background: var(--hover); color: var(--ink); }
+.mcp-status[hidden], .update-status[hidden] { display: none; }
+/* "Update 0.3.7" left of it while there is one: in violet, as it asks for a click. */
+.update-status { color: var(--you-ink); }
+.update-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--you); }
 .mcp-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--v1); }
 /* Memory in Settings (#49): each worker against its budget. */
 .memory-total { margin: 0; font-weight: 650; font-variant-numeric: tabular-nums; }

@@ -97,6 +97,36 @@ def test_the_menu_says_what_a_check_finds():
     assert updater.check_result(status)[0] == "Palaver 0.2.0 is available"
 
 
+def test_a_new_release_is_announced_once():
+    u, calls = make(latest=[manifest()])
+    assert u.announce() is None  # nothing known yet
+    u.check()
+    assert u.announce() == "0.2.0"
+    assert calls["saved"][-1]["announced"] == "0.2.0"  # kept in update.json: not again after a restart
+    u.check()
+    assert u.announce() is None
+    assert updater.announcement("0.2.0") == ("Palaver 0.2.0 is available",
+                                              "Click to see what's new and install it.")
+
+
+def test_an_announced_release_stays_announced_after_a_restart_and_a_newer_one_is_new():
+    latest = [manifest()]
+    u, _ = make(latest=latest, previous={"state": "available", "announced": "0.2.0"})
+    u.check()
+    assert u.announce() is None
+    latest[0] = manifest(version="0.3.0")
+    u.check()
+    assert u.announce() == "0.3.0"
+
+
+def test_nothing_is_announced_when_up_to_date_or_from_a_checkout():
+    u, _ = make(latest=[manifest(version="0.1.0")])
+    u.check()
+    assert u.announce() is None
+    u, _ = make(installed=None)
+    assert u.announce() is None
+
+
 def test_it_checks_at_start_and_then_every_six_hours():
     clock = Clock()
     u, calls = make(clock=clock)

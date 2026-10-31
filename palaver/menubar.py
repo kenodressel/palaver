@@ -602,6 +602,7 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
             update = update_title(update_status)
             self.update_item.title = update or UPDATE_TITLE
             self.update_item._menuitem.setHidden_(update is None)  # from a checkout: nothing to update
+            said = None
             if self._check_asked:
                 from .updater import check_result
 
@@ -609,6 +610,11 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
                 if said is not None:
                     self._check_asked = False
                     notify.notify(*said)
+            announced = self.updates.updater.announce()  # a new release, once; a check asked for said it already
+            if announced and said is None:
+                from .updater import announcement
+
+                notify.notify(*announcement(announced), meeting="settings/update")
             lines = []
             if status["state"] == "recording" and status.get("folder"):
                 if self._tracked_folder != status["folder"]:

@@ -139,6 +139,30 @@ def test_settings_say_how_palaver_updates_and_uninstalling_asks_first(page, app_
     expect(box).to_have_count(0)
 
 
+def test_a_new_release_shows_in_the_top_bar_and_opens_settings(page, app_server, monkeypatch):
+    """The top bar's "Update 0.9.0" on every page while there is one; a click
+    shows it in Settings. Up to date, the top bar says nothing."""
+    from palaver import updater
+
+    status = {"state": "available", "current": "0.3.6", "announced": "0.9.0",
+              "available": {"version": "0.9.0", "notes": "Faster notes.", "download_bytes": 3 << 20,
+                            "runtime": False, "models": []}}
+    monkeypatch.setattr(updater, "read_status", lambda home=None: status)
+    goto(page, app_server, "#/people")
+    pill = page.locator("#update-status")
+    expect(pill).to_have_text("Update 0.9.0")
+    pill.click()
+    expect(page).to_have_url(re.compile("#/settings$"))
+    section = page.locator("#update-section")
+    expect(section.get_by_role("status")).to_contain_text("Palaver 0.9.0 is available (3 MB). You have 0.3.6.")
+    expect(section.get_by_role("button", name="Download and install")).to_be_visible()
+
+    status = {"state": "up_to_date", "current": "0.9.0", "available": None}
+    goto(page, app_server, "#/settings/update")  # the notification's click
+    expect(page.locator("#update-section")).to_be_in_viewport()
+    expect(pill).to_be_hidden()
+
+
 def test_settings_connect_the_calendar_and_follow_a_yes_given_elsewhere(page, app_server):
     """The calendar moved from the menu bar's menu to Settings."""
     goto(page, app_server, "#/settings")

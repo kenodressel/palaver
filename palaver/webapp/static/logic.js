@@ -448,6 +448,7 @@ export function placeOf(hash) {
   if (head === "upcoming" && tail) return { view: "prep", key: tail };
   if (head === "setup") return { view: "setup", step: tail };
   if (head === "report") return { view: "report", meeting: tail };  // #59: the meeting it is about, if said
+  if (head === "settings" && tail) return { view: "settings", section: tail };  // a notification's: settings/update
   if (PLAIN.has(head)) return { view: head };
   return { view: "meetings", id: path ? decodeURIComponent(path) : null };
 }
@@ -1446,6 +1447,23 @@ export function updateView(u) {
     default:
       return { text: "Updates come with an installed Palaver (install.sh); this one runs from a checkout.", action: null };
   }
+}
+
+// The top bar's "Update 0.2.0": while there is one to install or one installing;
+// nothing while up to date (Settings says that).
+export function updateIndicator(u) {
+  const version = u?.available?.version;
+  if (!version) return null;
+  const { text: title } = updateView(u);
+  const total = u.available.download_bytes || 0;
+  const text = {
+    available: `Update ${version}`,
+    downloading: total ? `Updating · ${Math.min(99, Math.floor((100 * (u.done_bytes || 0)) / total))} %` : "Updating…",
+    ready: u.waiting_for ? "Update waits" : "Updating…",
+    installing: "Updating…",
+    failed: "Update failed",
+  }[u.state];
+  return text ? { text, title } : null;
 }
 
 // --- one person, one look (UI cleanup 2026-10-30) ---------------------------------------

@@ -12,6 +12,8 @@ test("placeOf reads every page the window has", () => {
   assert.deepEqual(placeOf("#"), { view: "today" });
   assert.deepEqual(placeOf("#/"), { view: "today" });
   assert.deepEqual(placeOf("#/today"), { view: "today" });
+  assert.deepEqual(placeOf("#/settings/update"), { view: "settings", section: "update" });  // the update notification
+  assert.equal(hashOf(placeOf("#/settings/update")), "#/settings");
   assert.deepEqual(placeOf("#/meetings"), { view: "meetings", id: null });
   assert.deepEqual(placeOf("#/2026-10-21T16-29-29"), { view: "meetings", id: "2026-10-21T16-29-29" });
   assert.deepEqual(placeOf("#/people"), { view: "people", focus: null });
