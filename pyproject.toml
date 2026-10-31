@@ -32,7 +32,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "pytest-mock>=3.12", "playwright>=1.48"]
+dev = [
+    "pytest>=7.0",
+ "pytest-mock>=3.12",
+ "playwright>=1.48",
+ "pytest-xdist>=3.8.0",
+]
 
 [project.scripts]
 palaver = "palaver.__main__:main"

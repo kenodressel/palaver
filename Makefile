@@ -3,7 +3,7 @@ AEC_DIR = palaver/_vendored/webrtc_aec
 AEC_LIB = $(AEC_DIR)/libraven_aec.dylib
 DIST = dist
 
-.PHONY: aec test wheel requirements icons runtime models app manifest release smoke-install publish clean help
+.PHONY: aec test test-changed wheel requirements icons runtime models app manifest release smoke-install publish clean help
 
 # CMakeLists.txt writes the dylib straight into $(AEC_DIR).
 $(AEC_LIB):
@@ -13,8 +13,17 @@ $(AEC_LIB):
 
 aec: $(AEC_LIB) ## Build the vendored WebRTC echo-cancellation library
 
-test: aec ## Run the test suite
-	uv run --extra dev pytest -q
+# In parallel (pytest-xdist): a test file's tests stay on one worker, so its
+# fixtures (a window's server, the browser) are made once. TEST_WORKERS=0: in order.
+TEST_WORKERS ?= auto
+PYTEST = uv run --extra dev pytest -q $(if $(filter 0,$(TEST_WORKERS)),,-n $(TEST_WORKERS) --dist loadscope)
+
+test: aec ## Run the test suite (in parallel)
+	$(PYTEST)
+
+test-changed: aec ## Run the tests for what changed since master (tools/changed_tests.py)
+	@TESTS="$$(uv run python tools/changed_tests.py)"; \
+		if [ -z "$$TESTS" ]; then echo "nothing changed that a test covers"; else echo "$$TESTS" | tr '\n' ' '; echo; $(PYTEST) $$TESTS; fi
 
 wheel: aec ## Build the wheel (includes the AEC library)
 	@mkdir -p $(DIST)
