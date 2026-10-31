@@ -92,26 +92,6 @@ button, input { font: inherit; color: inherit; }
 .brand-icon { flex: none; width: 26px; height: 26px; }
 .brand-name { font: 800 21px/1 var(--display); letter-spacing: -0.02em; }
 
-/* ‹ Back, at the top bar's left: enabled when there is somewhere to go back to. */
-.back {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px 11px 5px 8px;
-  border: 0;
-  border-radius: 999px;
-  background: none;
-  color: var(--ink-2);
-  font-size: 13.5px;
-  font-weight: 650;
-  cursor: pointer;
-  transition: background 0.2s, color 0.2s, opacity 0.2s;
-}
-.back span { font-size: 19px; line-height: 0.8; }
-.back:hover:not([disabled]) { background: var(--hover); color: var(--ink); }
-.back[disabled] { opacity: 0.4; cursor: default; }
-
 .views { display: flex; gap: 4px; min-width: 0; }
 .views button {
   flex: none;
@@ -874,10 +854,10 @@ button.mn-time:hover, button.mn-time:focus-visible { background: var(--selected)
 .new-project { display: flex; gap: 8px; max-width: 420px; margin-top: 18px; }
 .new-project:has(input[name="variants"]) { max-width: 600px; }  /* the glossary's two fields */
 .new-project .name-input { border-color: var(--rule); background: var(--surface); }
-.project .person-head { flex-wrap: wrap; }
-.people-line { display: flex; flex: 0 1 auto; align-items: center; gap: 10px; min-width: 0; overflow: hidden;
-  white-space: nowrap; }
-.people-line .person-token, .item-people .person-token { color: var(--ink-2); }
+.project .person-head .name-input { flex: 0 1 auto; min-width: 0; max-width: 60%; }
+.project-people { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 2px 0 6px 6px; }
+.project-people .person-token { color: var(--ink-2); }
+.item-people .person-token { color: var(--ink-2); }
 .quiet-invitees { display: flex; flex-wrap: wrap; gap: 6px 16px; }
 .spacer { flex: 1; }
 .filter.inline { margin: 0; padding: 2px 26px 2px 8px; background-position: right 9px center; font-size: 12.5px; }
@@ -1299,7 +1279,7 @@ button.variant.drop:hover .x, button.variant.drop:focus-visible .x { color: var(
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; }
   .sidebar { animation-name: fade-in; }
-  .views button, .back { transition: none; }
+  .views button { transition: none; }
 }
 .review .summary { font: 600 18px/1.4 var(--display); margin: 0 0 8px; max-width: 72ch; }
 

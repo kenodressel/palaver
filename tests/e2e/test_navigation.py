@@ -1,4 +1,4 @@
-"""Getting back: ‹ Back, ⌘[ and ⌘] return to the page left, with its tab;
+"""Getting back: a swipe, ⌘[ and ⌘] return to the page left, with its tab;
 links to a project or a meeting and back again; a reload stays where it was."""
 
 import pytest
@@ -17,26 +17,24 @@ def _tab(page, name):
 
 def test_back_and_forward_restore_the_meeting_and_its_tab(page, shared_server):
     open_meeting(page, shared_server, A, tab="Transcript")
-    back = page.locator("#back")
-    expect(back).to_be_disabled()  # the first page
+    assert page.evaluate("window.palaver.command('back')") is False  # the first page: nothing to go back to
     list_item(page, B).click()
     expect(heading(page)).to_have_text("Design review")
     expect(_tab(page, "Summary")).to_have_attribute("aria-selected", "true")
-    expect(back).to_be_enabled()
     unfocus(page)
     cmd(page, "BracketLeft")
     expect(heading(page)).to_have_text("Team standup")
     expect(_tab(page, "Transcript")).to_have_attribute("aria-selected", "true")
     assert hash_of(page) == f"#/{A}"
-    expect(back).to_be_disabled()
+    assert page.evaluate("window.palaver.command('back')") is False
     cmd(page, "BracketRight")
     expect(heading(page)).to_have_text("Design review")
     assert hash_of(page) == f"#/{B}"
     page.locator('.views [data-view="people"]').click()
     expect(heading(page)).to_have_text("People")
-    back.click()
+    page.go_back()  # a two-finger swipe: the web view's own Back
     expect(heading(page)).to_have_text("Design review")
-    back.click()
+    page.go_back()
     expect(_tab(page, "Transcript")).to_have_attribute("aria-selected", "true")
     expect(heading(page)).to_have_text("Team standup")
 
@@ -88,8 +86,7 @@ def test_a_reload_stays_on_the_page_and_tab(page, shared_server):
     page.reload()
     expect(heading(page)).to_have_text("Design review")
     expect(_tab(page, "Transcript")).to_have_attribute("aria-selected", "true")
-    expect(page.locator("#back")).to_be_enabled()  # the history is still there
-    page.locator("#back").click()
+    assert page.evaluate("window.palaver.command('back')")  # the history is still there (a swipe, ⌘[ or the menu)
     expect(heading(page)).to_have_text("Team standup")
 
 
@@ -117,6 +114,6 @@ def test_the_meetings_tab_opens_the_newest_meeting_first(page, shared_server):
     page.locator('.views [data-view="meetings"]').click()
     expect(list_item(page, LIVE)).to_have_attribute("aria-current", "true")
     assert hash_of(page) == f"#/{LIVE}"
-    page.locator("#back").click()
+    assert page.evaluate("window.palaver.command('back')")
     expect(heading(page)).to_have_text("Today")
-    expect(page.locator("#back")).to_be_disabled()
+    assert page.evaluate("window.palaver.command('back')") is False

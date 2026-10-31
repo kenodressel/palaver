@@ -325,6 +325,17 @@ def exit_when_parent_gone(stream, exit: Callable[[int], None] = os._exit) -> thr
     return t
 
 
+def warm_up(app) -> None:
+    """What the window's first visits would otherwise wait for: the glossary's
+    suggestions read every transcript (a second or more the first time)."""
+    from . import api
+
+    try:
+        api.glossary_page(app.output_dir, user_name=app.user_name)
+    except Exception:
+        LOGGER.warning("could not prepare the glossary's suggestions", exc_info=True)
+
+
 def serve(cfg, cli_options: list[str], *, listen_fd: int | None = None, ready_fd: int | None = None,
           app_socket: Path | None = None, port: int = 0) -> int:
     """`palaver webapp-serve`: the window's server, until SIGTERM (or the app is gone)."""
@@ -353,6 +364,7 @@ def serve(cfg, cli_options: list[str], *, listen_fd: int | None = None, ready_fd
         os.write(ready_fd, b"ready\n")
         os.close(ready_fd)
     threading.Thread(target=sweep_leftovers, args=(app,), name="sweep", daemon=True).start()  # after: never delays it
+    threading.Thread(target=warm_up, args=(app,), name="warm-up", daemon=True).start()
     try:
         server.serve_forever()
     finally:

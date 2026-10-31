@@ -2859,6 +2859,8 @@ function autoGrow(e) {
   e.target.style.height = `${e.target.scrollHeight}px`;
 }
 
+const PROJECT_PEOPLE = 8;  // on a project's card, then "+N"
+
 function renderProjects() {
   const d = state.projects;
   const modelBusy = state.asking || state.remoteAsking;
@@ -2866,9 +2868,11 @@ function renderProjects() {
     h("div", { class: "head" },
       h("div", { class: "head-text" }, h("h1", {}, "Projects"),
         h("p", { class: "lede" }, "Meetings are sorted into projects by who was there, the title and what was said. Fix what is wrong: names and descriptions are yours to edit, and a meeting you take out of a project stays out.")),
-      h("button", { class: "btn", disabled: modelBusy || !d, title: "Let the local model sort the meetings that are in no project",
-        onclick: () => askModel("/api/projects/suggest", "The model could not sort the meetings", "Meetings sorted by the model") },
-        modelBusy ? "Sorting…" : "Sort with the model")));
+      h("button", { class: "btn", disabled: modelBusy || !d || !d.unsorted.length,
+        title: d && !d.unsorted.length ? "Every meeting is in a project"
+          : "Palaver's language model reads the meetings that are in no project yet and puts each into one, on this Mac. Undo takes it back.",
+        onclick: () => askModel("/api/projects/suggest", "The meetings were not sorted", "Meetings sorted into projects") },
+        modelBusy ? "Sorting…" : "Sort meetings into projects")));
   if (state.error) page.append(h("p", { class: "error" }, state.error));
   if (!d) {
     $("#main").replaceChildren(page);
@@ -2904,16 +2908,19 @@ function renderProjects() {
     page.append(h("section", { class: "person project", id: `project-${p.id}` },
       h("div", { class: "person-head" },
         h("input", { class: "name-input", value: p.name, spellcheck: "false", "aria-label": `Rename ${p.name}`,
+          size: Math.max(4, p.name.length), oninput: (e) => { e.target.size = Math.max(4, e.target.value.length); },
           onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { e.target.value = p.name; e.target.blur(); } },
           onchange: (e) => e.target.value.trim()
             ? changeProjects(`/api/projects/${p.id}`, { name: e.target.value }, `${p.name} was not renamed`,
               { label: projectEditText(p, { name: e.target.value }), pid: p.id })
             : (e.target.value = p.name) }),
         h("span", { class: "meta" }, p.meetings.length === 1 ? "1 meeting" : `${p.meetings.length} meetings`),
-        p.people.length ? h("span", { class: "meta people-line" },
-          p.people.map((name) => personToken(name, personColor(name), { small: true }))) : null,
         h("span", { class: "spacer" }),
         more = moreButton(() => projectItems(state.projects, p, more), `Actions for ${p.name}`)),
+      p.people.length ? h("p", { class: "meta project-people" },
+        p.people.slice(0, PROJECT_PEOPLE).map((name) => personToken(name, personColor(name), { small: true })),
+        p.people.length > PROJECT_PEOPLE ? h("span", { class: "meta", title: p.people.slice(PROJECT_PEOPLE).join(", ") },
+          `+${p.people.length - PROJECT_PEOPLE}`) : null) : null,
       h("div", { class: "description" },
         h("textarea", { class: "description-input", rows: "1", placeholder: "No description yet", spellcheck: "true",
           "aria-label": `Description of ${p.name}`, oninput: autoGrow,
@@ -5774,8 +5781,8 @@ function keepNav(next) {
   showBack();
 }
 
+// Back is a two-finger swipe, ⌘[ and the Go menu: no button on the page.
 function showBack() {
-  $("#back").disabled = nav.depth <= 0;
   commands.publish();
 }
 
@@ -5876,7 +5883,6 @@ for (const type of ["mousedown", "mouseup"]) {
   });
 }
 
-$("#back").addEventListener("click", goBack);
 
 // Shows the page the hash points at. ``how``: see historyStep; ``entry``: the
 // history entry's state, with the tab and scroll position to restore.

@@ -188,7 +188,7 @@ AUTO_RECORD = (
     ("record_slack", "Record Slack huddles automatically"),
 )
 OPEN_TITLE = "Open Meetings"
-UPDATE_TITLE = "Update available"  # #60: shown only when there is one, with its version
+UPDATE_TITLE = "Check for Updates…"  # #60: with the version; "Update available (0.3.1)" when there is one
 CALENDAR_TITLE = "Connect Calendar…"
 REPORT_TITLE = "Report a Problem…"  # #59: the window's report form
 QUIT_TITLE = "Quit"
@@ -495,6 +495,7 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
             # What it needs from this process goes through the app socket.
             self.test_recording = onboarding.TestRecording()  # the setup assistant's (#55): recorded here
             self.updates = Updates(self.daemon, output_dir=cfg.output_dir, test_recording=self.test_recording)  # #60
+            self._check_asked = False  # "Check for Updates…" clicked: say what the check found
             calls = appctl.app_calls(
                 self.daemon, on_main=on_main, test_recording=self.test_recording,
                 restart_web=lambda: self.web.restart(), refresh=self.refresh,
@@ -611,9 +612,17 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
             self.keep_item._menuitem.setHidden_(not status.get("stop_question"))
             from .updater import menu_title as update_title
 
-            update = update_title(self.updates.updater.status())
+            update_status = self.updates.updater.status()
+            update = update_title(update_status)
             self.update_item.title = update or UPDATE_TITLE
-            self.update_item._menuitem.setHidden_(update is None)
+            self.update_item._menuitem.setHidden_(update is None)  # from a checkout: nothing to update
+            if self._check_asked:
+                from .updater import check_result
+
+                said = check_result(update_status)
+                if said is not None:
+                    self._check_asked = False
+                    notify.notify(*said)
             for key, on in switches.items():
                 self.record_items[key].state = on  # also when switched in the window's Settings
             lines = []
@@ -689,7 +698,13 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
             open_window(self.web.url())
 
         def install_update(self, _sender):
-            self.updates.install()
+            """Install the update there is; with none known, check now (the
+            notification says what the check found)."""
+            if self.updates.updater.status()["state"] in ("available", "failed"):
+                self.updates.install()
+            else:
+                self._check_asked = True
+                self.updates.check()
             self.refresh()
 
         def report_problem(self, _sender):

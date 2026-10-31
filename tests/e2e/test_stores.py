@@ -123,8 +123,8 @@ def test_sort_with_the_model_and_undo(page, app_server):
     app_server.on_model_run = sorted_by_model
     goto(page, app_server, "#/projects")
     expect(page.locator("#main input[aria-label^='Rename ']")).to_have_count(0)
-    page.get_by_role("button", name="Sort with the model").click()
-    expect_toast(page, "Meetings sorted by the model")
+    page.get_by_role("button", name="Sort meetings into projects").click()
+    expect_toast(page, "Meetings sorted into projects")
     assert app_server.model_runs == [["suggest"]]
     expect(page.get_by_label("Rename Pelicans")).to_have_value("Pelicans")
     undo_in_toast(page)

@@ -49,7 +49,7 @@ def test_the_window_opens_on_today(page, shared_server):
     today = page.locator('.views [data-view="today"]')
     expect(today).to_have_attribute("aria-current", "page")
     assert page.locator(".views [data-view]").first.get_attribute("data-view") == "today"
-    expect(page.locator("#back")).to_be_disabled()
+    assert page.evaluate("window.palaver.command('back')") is False
     assert page.evaluate("window.palaver.command('trash')") is False  # no meeting here
 
     live = page.locator("#main .live-now")  # the call being recorded, large

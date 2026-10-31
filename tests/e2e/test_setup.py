@@ -201,7 +201,7 @@ def test_reopen_from_settings_with_the_recommendations(page, app_server):
     step_title(page, "Models")
     page.locator("#main .setup-actions").get_by_role("button", name="Back").click()
     step_title(page, "This Mac")
-    page.locator("#back").click()  # the top bar's Back leaves the assistant
+    assert page.evaluate("window.palaver.command('back')")  # Back (a swipe, ⌘[) leaves the assistant
     expect(heading(page)).to_have_text("Settings")
 
 

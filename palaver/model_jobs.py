@@ -86,6 +86,27 @@ def read(root: Path, kind: str, key: str, *, alive: Callable[[int], bool] = _ali
     return job
 
 
+def log_path(root: Path, kind: str, key: str) -> Path:
+    """What the helper printed, its last run's (kept after the record, for the
+    window's error and a problem report)."""
+    return _path(root, kind, key).with_suffix(".log")
+
+
+def last_error(root: Path, kind: str, key: str) -> str | None:
+    """The line that says why the helper's last run failed: its last
+    "error: …" line, else the exception a traceback ended with."""
+    try:
+        lines = [x.strip() for x in log_path(root, kind, key).read_text(errors="replace").splitlines() if x.strip()]
+    except (OSError, ValueError):
+        return None
+    said = [x for x in lines if x.lower().startswith("error:")]
+    if said:
+        return said[-1][len("error:"):].strip()[:300] or None
+    if any(x.startswith("Traceback") for x in lines):
+        return lines[-1][:300]
+    return None
+
+
 def clear(root: Path, kind: str, key: str) -> None:
     _path(root, kind, key).unlink(missing_ok=True)
 
@@ -111,8 +132,11 @@ def launch(root: Path, kind: str, key: str, argv: list[str], *, popen=subprocess
         job = read(root, kind, key)
         if job and job.get("state") == "running" and not job.get("stale"):
             return int(job["pid"])
-        _path(root, kind, key)  # a bad key fails before anything starts
-        proc = popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, start_new_session=True)
+        log = log_path(root, kind, key)  # a bad key fails before anything starts
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("wb") as out:
+            proc = popen(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+                         start_new_session=True)
         write(root, {"kind": kind, "key": key, "pid": proc.pid, "state": "running", "started": time.time()})
 
     def reap():

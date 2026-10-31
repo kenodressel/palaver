@@ -110,3 +110,23 @@ def test_helper_argv_only_runs_notes_and_projects(tmp_path: Path):
                        ("projects", ["--no-wait", "describe", "../x"])]:
         with pytest.raises(ValueError):
             model_jobs.helper_argv(kind, args, [], output_dir=tmp_path)
+
+
+def test_what_a_failed_helper_printed_is_kept_and_says_why(tmp_path: Path):
+    """The window's error says why the model failed, not "see the log"."""
+    root = tmp_path / ".jobs"
+    script = "import sys; print('Asking Gemma 4 12B on this Mac…'); print('error: the model is not downloaded'); sys.exit(1)"
+    model_jobs.launch(root, "projects", "projects", [sys.executable, "-c", script])
+    job = model_jobs.wait(root, "projects", "projects")
+    assert job["returncode"] == 1
+    model_jobs.clear(root, "projects", "projects")
+    assert "Asking Gemma" in model_jobs.log_path(root, "projects", "projects").read_text()
+    assert model_jobs.last_error(root, "projects", "projects") == "the model is not downloaded"
+
+
+def test_a_helper_that_crashed_is_said_by_its_exception(tmp_path: Path):
+    root = tmp_path / ".jobs"
+    model_jobs.launch(root, "projects", "projects", [sys.executable, "-c", "raise MemoryError('out of memory')"])
+    model_jobs.wait(root, "projects", "projects")
+    assert model_jobs.last_error(root, "projects", "projects") == "MemoryError: out of memory"
+    assert model_jobs.last_error(root, "notes", "nothing-ran") is None

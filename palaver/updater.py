@@ -224,9 +224,14 @@ def _why(exc: Exception) -> str:
 
 
 def menu_title(status: dict) -> str | None:
-    """The menu's update line; None: nothing to say there."""
+    """The menu's update line, always there in an installed Palaver (with its
+    version, so the menu says which one runs); None from a checkout."""
     state, available = status.get("state"), status.get("available") or {}
     version = available.get("version")
+    if state == UNSUPPORTED:
+        return None
+    if state == CHECKING:
+        return "Checking for updates…"
     if state == AVAILABLE:
         return f"Update available ({version})"
     if state == DOWNLOADING:
@@ -240,7 +245,20 @@ def menu_title(status: dict) -> str | None:
         return f"Installing update {version}…"
     if state == FAILED and version:
         return f"Update {version} failed — try again"
-    return None
+    return f"Check for Updates… (Palaver {status.get('current')})" if status.get("current") else "Check for Updates…"
+
+
+def check_result(status: dict) -> tuple[str, str] | None:
+    """What a check the user asked for found, for a notification; None
+    while it still runs."""
+    state, version = status.get("state"), (status.get("available") or {}).get("version")
+    if state == CHECKING:
+        return None
+    if status.get("check_error"):
+        return "Could not check for updates", str(status["check_error"])
+    if state in (AVAILABLE, FAILED) and version:
+        return f"Palaver {version} is available", "Choose “Update available” in Palaver's menu to install it."
+    return "Palaver is up to date", f"Palaver {status.get('current')} is the latest version."
 
 
 # --- on disk ---------------------------------------------------------------------------------

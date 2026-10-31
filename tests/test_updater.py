@@ -82,7 +82,19 @@ def test_a_newer_release_is_available_without_downloading_anything():
 def test_the_same_release_is_up_to_date():
     u, _ = make(latest=[manifest(version="0.1.0")])
     assert u.check()["state"] == "up_to_date"
-    assert updater.menu_title(u.status()) is None
+    assert updater.menu_title(u.status()) == "Check for Updates… (Palaver 0.1.0)"
+    assert updater.check_result(u.status()) == ("Palaver is up to date", "Palaver 0.1.0 is the latest version.")
+
+
+def test_the_menu_says_what_a_check_finds():
+    assert updater.menu_title({"state": "unsupported"}) is None  # a checkout: nothing to update
+    assert updater.menu_title({"state": "checking", "current": "0.1.0"}) == "Checking for updates…"
+    assert updater.check_result({"state": "checking"}) is None
+    assert updater.check_result({"state": "idle", "check_error": "offline", "current": "0.1.0"}) == (
+        "Could not check for updates", "offline")
+    u, _ = make(latest=[manifest()])
+    status = u.check()
+    assert updater.check_result(status)[0] == "Palaver 0.2.0 is available"
 
 
 def test_it_checks_at_start_and_then_every_six_hours():

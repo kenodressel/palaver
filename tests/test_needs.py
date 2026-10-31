@@ -160,6 +160,13 @@ def test_the_cut_is_looked_up_in_the_background_and_again_later(tmp_path: Path, 
     assert len(calls) == 2
 
 
+def _soon(condition, timeout=5.0) -> bool:
+    end = time.monotonic() + timeout
+    while not condition() and time.monotonic() < end:
+        time.sleep(0.01)
+    return condition()
+
+
 def test_a_lookup_that_takes_too_long_counts_as_failed_and_is_tried_later(tmp_path: Path, monkeypatch):
     _meeting(tmp_path)
     gate, calls = threading.Event(), []
@@ -170,13 +177,15 @@ def test_a_lookup_that_takes_too_long_counts_as_failed_and_is_tried_later(tmp_pa
     api.needs(tmp_path, user_name="Timo", calendar=calendar)
     now[0] += api.CUT_LOOKUP_SECONDS + 1
     api.needs(tmp_path, user_name="Timo", calendar=calendar)  # timed out: not asked again at once
+    assert _soon(lambda: len(calls) == 1)  # the lookup runs in a thread of its own
+    time.sleep(0.05)
     assert len(calls) == 1
     gate.set()
     api.wait_for_cut_lookups(5)
     now[0] += api.CUT_FRESH_SECONDS
     api.needs(tmp_path, user_name="Timo", calendar=calendar)
     api.wait_for_cut_lookups(5)
-    assert len(calls) == 2
+    assert _soon(lambda: len(calls) == 2)
 
 
 def test_needs_are_cached_per_meeting_by_its_files(tmp_path: Path, monkeypatch):

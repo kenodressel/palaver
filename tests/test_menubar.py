@@ -74,7 +74,7 @@ def test_the_menu_has_no_old_quick_settings_and_the_switches_of_the_settings_pag
         "Connect Calendar…",
         "Report a Problem…",
         None,
-        "Update available",  # hidden unless there is one (#60)
+        "Check for Updates…",  # with the version; "Update available (…)" when there is one (#60)
         "Quit",
     ]
     for gone in ("Open latest transcript in Notion", "Open latest recording folder", "Open log",

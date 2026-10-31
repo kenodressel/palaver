@@ -664,7 +664,10 @@ def _handler(app: App, port: int) -> type[BaseHTTPRequestHandler]:
             finally:
                 app.notes_lock.release()
             if token is None:
-                self._error(HTTPStatus.BAD_GATEWAY, "the language model failed; see the log")
+                why = model_jobs.last_error(app.jobs, "projects", "projects")
+                LOGGER.warning("the projects helper failed: %s", why or "no error line in its log")
+                self._error(HTTPStatus.BAD_GATEWAY, f"the language model failed: {why}" if why
+                            else "the language model failed; see the log")
             return token
 
         def _next_question(self, meeting_id: str, body: dict):
