@@ -185,10 +185,14 @@ def test_glossary_term_menu_and_its_fields(page, app_server):
     note.fill("A district of Vienna")
     note.press("Enter")
     expect_toast(page, "Note on “Attakring” saved")
-    page.get_by_role("button", name="Remove Atterkring").click()
+    row = page.locator("#main .term-row")
+    expect(row.get_by_role("button", name="Remove Atterkring")).to_be_hidden()  # heard as text until pointed at
+    row.hover()
+    row.get_by_role("button", name="Remove Atterkring").click()
     expect_toast(page, "“Atterkring” is no longer respelled as “Attakring”")
     undo_in_toast(page)
-    expect(page.get_by_role("button", name="Remove Atterkring")).to_be_visible()
+    row.hover()
+    expect(row.get_by_role("button", name="Remove Atterkring")).to_be_visible()
 
 
 # --- people ----------------------------------------------------------------------

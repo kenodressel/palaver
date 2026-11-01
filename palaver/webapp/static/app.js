@@ -2493,7 +2493,10 @@ async function openPeople(focus = null, how = "push") {
   }
   if (movedOn(here)) return;
   renderPeople();
-  if (focus) personSection(focus)?.scrollIntoView({ block: "start" });
+  if (focus) {
+    openPersonMeetings(personSection(focus));
+    personSection(focus)?.scrollIntoView({ block: "start" });
+  }
 }
 
 function meetingTitle(x) {
@@ -2524,75 +2527,107 @@ function renderPeople() {
 
   if (d.unknown.length) {
     page.append(h("h2", {}, "Heard in several meetings, no name yet"));
-    const voicesList = h("div", { class: "data-list people-list" });
+    const voicesList = h("div", { class: "people-grid" });
     page.append(voicesList);
     d.unknown.forEach((g, i) => {
       const voices = g.voices.map((v) => [v.id, v.label]);
       const clip = g.voices.find((v) => v.clip);
-      voicesList.append(h("section", { class: "person", style: `--c:var(--v${i % 8})`, "data-voice": voices[0].join("|") },
-        h("div", { class: "person-head" }, avatar(null),
+      voicesList.append(personCell({ style: `--c:var(--v${i % 8})`, "data-voice": voices[0].join("|") },
+        [avatar(null),
           h("input", { class: "name-input", placeholder: "Who is this?", list: "names", spellcheck: "false",
             "aria-label": "Name for this voice",
             onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); },
             onchange: (e) => e.target.value.trim() && nameVoices(voices, e.target.value) }),
-          clip ? playVoiceButton("Play this voice", () => playClip(clip.id, clip.clip)) : h("span", { class: "person-org" }),
-          h("span", { class: "meta person-count" }, `${g.voices.length} meetings`),
-          h("span", { class: "meta person-talk" }, minutes(g.talk_seconds)),
-          h("span", { class: "spacer" }),
-          moreButton(() => voiceItems(g, voices), "Actions for this voice")),
-        h("ul", { class: "appearances" }, g.voices.map((v) => appearance(v, "this voice")))));
+          clip ? playVoiceButton("Play this voice", () => playClip(clip.id, clip.clip)) : null],
+        g.voices, { talk: g.talk_seconds, label: "this voice" }, moreButton(() => voiceItems(g, voices), "Actions for this voice")));
     });
   }
 
-  if (d.organizations?.length) {
-    page.append(h("h2", {}, "Organizations"),
-      h("p", { class: "lede" }, "From the invitees’ email addresses. Rename one, e.g. “Fabrikamcontoso” → “Fabrikam Contoso”."),
-      h("ul", { class: "data-list orgs" },
-        h("li", { class: "data-head org-row", "aria-hidden": "true" }, h("span", {}, "Organization"), h("span", { class: "num" }, "People"),
-          h("span", {}, "Email domain")),
-        d.organizations.map((o) => h("li", { class: "data-row org-row" },
-          h("input", { class: "cell-input org-input", value: o.name, spellcheck: "false", "aria-label": `Name of ${o.key}`,
-            onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); },
-            onchange: (e) => changeOrgs("/api/organizations", { key: o.key, name: e.target.value }) }),
-          h("span", { class: "meta num" }, String(o.people)),
-          h("span", { class: "meta" }, o.key === "extern" ? "private addresses" : o.key)))));
-  }
   page.append(h("datalist", { id: "org-names" }, [...new Set([...(d.organizations || []).map((o) => o.name),
     ...d.people.map((p) => p.org).filter(Boolean)])].map((n) => h("option", { value: n }))));
-
-  page.append(h("h2", {}, "Named"));
   if (!d.people.length) {
-    page.append(h("p", { class: "notes-empty" }, "Nobody has a name yet. Name a speaker in a meeting, or a voice above."));
+    page.append(h("h2", {}, "Named"),
+      h("p", { class: "notes-empty" }, "Nobody has a name yet. Name a speaker in a meeting, or a voice above."));
   }
-  const named = h("div", { class: "data-list people-list" },
-    h("div", { class: "data-head person-cols", "aria-hidden": "true" }, h("span", {}), h("span", {}, "Name"),
-      h("span", {}, "Organization"), h("span", { class: "num" }, "Meetings"), h("span", { class: "num" }, "Talk"),
-      h("span", {}, "Voice"), h("span", {})));
-  if (d.people.length) page.append(named);
-  for (const p of d.people) {
-    // In their colour, as on the lanes and wherever else they are named.
-    named.append(h("section", { class: "person", style: `--c:${personColor(p.name, p.you ? p.name : null)}`, "data-person": p.name },
-      h("div", { class: "person-head" }, avatar(p.name),
-        h("span", { class: "person-name-cell" },
-          h("input", { class: "cell-input name-input", value: p.name, spellcheck: "false", "aria-label": `Rename ${p.name}`,
-            title: "Rename everywhere; an existing name merges the two",
-            onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { e.target.value = p.name; e.target.blur(); } },
-            onchange: (e) => e.target.value.trim() ? renamePerson(p.name, e.target.value) : (e.target.value = p.name) }),
-          p.you ? h("span", { class: "pill", title: "One of your names (an earlier one counts too)" }, "You") : null),
-        h("input", { class: "cell-input org-input person-org", value: p.org || "", placeholder: "+ Organization", list: "org-names",
-          spellcheck: "false", "aria-label": `Organization of ${p.name}`,
-          title: p.org_given ? "Given by hand; empty it to use the email address again" : "From the email address; type to change",
-          onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); },
-          onchange: (e) => changeOrgs("/api/people/org", { name: p.name, org: e.target.value }) }),
-        h("span", { class: "meta person-count num", title: p.meetings.length === 1 ? "1 meeting" : `${p.meetings.length} meetings` },
-          String(p.meetings.length)),
-        h("span", { class: "meta person-talk" }, minutes(p.talk_seconds)),
-        h("span", { class: "meta person-voice", title: p.voice_samples ? "Recognized by voice in new meetings"
-          : "Too little speech yet to learn the voice" }, p.voice_samples ? "voice known" : "voice not learned yet"),
-        moreButton(() => personItems(p), `Actions for ${p.name}`)),
-      h("ul", { class: "appearances" }, p.meetings.map((x) => appearance(x, p.name)))));
+  // Everyone under their organization, the biggest first; who has none comes last.
+  for (const group of peopleByOrg(d)) {
+    const o = group.org;
+    page.append(h("div", { class: "org-head" },
+      // The field as wide as its name: a hidden copy of the text beside it sets the width.
+      o ? h("h2", { class: "fits", "data-value": o.name }, h("input", { class: "cell-input org-input", value: o.name, size: 1, spellcheck: "false",
+        "aria-label": `Name of ${o.key}`, oninput: (e) => { e.target.parentNode.dataset.value = e.target.value; },
+        title: "Rename, e.g. “Fabrikamcontoso” → “Fabrikam Contoso”",
+        onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { e.target.value = o.name; e.target.blur(); } },
+        onchange: (e) => e.target.value.trim() ? changeOrgs("/api/organizations", { key: o.key, name: e.target.value })
+          : (e.target.value = o.name) }))
+        : h("h2", {}, group.name || "No organization"),
+      h("span", { class: "meta" }, [group.people.length === 1 ? "1 person" : `${group.people.length} people`,
+        o ? (o.key === "extern" ? "private addresses" : o.key) : null].filter(Boolean).join(" · "))),
+    h("div", { class: "people-grid" }, group.people.map((p) => namedCell(p))));
   }
   $("#main").replaceChildren(page);
+}
+
+// The named people in groups by organization: ``org`` the organization from
+// the invitees' addresses (renamed here), or null for an organization given by
+// hand (``name``) or none (last).
+function peopleByOrg(d) {
+  const orgs = new Map((d.organizations || []).map((o) => [o.name, o]));
+  const groups = new Map();
+  for (const p of d.people) {
+    const name = p.org || "";
+    if (!groups.has(name)) groups.set(name, { name, org: orgs.get(name) || null, people: [] });
+    groups.get(name).people.push(p);
+  }
+  return [...groups.values()].sort((a, b) => (!a.name - !b.name) || (b.people.length - a.people.length)
+    || a.name.localeCompare(b.name));
+}
+
+// One person or voice on the People page: ``head`` (avatar, name, …) and a
+// line that says how often and how long they spoke, and opens their meetings.
+function personCell(attrs, head, meetings, { talk, label, badge = null, org = null }, more) {
+  const last = meetings.map((x) => x.start).filter(Boolean).sort().at(-1);
+  const list = h("ul", { class: "appearances", hidden: true }, meetings.map((x) => appearance(x, label)));
+  const toggle = h("button", { class: "link person-meta", "aria-expanded": "false",
+    title: "Show the meetings", onclick: () => {
+      const open = list.hidden;
+      list.hidden = !open;
+      toggle.setAttribute("aria-expanded", String(open));
+    } },
+    [meetings.length === 1 ? "1 meeting" : `${meetings.length} meetings`, minutes(talk),
+      last ? shortDayFmt.format(new Date(last)) : null].filter(Boolean).join(" · "));
+  return h("section", { class: "person", ...attrs },
+    h("div", { class: "person-head" }, ...head, badge, more),
+    h("div", { class: "person-sub" }, toggle, org), list);
+}
+
+function namedCell(p) {
+  // The organization's field shows once asked for (⋯ Change Organization); the group says it otherwise.
+  const org = h("input", { class: "cell-input org-input person-org", value: p.org || "", placeholder: "Organization", list: "org-names",
+    spellcheck: "false", "aria-label": `Organization of ${p.name}`, hidden: true,
+    title: p.org_given ? "Given by hand; empty it to use the email address again" : "From the email address; type to change",
+    onkeydown: (e) => { if (e.key === "Enter" || e.key === "Escape") e.target.blur(); },
+    onblur: (e) => { if (e.target.value === (p.org || "")) e.target.hidden = true; },
+    onchange: (e) => changeOrgs("/api/people/org", { name: p.name, org: e.target.value }) });
+  // In their colour, as on the lanes and wherever else they are named.
+  return personCell({ style: `--c:${personColor(p.name, p.you ? p.name : null)}`, "data-person": p.name },
+    [avatar(p.name),
+      h("input", { class: "cell-input name-input", value: p.name, spellcheck: "false", "aria-label": `Rename ${p.name}`,
+        title: "Rename everywhere; an existing name merges the two",
+        onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { e.target.value = p.name; e.target.blur(); } },
+        onchange: (e) => e.target.value.trim() ? renamePerson(p.name, e.target.value) : (e.target.value = p.name) }),
+      p.you ? h("span", { class: "pill", title: "One of your names (an earlier one counts too)" }, "You") : null],
+    p.meetings, { talk: p.talk_seconds, label: p.name, org,
+      // Only the exception is said: a voice it can't recognize yet.
+      badge: p.voice_samples || p.you ? null : h("span", { class: "badge", title: "Too little speech yet to learn the voice" },
+        "voice not learned") },
+    moreButton(() => personItems(p), `Actions for ${p.name}`));
+}
+
+// A person's meetings, open (from a link to them).
+function openPersonMeetings(section) {
+  const toggle = section?.querySelector(".person-meta");
+  if (toggle?.getAttribute("aria-expanded") === "false") toggle.click();
 }
 
 // Focus (and select) a field of a section on the page, e.g. a name to rename.
@@ -2607,7 +2642,11 @@ function personItems(p) {
   const clip = p.meetings.find((x) => x.clip);
   const run = tracked("person", {
     rename: () => focusField(personSection(p.name), ".person-head .name-input"),
-    organization: () => focusField(personSection(p.name), ".person-head .org-input"),
+    organization: () => {
+      const field = personSection(p.name)?.querySelector(".person-org");
+      if (field) field.hidden = false;
+      focusField(personSection(p.name), ".person-org");
+    },
     playVoice: () => playClip(clip.id, clip.clip),
   });
   return personCommands(p).map((c) => c && { label: c.label, danger: c.danger, disabled: !c.enabled, run: run[c.name] });
@@ -2836,17 +2875,21 @@ function projectItems(d, p, from) {
 
 function projectMeeting(p, x) {
   const sure = x.by === "you";
+  const people = x.people || [];
+  // A log: the day first, then the title, who was there; × when pointed at.
   return h("li", { class: "appearance project-meeting", "data-meeting": x.id },
-    h("button", { class: "link appearance-title", title: meetingTitle(x), onclick: () => openMeeting(x.id) }, meetingTitle(x)),
-    h("span", { class: "meta project-meeting-by", title: x.why || null },
-      sure ? "" : x.by === "model" ? "sorted by the model" : "sorted automatically"),
     h("span", { class: "meta project-meeting-day", title: x.start ? dayFmt.format(new Date(x.start)) : null },
       x.start ? shortDayFmt.format(new Date(x.start)) : ""),
-    h("span", { class: "row-actions" },
+    h("button", { class: "link appearance-title", title: meetingTitle(x), onclick: () => openMeeting(x.id) }, meetingTitle(x)),
+    h("span", { class: "meta project-meeting-by", title: x.why || null },
+      sure ? "" : x.by === "model" ? "sorted by the model" : "sorted automatically",
       sure ? null : h("button", { class: "chip-btn", title: "Yes, it belongs here", "aria-label": `Confirm ${meetingTitle(x)}`,
-        onclick: (e) => setProjectMeeting(x, p, {}, e.currentTarget) }, "✓"),
-      h("button", { class: "chip-btn", title: `Take it out of ${p.name}`, "aria-label": `Remove ${meetingTitle(x)}`,
-        onclick: (e) => setProjectMeeting(x, p, { remove: true }, e.currentTarget) }, "×")));
+        onclick: (e) => setProjectMeeting(x, p, {}, e.currentTarget) }, "✓")),
+    h("span", { class: "faces", title: people.join(", ") || null },
+      people.slice(0, 4).map((n) => h("span", { style: `--c:${personColor(n)}` }, avatar(n))),
+      people.length > 4 ? h("span", { class: "meta" }, `+${people.length - 4}`) : null),
+    h("button", { class: "chip-btn row-tool", title: `Take it out of ${p.name}`, "aria-label": `Remove ${meetingTitle(x)}`,
+      onclick: (e) => setProjectMeeting(x, p, { remove: true }, e.currentTarget) }, "×"));
 }
 
 // A meeting put in project ``p``, confirmed in it or taken out, from the Projects page.
@@ -3286,8 +3329,6 @@ function renderGlossary() {
   page.append(h("h2", {}, "Terms"));
   if (!d.terms.length) page.append(h("p", { class: "notes-empty" }, "No terms yet. Accept a suggestion, or add one above."));
   else page.append(h("ul", { class: "data-list terms" },
-    h("li", { class: "data-head term-row", "aria-hidden": "true" }, h("span", {}, "Term"), h("span", {}, "Heard as"),
-      h("span", {}, "Note"), h("span", {})),
     d.terms.map((t) => {
       let more;
       // Fields read as text until pointed at: the table stays calm, every cell still edits in place.
@@ -3296,18 +3337,20 @@ function renderGlossary() {
           onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { e.target.value = t.term; e.target.blur(); } },
           onchange: (e) => e.target.value.trim() ? changeTerm(t, { term: e.target.value }, `${t.term} was not renamed`)
             : (e.target.value = t.term) }),
+        // Heard as text, the note below it; × and the empty fields show when the row is pointed at.
         h("div", { class: "term-variants" },
+          t.variants.length ? h("span", { class: "heard-as" }, "heard as") : null,
           t.variants.map((v) => h("span", { class: "variant" }, v,
             h("button", { class: "chip-btn", title: `Stop respelling “${v}”`, "aria-label": `Remove ${v}`,
               onclick: () => changeTerm(t, { remove_variant: v }, `“${v}” was not removed`) }, "×"))),
           h("input", { class: "cell-input add-variant", placeholder: "+ heard as", spellcheck: "false", "aria-label": `Add a spelling of ${t.term}`,
             onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); },
-            onchange: (e) => e.target.value.trim() && changeTerm(t, { add_variants: [e.target.value.trim()] }, `“${e.target.value.trim()}” was not added`) })),
-        h("input", { class: "cell-input note-input", value: t.note || "", placeholder: "+ note", spellcheck: "true",
-          "aria-label": `Note on ${t.term}`, title: t.note || "A note on what it is",
-          onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { e.target.value = t.note || ""; e.target.blur(); } },
-          onchange: (e) => e.target.value.trim() !== (t.note || "")
-            && changeTerm(t, { note: e.target.value.trim() }, `The note on ${t.term} was not saved`) }),
+            onchange: (e) => e.target.value.trim() && changeTerm(t, { add_variants: [e.target.value.trim()] }, `“${e.target.value.trim()}” was not added`) }),
+          h("input", { class: `cell-input note-input${t.note ? " has-note" : ""}`, value: t.note || "", placeholder: "+ note", spellcheck: "true",
+            "aria-label": `Note on ${t.term}`, title: t.note || "A note on what it is",
+            onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { e.target.value = t.note || ""; e.target.blur(); } },
+            onchange: (e) => e.target.value.trim() !== (t.note || "")
+              && changeTerm(t, { note: e.target.value.trim() }, `The note on ${t.term} was not saved`) })),
         more = moreButton(() => termItems(t, more), `Actions for ${t.term}`));
     })));
   $("#main").replaceChildren(page);

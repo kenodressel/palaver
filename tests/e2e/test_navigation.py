@@ -71,7 +71,10 @@ def test_a_link_to_a_project_and_back(page, app_server):
 
 def test_a_meeting_link_on_the_people_page_and_back(page, shared_server):
     goto(page, shared_server, "#/people")
-    page.locator('#main .person[data-person="Eli"]').get_by_role("button", name="Design review", exact=True).click()
+    eli = page.locator('#main .person[data-person="Eli"]')
+    expect(eli.get_by_role("button", name="Design review", exact=True)).to_be_hidden()  # a person's meetings fold out
+    eli.locator(".person-meta").click()
+    eli.get_by_role("button", name="Design review", exact=True).click()
     expect(heading(page)).to_have_text("Design review")
     unfocus(page)
     cmd(page, "BracketLeft")

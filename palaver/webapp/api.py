@@ -1409,7 +1409,7 @@ def list_projects(output_dir: Path, *, user_name: str) -> dict[str, Any]:
             m = meetings.get(mid)
             if m is not None:
                 members.append({"id": mid, "title": m["title"], "start": m["start"], "duration": m["duration"],
-                                "summary": m["summary"], **how})
+                                "summary": m["summary"], "people": m["people"], **how})
         members.sort(key=lambda m: m["id"], reverse=True)
         counts: dict[str, int] = {}
         for m in members:

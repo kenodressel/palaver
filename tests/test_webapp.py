@@ -334,7 +334,10 @@ def test_projects_page_and_meeting_projects(tmp_path: Path):
     assert d["projects"] == [] and {m["id"] for m in d["unsorted"]} == {MEETING, "2026-10-26T09-00-00"}
 
     api.set_meeting_project(tmp_path, MEETING, name="Hiring")  # a new name makes a project
-    pid = api.list_projects(tmp_path, user_name="Timo")["projects"][0]["id"]
+    [hiring] = api.list_projects(tmp_path, user_name="Timo")["projects"]
+    pid = hiring["id"]
+    # the faces beside the meeting in the project: its named people, as in the meeting list
+    assert hiring["meetings"][0]["people"] == next(m["people"] for m in api.list_meetings(tmp_path) if m["id"] == MEETING)
     api.update_project(tmp_path, pid, description="Lead engineer hiring.")
     m = api.get_meeting(tmp_path, MEETING, user_name="Timo")
     assert [(p["name"], p["by"]) for p in m["projects"]] == [("Hiring", "you")]
