@@ -575,6 +575,7 @@ _FIXES = {
     "calendar": {"not_asked": "Connect Calendar in Settings or in the setup assistant",
                  "denied": _PRIVACY + "Calendars → allow Palaver (full access)"},
     "notifications": {"unknown": "System Settings → Notifications → Palaver: allow notifications",
+                      "not_asked": "macOS asks when Palaver starts; or System Settings → Notifications → Palaver",
                       "denied": "System Settings → Notifications → Palaver: allow notifications"},
 }
 _STATUS = {"granted": "ok", "denied": "fail", "fallback": "warn"}
@@ -1153,7 +1154,7 @@ class Probe:
                                    "fix": system.fix}
         else:
             out["system_audio"] = {"state": "unverified", "detail": system.detail, "fix": system.fix}
-        out["notifications"] = {"state": "unknown", "detail": "Palaver can't check this itself"}
+        out["notifications"] = notifications_permission()
         return out
 
     def downloaded(self) -> frozenset[str]:
@@ -1200,6 +1201,15 @@ class Probe:
         from . import app_bundle
 
         app_bundle.set_autostart(on)
+
+
+def notifications_permission() -> dict:
+    from . import notify
+
+    return {"allowed": {"state": "granted", "detail": "allowed"},
+            "denied": {"state": "denied", "detail": "not allowed"},
+            "not_asked": {"state": "not_asked", "detail": "not asked yet"}}.get(
+        notify.permission() or "", {"state": "unknown", "detail": "Palaver can't check this itself"})
 
 
 def _microphone() -> dict:

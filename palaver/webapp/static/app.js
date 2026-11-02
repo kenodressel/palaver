@@ -531,6 +531,7 @@ async function openMeeting(id, at, { how = "push", tab = null } = {}) {
       flushNotepads();
       state.cutNotice = null;
       state.respelled = null;
+      state.eventPicker?.close?.();  // another meeting: its pop-up goes
       state.eventPicker = null;
       state.stream = null;
       state.editAt = null;
@@ -717,7 +718,6 @@ function renderMeeting() {
     renderStopQuestion(m),
     cutNotice,
     respelledNotice(),
-    renderEventPicker(m),
     renderCutSuggestion(m),
     renderSharedSuggestion(m),
     renderSharedAsk(m),
@@ -921,7 +921,6 @@ const ACTIONS = tracked("meeting", {
   changeEvent: async (m) => {
     await showMeeting(m);
     await openEventPicker(m.id);
-    document.querySelector(".event-picker")?.scrollIntoView({ block: "nearest" });
   },
   joinPrevious: (m, from) => joinMeeting(m, "previous", from),
   joinNext: (m, from) => joinMeeting(m, "next", from),
@@ -3632,13 +3631,21 @@ async function finishReview(done) {
 
 // Which calendar event a recording was. The one matched by time is wrong
 // when an ad-hoc call took another meeting's slot, or two meetings overlap.
+// A pop-up: on the page it went unnoticed.
 async function openEventPicker(id) {
+  let picker;
   try {
-    state.eventPicker = { id, events: await api(`/api/meetings/${encodeURIComponent(id)}/events`) };
+    picker = { id, events: await api(`/api/meetings/${encodeURIComponent(id)}/events`) };
   } catch (err) {
-    state.eventPicker = { id, events: [], error: `Calendar events could not be loaded: ${err.message}` };
+    picker = { id, events: [], error: `Calendar events could not be loaded: ${err.message}` };
   }
-  renderMeeting();
+  state.eventPicker?.close?.();
+  const holder = h("div", { class: "event-picker" });
+  const d = dialog({ title: "Which calendar event was this recording?", body: [holder], buttons: [{ label: "Cancel" }] });
+  d.el.classList.add("event-dialog");
+  state.eventPicker = { ...picker, holder, close: d.close };
+  renderEventPicker();
+  d.result.then(() => { if (state.eventPicker?.holder === holder) state.eventPicker = null; });
 }
 
 // ``key``: an event's, null for none of them, "current" to confirm the one it
@@ -3654,12 +3661,15 @@ async function chooseEvent(id, key, title = null, button = null) {
     const { undo: t, ...m } = await api(`/api/meetings/${encodeURIComponent(id)}/event`, { key });
     token = t;
     if (state.meeting?.id === id) state.meeting = m;
+    state.eventPicker?.close?.();
     state.eventPicker = null;
     await loadList();
   } catch (err) {
     if (button) button.disabled = false;
-    if (state.eventPicker) state.eventPicker = { ...state.eventPicker, error: `Not changed: ${err.message}` };
-    else {
+    if (state.eventPicker) {
+      state.eventPicker = { ...state.eventPicker, error: `Not changed: ${err.message}` };
+      renderEventPicker();
+    } else {
       errorToast(`The event was not changed: ${err.message}`, { action: { label: "Try again", run: () => chooseEvent(id, key, title) } });
       return;
     }
@@ -3704,15 +3714,17 @@ async function eventBack(id, token) {
   loadList();
 }
 
-function renderEventPicker(m) {
+// The pop-up's content, again after a change (an error, a rule forgotten).
+function renderEventPicker() {
   const p = state.eventPicker;
-  if (!p || p.id !== m.id) return null;
+  if (!p?.holder) return;
+  const id = p.id;
   const span = (e) => `${timeFmt.format(new Date(e.start))}–${timeFmt.format(new Date(e.end))}`;
-  return h("div", { class: "event-picker" },
-    h("p", { class: "event-question" }, "Which calendar event was this recording?"),
+  p.holder.replaceChildren(...[
     p.error ? h("p", { class: "error" }, p.error) : null,
     p.events.length ? null : h("p", { class: "meta" }, "No calendar events around this recording."),
-    p.events.map((e) => h("button", { class: `event-option${e.current ? " current" : ""}`, onclick: () => chooseEvent(m.id, e.key) },
+    ...p.events.map((e) => h("button", { type: "button", class: `event-option${e.current ? " current" : ""}`,
+      onclick: () => chooseEvent(id, e.key) },
       h("span", { class: "event-time" }, span(e)),
       h("span", { class: "event-title" }, e.title),
       e.invited ? h("span", { class: "meta" }, `${e.invited} invited`) : null,
@@ -3720,14 +3732,14 @@ function renderEventPicker(m) {
         `not it ${e.rejected}×`) : null,
       e.current ? h("span", { class: "meta" }, "✓ now") : null)),
     // Rules the user's corrections made: say them, and a way to drop one.
-    [...new Map(p.events.filter((e) => e.rule).map((e) => [e.rule.series, e])).values()].map((e) =>
+    ...[...new Map(p.events.filter((e) => e.rule).map((e) => [e.rule.series, e])).values()].map((e) =>
       h("p", { class: "event-rule" }, h("span", {}, e.rule.text),
-        h("button", { type: "button", class: "btn btn-quiet small", onclick: (ev) => forgetRule(m.id, e, ev.currentTarget) },
+        h("button", { type: "button", class: "btn btn-quiet small", onclick: (ev) => forgetRule(id, e, ev.currentTarget) },
           "Forget this rule"))),
     h("div", { class: "event-actions" },
-      h("button", { class: "btn", onclick: () => chooseEvent(m.id, null) }, "None of these (an ad-hoc call)"),
-      h("button", { type: "button", class: "btn btn-quiet small", onclick: () => { state.eventPicker = null; renderMeeting(); } }, "Cancel")),
-    h("p", { class: "meta" }, "The notes keep the old event until you rewrite them."));
+      h("button", { type: "button", class: "btn", onclick: () => chooseEvent(id, null) }, "None of these (an ad-hoc call)")),
+    h("p", { class: "meta" }, "The notes keep the old event until you rewrite them."),
+  ].filter(Boolean));  // replaceChildren, unlike h(), would show a null
 }
 
 // "Not linked by time any more": forgotten, so the series is linked by time again.
@@ -3751,8 +3763,8 @@ async function forgetRule(id, e, button) {
 // The picker again, with what the server says now (its rules), if it is still open.
 async function refreshPicker(id) {
   if (state.eventPicker?.id !== id) return;
-  state.eventPicker = { id, events: await api(`/api/meetings/${encodeURIComponent(id)}/events`) };
-  if (onPage(id)) renderMeeting();
+  state.eventPicker = { ...state.eventPicker, events: await api(`/api/meetings/${encodeURIComponent(id)}/events`), error: null };
+  renderEventPicker();
 }
 
 // Put a meeting back in the review, and open it there.
@@ -4015,8 +4027,9 @@ async function openSettings(how = "push") {
   const here = leaveMeeting("settings", "#/settings", how);
   try {
     let rec;
-    [state.settings, state.lm, state.tr, , , , rec, state.update, state.calendar] = await Promise.all([api("/api/settings"),
+    [state.settings, state.lm, state.tr, , , , , rec, state.update, state.calendar] = await Promise.all([api("/api/settings"),
       api("/api/language-model"), api("/api/transcription"), refreshMcp(), refreshMemory(), refreshStorage(),
+      refreshNotifications(),
       // "Recommended for this Mac" (#55): the setup assistant's recommendations; the page works without them.
       api("/api/setup/recommendations").catch(() => null),
       api("/api/update").catch(() => null), api("/api/setup/calendar").catch(() => null)]);
@@ -4046,6 +4059,54 @@ function calendarCard() {
           "with Calendars on. If your organization blocks that, its admin approves it once.")),
       cal && cal.state !== "granted" ? h("button", { type: "button", class: "btn", onclick: (e) => connectCalendarHere(e.currentTarget) },
         cal.state === "denied" ? "Open System Settings" : "Connect Calendar") : null));
+}
+
+// Whether macOS lets Palaver notify, as its launcher last asked: off, Palaver
+// can't ask whether to stop a recording or say an update is ready.
+async function refreshNotifications() {
+  try {
+    state.notifications = await api("/api/notifications");
+  } catch {
+    return;
+  }
+  document.getElementById("notifications-section")?.replaceWith(notificationsSection());
+}
+
+function notificationsSection() {
+  const n = state.notifications;
+  const section = h("section", { id: "notifications-section" });
+  if (!n || n.state === "unknown") return section;  // outside the app nobody knows
+  const on = n.state === "granted";
+  section.append(h("h2", {}, "Notifications"), h("div", { class: "gloss-card settings-card" },
+    h("div", { class: "lm-row" },
+      h("span", {}, h("strong", {}, on ? "On" : "Off"), h("br"),
+        h("span", { class: "meta" }, on
+          ? "Palaver says when a meeting is recorded, asks before a recording that ran on is stopped, and tells of updates."
+          : "Palaver can't ask whether to stop a recording that ran on, or say that an update is ready. Those questions also show in the menu bar menu.")),
+      on ? null : h("button", { type: "button", class: "btn", onclick: (e) => openNotificationSettings(e.currentTarget) },
+        "Open System Settings"))));
+  return section;
+}
+
+async function openNotificationSettings(button) {
+  try {
+    state.notifications = await working(button, api("/api/notifications/open", {}));
+  } catch (err) {
+    errorToast(`System Settings did not open: ${err.message}`);
+    return;
+  }
+  toast("Allow notifications for Palaver there; this page follows.", { short: true });
+  watchNotifications(Date.now() + 120_000);
+}
+
+// Until they are on, or two minutes passed: the launcher asks macOS every 10 s.
+function watchNotifications(until) {
+  clearTimeout(state.notificationsTimer);
+  if (state.view !== "settings" || state.notifications?.state === "granted" || Date.now() > until) return;
+  state.notificationsTimer = setTimeout(async () => {
+    await refreshNotifications();
+    watchNotifications(until);
+  }, 2000);
 }
 
 async function connectCalendarHere(button) {
@@ -4124,6 +4185,7 @@ function renderSettings() {
         h("p", { class: "meta" }, "Start recording now in the menu bar works either way.")),
       h("h2", {}, "Calendar"),
       calendarCard(),
+      notificationsSection(),
       h("h2", {}, "Live"),
       h("div", { class: "gloss-card settings-card" },
         settingSwitch("realtime", "Realtime transcription"),

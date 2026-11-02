@@ -88,7 +88,7 @@ def test_an_unsure_event_can_be_changed_from_its_chip(page, app_server):
     (app_server.root / C / "calendar.json").write_text(json.dumps(event))
     open_meeting(page, app_server, C)
     page.locator("#main .event-link").get_by_role("button", name="Change the event").click()
-    expect(page.locator("#main .event-picker")).to_be_visible()
+    expect(page.locator(".event-picker")).to_be_visible()
 
 
 def test_a_voice_name_palaver_is_unsure_of_is_dotted_and_not_bob_sticks(page, app_server):
@@ -137,11 +137,11 @@ def test_a_rule_from_rejections_shows_in_the_picker_and_can_be_forgotten(page, a
 
     open_meeting(page, app_server, A)
     run_from_menu(page, "More actions", "Change Event…")
-    rule = page.locator("#main .event-picker .event-rule")
+    rule = page.locator(".event-picker .event-rule")
     expect(rule).to_contain_text("Not linked by time any more: Team standup — rejected 2×")
     rule.get_by_role("button", name="Forget this rule").click()
     expect_toast(page, "“Team standup” is linked by time again")
-    expect(page.locator("#main .event-picker .event-rule")).to_have_count(0)
+    expect(page.locator(".event-picker .event-rule")).to_have_count(0)
     assert attribution.Evidence().rules() == []
     undo_in_toast(page)
     assert [r["title"] for r in attribution.Evidence().rules()] == ["Team standup"]

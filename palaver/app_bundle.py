@@ -115,6 +115,9 @@ extern char **environ;
 static pid_t child = 0;
 static int app_end = -1;  /* our end of the socket to the app: clicks go there */
 static char notify_path[104] = "";
+static int log_fd = -1;  /* the app's log: the launcher's own lines too */
+static char notify_state[120] = "";
+static dispatch_source_t notify_timer;  /* kept: a released timer stops */  /* $PALAVER_NOTIFY_STATE: whether macOS lets the app notify */
 static id notifier, notifications;  /* kept for the app's lifetime */
 
 static void forward(int sig) {
@@ -170,7 +173,42 @@ static void post(NSDictionary *request) {
     UNNotificationRequest *note = [UNNotificationRequest requestWithIdentifier:[NSUUID UUID].UUIDString
                                                                        content:content
                                                                        trigger:nil];
-    [[UNUserNotificationCenter currentNotificationCenter] addNotificationRequest:note withCompletionHandler:nil];
+    NSString *title = content.title, *body = content.body;
+    [[UNUserNotificationCenter currentNotificationCenter] addNotificationRequest:note withCompletionHandler:^(NSError *error) {
+        if (!error) return;
+        /* macOS doesn't let this app notify (a managed Mac may refuse every
+           app it doesn't know): said once in the log, then shown through
+           osascript, as Script Editor's; better than none. */
+        static BOOL told = NO;
+        if (!told && log_fd >= 0) {
+            dprintf(log_fd, "notifications refused by macOS (%%s); showing them through osascript\n",
+                    error.localizedDescription.UTF8String);
+        }
+        told = YES;
+        NSTask *task = [NSTask new];
+        task.executableURL = [NSURL fileURLWithPath:@"/usr/bin/osascript"];
+        task.arguments = @[@"-e", @"on run argv", @"-e", @"display notification (item 2 of argv) with title (item 1 of argv)",
+                           @"-e", @"end run", title, body];
+        [task launchAndReturnError:nil];
+    }];
+}
+
+/* What macOS says now about this app's notifications, in $PALAVER_NOTIFY_STATE
+   ("allowed", "denied", "not_asked"): Settings shows it, and how to allow them.
+   Asked again every few seconds, so a change in System Settings shows soon. */
+static void write_notify_state(void) {
+    [[UNUserNotificationCenter currentNotificationCenter] getNotificationSettingsWithCompletionHandler:
+        ^(UNNotificationSettings *settings) {
+            const char *state = settings.authorizationStatus == UNAuthorizationStatusNotDetermined ? "not_asked"
+                : settings.authorizationStatus == UNAuthorizationStatusDenied ? "denied" : "allowed";
+            char tmp[130];
+            snprintf(tmp, sizeof tmp, "%%s.tmp", notify_state);
+            FILE *f = fopen(tmp, "w");
+            if (!f) return;
+            fputs(state, f);
+            fclose(f);
+            rename(tmp, notify_state);
+        }];
 }
 
 /* A datagram socket every process under the app finds through
@@ -210,6 +248,7 @@ int main(void) {
         posix_spawn_file_actions_t actions;
         posix_spawn_file_actions_init(&actions);
         int log = open(log_path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+        log_fd = log;
         if (log >= 0) {
             posix_spawn_file_actions_adddup2(&actions, log, STDOUT_FILENO);
             posix_spawn_file_actions_adddup2(&actions, log, STDERR_FILENO);
@@ -228,8 +267,17 @@ int main(void) {
             notifier = [Notifier new];
             UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
             center.delegate = notifier;
+            snprintf(notify_state, sizeof notify_state, "%%spalaver-%%d.notifications",
+                     NSTemporaryDirectory().fileSystemRepresentation, getpid());
+            setenv("PALAVER_NOTIFY_STATE", notify_state, 1);
             [center requestAuthorizationWithOptions:UNAuthorizationOptionAlert
-                                  completionHandler:^(BOOL granted, NSError *error) {}];
+                                  completionHandler:^(BOOL granted, NSError *error) { write_notify_state(); }];
+            dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+            dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC), 10 * NSEC_PER_SEC,
+                                      NSEC_PER_SEC);
+            dispatch_source_set_event_handler(timer, ^{ write_notify_state(); });
+            dispatch_resume(timer);
+            notify_timer = timer;
         }
         signal(SIGTERM, forward);
         signal(SIGINT, forward);
@@ -239,6 +287,7 @@ int main(void) {
             int status = 0;
             while (waitpid(child, &status, 0) < 0 && errno == EINTR) {}
             if (notify_path[0]) unlink(notify_path);
+            if (notify_state[0]) unlink(notify_state);
             if (WIFEXITED(status)) exit(WEXITSTATUS(status));
             exit(128 + (WIFSIGNALED(status) ? WTERMSIG(status) : 0));
         });

@@ -45,6 +45,21 @@ def notify(title: str, message: str, meeting: str | None = None) -> None:
         LOGGER.debug("notification failed", exc_info=True)
 
 
+SETTINGS_URL = "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=com.kenodressel.meeting-transcribe"
+
+
+def permission() -> str | None:
+    """Whether macOS lets Palaver notify: "allowed", "denied" or "not_asked",
+    as the app's launcher last asked ($PALAVER_NOTIFY_STATE); None outside
+    the app, or before it knows."""
+    path = os.environ.get("PALAVER_NOTIFY_STATE")
+    try:
+        state = open(path).read().strip() if path else None
+    except OSError:
+        return None
+    return state if state in ("allowed", "denied", "not_asked") else None
+
+
 def _send_via_app(title: str, message: str, meeting: str | None) -> bool:
     path = os.environ.get("PALAVER_NOTIFY")
     if not path:

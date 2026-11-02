@@ -769,9 +769,8 @@ button.mn-time:hover, button.mn-time:focus-visible { background: var(--selected)
 .org.unsure-link, .named-by.unsure-link { text-decoration: underline dotted var(--v2); text-underline-offset: 3px; }
 
 /* Which calendar event a recording was. */
-.event-picker { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 0; padding: 16px 20px;
-  border-radius: 20px; background: var(--surface); box-shadow: inset 0 0 0 2px var(--rule); }
-.event-question { margin: 0 0 2px; font-weight: 650; }
+.event-picker { display: flex; flex-direction: column; gap: 8px; max-height: min(60vh, 520px); overflow-y: auto; }
+.dialog.event-dialog { width: min(560px, calc(100vw - 32px)); }
 .event-option { display: flex; align-items: baseline; gap: 12px; padding: 8px 12px; border: 0; border-radius: 12px;
   background: var(--hover); color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
 .event-option:hover { background: var(--selected); }
@@ -1389,8 +1388,9 @@ button.variant.drop:hover .x, button.variant.drop:focus-visible .x { color: var(
 /* Shared pieces (ui.js): toast, ⋯ menu, busy buttons, transitions. */
 
 /* The toast: one line at the bottom centre, Undo, and a bar that drains in
-   the time it stays; hovering or focusing it stops the clock and the bar. */
-.toasts { position: fixed; z-index: 30; bottom: 72px; left: 50%; transform: translateX(-50%);
+   the time it stays; hovering or focusing it stops the clock and the bar.
+   Above a dialog: an Undo from inside one stays in reach. */
+.toasts { position: fixed; z-index: 47; bottom: 72px; left: 50%; transform: translateX(-50%);
   display: flex; justify-content: center; width: max-content; max-width: calc(100vw - 32px); pointer-events: none; }
 .toast { position: relative; display: flex; align-items: center; gap: 16px; max-width: 100%;
   padding: 12px 12px 12px 20px; border-radius: 999px; overflow: hidden; pointer-events: auto;

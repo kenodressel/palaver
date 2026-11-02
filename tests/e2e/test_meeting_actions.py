@@ -148,7 +148,7 @@ def test_join_with_cmd_j(page, app_server):
 def test_change_event_and_undo(page, app_server):
     open_meeting(page, app_server, A)
     run_from_menu(page, "More actions", "Change Event…")
-    picker = page.locator("#main .event-picker")
+    picker = page.locator(".event-picker")
     expect(picker.locator(".event-option")).to_have_count(1)
     expect(picker.locator(".event-option.current")).to_contain_text("Team standup")
     picker.get_by_role("button", name="None of these (an ad-hoc call)").click()
@@ -164,10 +164,11 @@ def test_change_event_and_undo(page, app_server):
 def test_cancel_the_event_picker(page, shared_server):
     open_meeting(page, shared_server, A)
     run_from_menu(page, "More actions", "Change Event…")
-    picker = page.locator("#main .event-picker")
-    expect(picker).to_be_visible()
-    picker.get_by_role("button", name="Cancel").click()
-    expect(picker).to_have_count(0)
+    box = page.get_by_role("dialog", name="Which calendar event was this recording?")
+    expect(box.locator(".event-picker")).to_be_visible()  # a pop-up: on the page it went unnoticed
+    expect(box).not_to_contain_text("null")
+    box.get_by_role("button", name="Cancel").click()
+    expect(box).to_have_count(0)
     expect(heading(page)).to_have_text("Team standup")
 
 

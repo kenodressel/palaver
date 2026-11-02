@@ -2003,6 +2003,24 @@ def delete_audio(output_dir: Path, meeting_id: str) -> int:
     return storage.drop_audio(meeting_paths(output_dir, meeting_id))
 
 
+def notifications_status() -> dict[str, Any]:
+    """Whether macOS lets Palaver notify ("granted", "denied", "not_asked",
+    "unknown" outside the app)."""
+    from .. import onboarding
+
+    return onboarding.notifications_permission()
+
+
+def open_notification_settings() -> dict[str, Any]:
+    """System Settings at Palaver's notifications."""
+    import subprocess
+
+    from .. import notify
+
+    subprocess.run(["open", notify.SETTINGS_URL], check=False)
+    return notifications_status()
+
+
 def storage_status(app) -> dict[str, Any]:
     return storage.summary(app.output_dir, app.cfg)
 

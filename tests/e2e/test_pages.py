@@ -160,6 +160,26 @@ def test_settings_show_what_meetings_and_models_take(page, app_server, monkeypat
     expect(box).to_have_count(0)
 
 
+def test_settings_say_when_notifications_are_off(page, app_server, monkeypatch, tmp_path):
+    """macOS refused them: said, with the way to System Settings; on, a quiet line."""
+    from palaver import notify
+
+    state = tmp_path / "palaver-1.notifications"
+    state.write_text("denied")
+    monkeypatch.setenv("PALAVER_NOTIFY_STATE", str(state))
+    opened = []
+    monkeypatch.setattr("subprocess.run", lambda cmd, check=False: opened.append(cmd))
+    goto(page, app_server, "#/settings")
+    section = page.locator("#notifications-section")
+    expect(section).to_contain_text("Off")
+    section.get_by_role("button", name="Open System Settings").click()
+    expect(page.locator("#toasts")).to_contain_text("Allow notifications for Palaver there")
+    assert opened == [["open", notify.SETTINGS_URL]]
+    state.write_text("allowed")  # allowed in System Settings: the page follows
+    expect(section.get_by_role("button", name="Open System Settings")).to_have_count(0, timeout=10_000)
+    expect(page.locator("#notifications-section")).to_contain_text("On")
+
+
 def test_a_new_release_shows_in_the_top_bar_and_opens_settings(page, app_server, monkeypatch):
     """The top bar's "Update to 0.9.0" on every page while there is one; a click
     shows it in Settings. Up to date, the top bar says nothing."""

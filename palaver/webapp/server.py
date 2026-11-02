@@ -246,6 +246,8 @@ def _handler(app: App, port: int, key: str | None = None) -> type[BaseHTTPReques
                     return self._json(api.update_status())
                 if url.path == "/api/storage":  # #9
                     return self._json(api.storage_status(app))
+                if url.path == "/api/notifications":
+                    return self._json(api.notifications_status())
                 if url.path == "/api/upcoming":
                     return self._json(api.upcoming(app.calendar))
                 if url.path == "/api/mcp":
@@ -423,6 +425,8 @@ def _handler(app: App, port: int, key: str | None = None) -> type[BaseHTTPReques
                     return self._json(api.update_action(self.path.rsplit("/", 1)[1]))
                 if self.path == "/api/storage":
                     return self._json(api.set_storage(app, body))
+                if self.path == "/api/notifications/open":
+                    return self._json(api.open_notification_settings())
                 if self.path == "/api/uninstall":
                     return self._json(api.uninstall_palaver(body))
                 if self.path == "/api/mcp/clear":

@@ -132,3 +132,34 @@ def test_no_notify_flag(monkeypatch, sent_notifications):
     monkeypatch.setattr(cli, "_cmd_sync", lambda args: 2)
     cli.main(["--no-notify", "sync", "/x"])
     assert sent_notifications == []
+
+
+def test_permission_is_what_the_launcher_last_wrote(tmp_path, monkeypatch):
+    state = tmp_path / "palaver-1.notifications"
+    monkeypatch.delenv("PALAVER_NOTIFY_STATE", raising=False)
+    assert notify.permission() is None  # outside the app
+    monkeypatch.setenv("PALAVER_NOTIFY_STATE", str(state))
+    assert notify.permission() is None  # not written yet
+    for value in ("allowed", "denied", "not_asked"):
+        state.write_text(value)
+        assert notify.permission() == value
+    state.write_text("garbage")
+    assert notify.permission() is None
+
+
+def test_the_setup_assistant_and_settings_see_it(tmp_path, monkeypatch):
+    from palaver import onboarding
+    from palaver.webapp import api
+
+    state = tmp_path / "palaver-1.notifications"
+    monkeypatch.setenv("PALAVER_NOTIFY_STATE", str(state))
+    state.write_text("denied")
+    assert onboarding.notifications_permission()["state"] == "denied"
+    state.write_text("allowed")
+    assert api.notifications_status() == {"state": "granted", "detail": "allowed"}
+    monkeypatch.delenv("PALAVER_NOTIFY_STATE")
+    assert api.notifications_status()["state"] == "unknown"
+    opened = []
+    monkeypatch.setattr("subprocess.run", lambda cmd, check=False: opened.append(cmd))
+    api.open_notification_settings()
+    assert opened == [["open", notify.SETTINGS_URL]]
