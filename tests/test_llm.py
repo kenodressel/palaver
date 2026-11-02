@@ -151,10 +151,21 @@ def test_estimate_tokens_errs_on_the_high_side():
 
 
 def test_local_model_from_settings(local_calls):
-    llm.choose_local_model("mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit")
-    assert llm.engine(cfg(), "notes").model == "mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit"
-    with pytest.raises(ValueError):
-        llm.choose_local_model("evil/model")
+    llm.choose_local_model("mlx-community/gemma-4-12B-it-OptiQ-4bit")
+    assert llm.engine(cfg(), "notes").model == "mlx-community/gemma-4-12B-it-OptiQ-4bit"
+    for gone in ("evil/model", "mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit"):
+        with pytest.raises(ValueError):
+            llm.choose_local_model(gone)
+
+
+def test_qwen_chosen_before_falls_back_to_the_default(local_calls):
+    """Qwen3 30B A3B is no longer offered: a choice saved earlier writes with
+    config.toml's model, Gemma 4 12B unless it names another."""
+    from palaver import settings
+
+    settings.update({"local_model": "mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit"})
+    assert llm.engine(cfg(), "notes").model == cfg().notes_local_model
+    assert llm.local_model(None) == "mlx-community/gemma-4-12B-it-OptiQ-4bit"
 
 
 def test_notes_memory_follows_the_choice_and_the_meeting(anthropic_api, tmp_path: Path):

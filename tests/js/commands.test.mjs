@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { meetingCommands, nextAfter } from "../../palaver/webapp/static/logic.js";
 
 const NAMES = ["trash", "joinPrevious", "joinNext", "changeEvent", "split", "reviewAgain", "writeNotes", "play",
-  "localOnly", "shared", "forgetSeries", "rename", "export", "report", "transcribe"];
+  "localOnly", "shared", "forgetSeries", "rename", "export", "report", "transcribe", "deleteAudio"];
 
 function ready(extra = {}) {
   return {

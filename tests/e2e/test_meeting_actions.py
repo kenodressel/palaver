@@ -22,11 +22,11 @@ def test_the_menu_has_the_meetings_actions_in_order(page, shared_server):
     open_meeting(page, shared_server, A)
     more(page).click()
     menu = page.locator(".menu")
-    expect(menu.get_by_role("menuitem")).to_have_count(11)
+    expect(menu.get_by_role("menuitem")).to_have_count(12)
     labels = menu.locator(".menu-label").all_text_contents()
     assert labels == ["Rename…", "Change Event…", "Join with Previous", "Join with Next", "Split At…", "Review Again",
                       "Export…", "Keep on This Mac", "Speakers Can't Be Separated",
-                      "Report a Problem with This Meeting…", "Move to Trash"]
+                      "Report a Problem with This Meeting…", "Delete Audio…", "Move to Trash"]
     expect(menu_item(page, "Join with Previous")).to_be_disabled()  # no recording right before it
     expect(menu_item(page, "Review Again")).to_be_disabled()  # not reviewed yet
     expect(menu_item(page, "Move to Trash")).to_have_class("danger")
@@ -49,6 +49,24 @@ def test_trash_from_the_menu_and_undo(page, app_server):
     assert list_ids(page) == ALL
     assert hash_of(page) == f"#/{A}"
     assert app_server.meeting_ids() == ALL
+
+
+def test_delete_audio_asks_and_keeps_the_transcript(page, app_server):
+    """#9: the audio goes after a yes; the meeting, its transcript and notes stay."""
+    open_meeting(page, app_server, A)
+    run_from_menu(page, "More actions", "Delete Audio…")
+    dialog = page.get_by_role("dialog", name="Delete this meeting's audio?")
+    dialog.get_by_role("button", name="Cancel").click()
+    assert (app_server.root / A / "system.wav").exists()
+    run_from_menu(page, "More actions", "Delete Audio…")
+    page.get_by_role("dialog").get_by_role("button", name="Delete Audio").click()
+    expect_toast(page, re.compile(r"^Audio deleted: .+ free again\.$"))
+    assert not (app_server.root / A / "system.wav").exists()
+    assert (app_server.root / A / "transcript.json").exists()
+    expect(page.locator("#player")).to_be_hidden()
+    expect(page.locator("#main .about-deleted")).to_have_text(re.compile(r"^Audio deleted on "))
+    more(page).click()
+    expect(menu_item(page, "Delete Audio…")).to_have_count(0)
 
 
 def test_trash_with_cmd_backspace_and_undo_with_cmd_z(page, app_server):

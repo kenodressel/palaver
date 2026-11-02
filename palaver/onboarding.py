@@ -80,12 +80,17 @@ MODELS: dict[str, Model] = {m.id: m for m in (
           "config.yaml", 0.03, "about 1 GB of memory while it runs", hosted=True),
     Model("gemma", "Gemma 4 12B", "notes and projects", GEMMA, "config.json", 8.3,
           "about 10 GB of memory while writing, up to 12 GB"),
-    Model("qwen", "Qwen3 30B A3B", "notes and projects", QWEN, "config.json", 16.0,
-          "18–22 GB of memory while writing"),
     Model("e5", "multilingual-e5-small", "search by meaning", "intfloat/multilingual-e5-small", "config.json", 0.47,
           "little memory, in the background"),
 )}
-NOTES_MODELS = {GEMMA: "gemma", QWEN: "qwen"}  # local notes model (repo) -> its download
+NOTES_MODELS = {GEMMA: "gemma"}  # local notes model (repo) -> its download
+# No longer offered: Qwen3 30B A3B made more mistakes on German meetings than
+# Gemma 4 12B, at twice the download and memory. Listed so Settings → Storage
+# can delete a copy still here (#9); config.toml may still name it.
+RETIRED: dict[str, Model] = {m.id: m for m in (
+    Model("qwen", "Qwen3 30B A3B", "notes and projects (no longer offered)", QWEN, "config.json", 16.0,
+          "18–22 GB of memory while writing"),
+)}
 
 
 def download_size(ids: Iterable[str]) -> float:

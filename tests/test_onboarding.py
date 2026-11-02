@@ -139,8 +139,6 @@ def test_16_gb_recommends_a_cloud_model_and_explains_the_memory():
     assert pending.available and "off until" in pending.note
     gemma = next(o for o in r.options if o.value == f"local:{GEMMA}")
     assert gemma.available and "14 GB" in gemma.note  # still possible, with its catch said
-    qwen = next(o for o in r.options if o.value == f"local:{QWEN}")
-    assert not qwen.available  # needs 20 GB free: never on 16 GB
     assert not r.matches
 
 
@@ -163,11 +161,11 @@ def test_8_gb_cannot_run_gemma_at_all():
     assert r.value == "pending" and not gemma.available
 
 
-def test_qwen_is_an_alternative_only_where_it_fits():
+def test_qwen_is_no_longer_offered():
+    """It made more mistakes on German meetings than Gemma, at twice the size."""
     r = recs("Apple M4 Pro", 48)["language_model"]
-    qwen = next(o for o in r.options if o.value == f"local:{QWEN}")
-    assert qwen.available and "20 GB" in qwen.note
-    assert r.value == f"local:{GEMMA}"  # Qwen makes more mistakes on German meetings
+    assert r.value == f"local:{GEMMA}"
+    assert not any(o.value == f"local:{QWEN}" for o in r.options)
 
 
 def test_cloud_providers_are_offered_with_their_problem():

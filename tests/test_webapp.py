@@ -1634,8 +1634,10 @@ def test_provider_settings_and_the_local_model():
     assert next(p for p in lm["providers"] if p["id"] == "openai")["auth"] == "api-key"
     with pytest.raises(api.Refused):
         api.set_language_model(None, {"provider": "openai", "endpoint": "http://evil.example.com"})
-    lm = api.set_language_model(None, {"local_model": "mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit"})
-    assert lm["local"]["model"] == "mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit"
+    lm = api.set_language_model(None, {"local_model": "mlx-community/gemma-4-12B-it-OptiQ-4bit"})
+    assert lm["local"]["model"] == "mlx-community/gemma-4-12B-it-OptiQ-4bit"
+    with pytest.raises((api.Refused, ValueError)):
+        api.set_language_model(None, {"local_model": "mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit"})
 
 
 def test_test_button(monkeypatch):
@@ -2268,3 +2270,27 @@ def test_http_transcribe_again(tmp_path: Path):
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+# --- storage (#9) ---------------------------------------------------------------
+
+def test_http_delete_audio_keeps_the_meeting(server, tmp_path):
+    status, answer = _post(server, f"/api/meetings/{MEETING}/delete-audio")
+    assert status == 200 and answer["freed"] > 0
+    assert answer["has_audio"] is False and answer["audio_deleted"]["bytes"] == answer["freed"]
+    assert answer["transcript"]
+    status, again = _post(server, f"/api/meetings/{MEETING}/delete-audio")
+    assert status == 400
+
+
+def test_http_storage_reads_and_sets_the_days(server, monkeypatch):
+    from palaver import storage
+
+    monkeypatch.setattr(storage, "models", lambda cfg=None: [])
+    status, _, data = _req(server, "/api/storage")
+    s = json.loads(data)
+    assert status == 200 and s["meetings"] == 1 and s["audio_days"] == 0
+    status, s = _post(server, "/api/storage", {"audio_days": 7, "now": True})
+    assert status == 200 and s["audio_days"] == 7
+    assert set(s["dropped"]) == {"meetings", "bytes"}  # what goes by age: tests/test_storage.py
+    assert _post(server, "/api/storage", {"audio_days": 5})[0] == 400

@@ -39,6 +39,7 @@ MEETING_MENU = [
     ("Export…", "export", ""),
     ("Import…", "importMeeting", ""),  # needs no meeting; here for lack of a File menu (#58)
     None,
+    ("Delete Audio…", "deleteAudio", ""),  # #9
     ("Move to Trash", "trash", "\x08"),  # ⌘⌫
 ]
 

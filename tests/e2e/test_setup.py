@@ -166,17 +166,16 @@ def test_customize_picks_an_alternative(page, fresh, no_mcp_install):
     customize_all(page)
     lm = rec(page, "language_model")
     lm.get_by_role("button", name="Customize").click()
-    qwen = lm.get_by_role("radio", name="Qwen3 30B A3B on this Mac")
-    qwen.check()
+    expect(lm.get_by_role("radio", name="Qwen3 30B A3B on this Mac")).to_have_count(0)  # no longer offered
+    lm.get_by_role("radio", name="None yet: set up a cloud model").check()
     expect(lm.get_by_role("radio", name="Anthropic API")).to_be_disabled()  # no key yet
     expect(primary(page)).to_have_text("Use these")
     page.locator("#main .setup-customize-all").click()  # back to the summary: it shows the pick
-    expect(pack(page, "language_model")).to_contain_text("Qwen3 30B A3B on this Mac")
+    expect(pack(page, "language_model")).to_contain_text("None yet: set up a cloud model")
     expect(pack(page, "language_model")).to_contain_text("recommended: Gemma 4 12B on this Mac")
     primary(page).click()
     step_title(page, "Test recording")
-    assert settings.read_raw()["local_model"] == ob.QWEN
-    expect(page.locator("#setup-downloads")).to_contain_text("Qwen3 30B A3B")
+    assert settings.read_raw()["engines"] == {"notes": "pending", "projects": "pending"}
 
 
 def test_reopen_from_settings_with_the_recommendations(page, app_server):

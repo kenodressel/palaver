@@ -39,6 +39,9 @@ export function meetingCommands(m) {
     reviewAgain: { label: "Review Again", enabled: !!m.reviewed && !busy },
     // One file to send to a colleague (#58); a finished meeting only.
     export: { label: "Export…", paletteLabel: "Export Meeting…", enabled: ready },
+    // #9: the space goes, the transcript and notes stay; not to be played or transcribed again.
+    deleteAudio: { label: "Delete Audio…", paletteLabel: "Delete This Meeting's Audio…", danger: true,
+      enabled: ready && !!m.has_audio, hidden: !m.has_audio },
     trash: { label: "Move to Trash", shortcut: "⌘⌫", danger: true, enabled: !busy },
     // Kept on this Mac: no cloud model gets this meeting, whatever Settings say (#53).
     localOnly: { label: m.local_only ? "Allow Cloud Models" : "Keep on This Mac", enabled: true },
@@ -937,6 +940,35 @@ export function memoryTotalText(mem) {
   return mem && mem.total != null ? `Palaver uses ${sizeText(mem.total)} now.` : "";
 }
 
+// --- storage (#9) -------------------------------------------------------------------
+
+// "Audio deleted on 2 Nov to free 180 MB"; the transcript and notes stayed.
+export function audioDeletedText(d, fmt = (at) => at.toLocaleDateString("en-GB", { day: "numeric", month: "short" })) {
+  const at = d.at ? new Date(d.at) : null;
+  const on = at && !Number.isNaN(at.getTime()) ? ` on ${fmt(at)}` : "";
+  return `Audio deleted${on}${d.bytes ? ` to free ${sizeText(d.bytes)}` : ""}`;
+}
+
+// "38 meetings take 5.2 GB, 5.0 GB of it audio."
+export function storageTotalText(s) {
+  if (!s) return "";
+  const n = `${s.meetings} meeting${s.meetings === 1 ? "" : "s"}`;
+  if (!s.meetings) return "No meetings yet.";
+  return `${n} take${s.meetings === 1 ? "s" : ""} ${sizeText(s.bytes)}${s.audio_bytes ? `, ${sizeText(s.audio_bytes)} of it audio` : ", none of it audio"}.`;
+}
+
+// The choices for how long a transcribed meeting keeps its audio.
+export function audioDaysLabel(days) {
+  return days ? `After ${days} days` : "Never";
+}
+
+// What choosing ``days`` deletes right away; null when nothing is that old.
+export function audioDaysConfirm(s, days) {
+  const old = days ? s?.older?.[String(days)] : null;
+  if (!old?.meetings) return null;
+  return `The audio of ${old.meetings} meeting${old.meetings === 1 ? "" : "s"} older than ${days} days goes now (${sizeText(old.bytes)}). Their transcripts and notes stay, but they can't be played or transcribed again.`;
+}
+
 // Settings asks for the numbers again only while it is shown and the window
 // is visible.
 export function memoryPolling(view, hidden) {
@@ -1225,7 +1257,7 @@ export function paletteMatch(query, entries, limit = 30) {
 }
 
 const PALETTE_COMMANDS = ["play", "transcribe", "writeNotes", "rename", "changeEvent", "joinPrevious", "joinNext", "split", "reviewAgain",
-  "export", "localOnly", "shared", "forgetSeries", "report", "trash"];
+  "export", "localOnly", "shared", "forgetSeries", "report", "deleteAudio", "trash"];
 
 // The open meeting's commands that apply now, with their shortcuts.
 export function paletteCommands(m) {
@@ -1651,5 +1683,6 @@ export function aboutLines(m, recording, fmt = null) {
   if (!live) for (const text of audioWarnings(m, recording)) lines.push({ kind: "audio", text });
   const imported = fmt ? importedLine(m.imported, fmt) : importedLine(m.imported);
   if (imported) lines.push({ kind: "imported", text: imported });
+  if (m.audio_deleted) lines.push({ kind: "deleted", text: fmt ? audioDeletedText(m.audio_deleted, fmt) : audioDeletedText(m.audio_deleted) });
   return lines;
 }

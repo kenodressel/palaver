@@ -36,9 +36,6 @@ LOCAL_MODELS: dict[str, dict[str, Any]] = {
     "mlx-community/gemma-4-12B-it-OptiQ-4bit": {
         "label": "Gemma 4 12B", "memory_gb": notes.MODEL_MEMORY_GB["mlx-community/gemma-4-12B-it-OptiQ-4bit"],
         "context_tokens": 131_072, "running_gb": 10, "note": "The default: the most accurate on German meetings."},
-    "mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit": {
-        "label": "Qwen3 30B A3B", "memory_gb": notes.MODEL_MEMORY_GB["mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit"],
-        "context_tokens": 262_144, "running_gb": 18, "note": "Larger and slower to load; more mistakes on German meetings."},
 }
 LOCAL_CONTEXT_TOKENS = 131_072  # a local model not listed
 # Characters per token, on the low side: German, names and timestamps take

@@ -113,7 +113,7 @@ def test_the_summary_is_the_doctor_in_the_window(app):
 def test_storage_and_privacy_say_where_things_are(app):
     s = api.setup_page(app)["storage"]
     assert s["recordings"] == str(app.output_dir)
-    assert s["retention_days"] == 14 and s["autostart"] is False
+    assert s["audio_days"] == 0 and s["autostart"] is False
     assert {c["feature"]: c["choice"] for c in s["cloud"]} == {"notes": "local", "projects": "local", "coach": "local",
                                                                "transcription": "local"}
 
@@ -155,9 +155,11 @@ def test_apply_switches(app):
 
 
 def test_apply_the_local_model(app):
-    api.apply_setup(app, {"changes": {"language_model": f"local:{ob.QWEN}"}})
-    assert settings.read_raw()["local_model"] == ob.QWEN
+    api.apply_setup(app, {"changes": {"language_model": f"local:{ob.GEMMA}"}})
+    assert settings.read_raw()["local_model"] == ob.GEMMA
     assert settings.read_raw()["engines"] == {"notes": "local", "projects": "local"}
+    with pytest.raises((api.Refused, ValueError)):  # no longer offered
+        api.apply_setup(app, {"changes": {"language_model": f"local:{ob.QWEN}"}})
 
 
 def test_apply_a_cloud_model_only_when_it_is_set_up(app, fake_keychain):

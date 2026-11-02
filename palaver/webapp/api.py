@@ -20,7 +20,8 @@ import numpy as np
 import soundfile as sf
 
 from .. import (attribution, calendar_events, coach, cutting, exchange, glossary, inference, lifecycle, mcp_access,
-                my_notes, notes, organizations, people, prep, process_state, projects, settings, shared_mic, titles)
+                my_notes, notes, organizations, people, prep, process_state, projects, settings, shared_mic, storage,
+                titles)
 from .. import search as search_query
 from ..render import render_markdown
 from .. import install_layout, model_jobs, undo
@@ -752,6 +753,7 @@ def _meeting(output_dir: Path, paths: RecordingPaths, meeting_id: str, *, user_n
             for u in utterances
         ],
         "has_audio": paths.system_wav.exists(),
+        "audio_deleted": storage.deleted(paths),  # #9: its transcript stays, the audio went
         "reviewed": _read_json(paths.review, {}).get("reviewed"),
         "local_only": paths.local_only.exists(),
         "imported": _imported(paths),
@@ -1995,6 +1997,30 @@ def search_meaning(output_dir: Path, query: str, *, user_name: str, searcher=Non
 
 
 # --- audio -------------------------------------------------------------
+
+def delete_audio(output_dir: Path, meeting_id: str) -> int:
+    """#9: the meeting's audio goes, its transcript and notes stay; the bytes freed."""
+    return storage.drop_audio(meeting_paths(output_dir, meeting_id))
+
+
+def storage_status(app) -> dict[str, Any]:
+    return storage.summary(app.output_dir, app.cfg)
+
+
+def set_storage(app, body: dict) -> dict[str, Any]:
+    """{"audio_days"}: how long a transcribed meeting keeps its audio; with
+    "now", the audio older than that goes now. {"delete_model"}: a notes
+    model not in use."""
+    dropped = None
+    if "delete_model" in body:
+        storage.delete_model(app.cfg, str(body["delete_model"]))
+    if "audio_days" in body:
+        storage.set_audio_days(body["audio_days"])
+        if body.get("now"):
+            n, freed = storage.drop_old_audio(app.output_dir, storage.audio_days())
+            dropped = {"meetings": n, "bytes": freed}
+    return {**storage_status(app), "dropped": dropped}
+
 
 def _tracks(paths: RecordingPaths, track: str) -> list[Path]:
     if track == "system":
@@ -3251,7 +3277,7 @@ def setup_page(app) -> dict[str, Any]:
         "profile": profile,
         "glossary": onboarding.seed_terms(events, user_name=profile["name"] or app.user_name, known=known),
         "storage": {"recordings": str(app.output_dir),
-                    "retention_days": getattr(app.cfg, "retention_days", 14),
+                    "audio_days": storage.audio_days(),  # 0: kept; Settings → Storage (#9)
                     # The coach's own choice too (#41): not the assistant's to set, but where its text goes.
                     "cloud": [{"feature": f, "label": info["label"],
                                "choice": current.choices[f] if f in current.choices

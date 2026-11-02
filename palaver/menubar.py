@@ -16,7 +16,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import install_layout, notify, settings, usage
+from . import install_layout, notify, settings, storage, usage
 from .meter import level_bar
 
 LOGGER = logging.getLogger(__name__)
@@ -489,12 +489,16 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
             self._tracker: LevelTracker | None = None
             self._tracked_folder: str | None = None
             self._quiet_for: float | None = None  # both tracks, from the live levels
-            self.daemon = build_daemon(cfg, cli_options, silence=lambda: self._quiet_for)
+            self._others_quiet_for: float | None = None  # the system track: the others in a call (#7)
+            self.daemon = build_daemon(cfg, cli_options, silence=lambda: self._quiet_for,
+                                       others_silence=lambda: self._others_quiet_for)
             # The Meetings window's page and data, served by a process of its
             # own (#57): restarted at any time, it never touches a recording.
             # What it needs from this process goes through the app socket.
             self.test_recording = onboarding.TestRecording()  # the setup assistant's (#55): recorded here
             self.updates = Updates(self.daemon, output_dir=cfg.output_dir, test_recording=self.test_recording)  # #60
+            self.cleanup = storage.Cleanup(cfg.output_dir)  # #9: audio older than Settings say
+            threading.Thread(target=storage.drop_retired, args=(cfg,), name="retired-models", daemon=True).start()
             self._check_asked = False  # "Check for Updates…" clicked: say what the check found
             calls = appctl.app_calls(
                 self.daemon, on_main=on_main, test_recording=self.test_recording,
@@ -580,6 +584,7 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
                 self._error = True
             self.refresh()
             self._retry_calendar()
+            self.cleanup.tick()
             if self.updates.tick():  # an update is swapped in after the quit, or the user uninstalled
                 self.timer.stop()
                 rumps.quit_application()
@@ -639,8 +644,9 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
                     self._tracked_folder = status["folder"]
                 lines = recording_lines(status, self._tracker.read(), now)
                 self._quiet_for = self._tracker.quiet_for()
+                self._others_quiet_for = self._tracker.quiet_for("system")
             else:
-                self._tracker = self._tracked_folder = self._quiet_for = None
+                self._tracker = self._tracked_folder = self._quiet_for = self._others_quiet_for = None
             for item, text in zip(self.live_items, lines + [""] * len(self.live_items)):
                 item.title = text
                 # Monospaced so the level bars line up.

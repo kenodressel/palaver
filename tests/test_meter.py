@@ -106,3 +106,23 @@ def test_level_tracker_says_how_long_every_track_was_quiet(tmp_path: Path):
     now[0] = 9.0
     tracker.read()
     assert tracker.quiet_for() == 3.0
+
+
+def test_level_tracker_says_how_long_the_others_were_quiet(tmp_path: Path):
+    """#7: the user talking on the mic is no sound of the others."""
+    from palaver.meter import LevelTracker
+
+    mic, system = tmp_path / "mic.part", tmp_path / "system.part"
+    mic.write_bytes(HEADER)
+    system.write_bytes(HEADER)
+    now = [0.0]
+    tracker = LevelTracker([("mic", mic), ("system", system)], clock=lambda: now[0])
+    for t in range(1, 6):
+        _append(mic, _tone(0.5, 0.1))  # the user talks
+        now[0] = float(t)
+        tracker.read()
+    assert tracker.quiet_for() == 0.0 and tracker.quiet_for("system") == 5.0
+    _append(system, _tone(0.5, 0.1))
+    now[0] = 6.0
+    tracker.read()
+    assert tracker.quiet_for("system") == 0.0

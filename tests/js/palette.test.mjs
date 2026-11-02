@@ -46,7 +46,7 @@ test("paletteCommands: what applies to the open meeting, with its shortcut", () 
   const c = paletteCommands(m);
   assert.deepEqual(c.map((x) => x.id),
     ["play", "writeNotes", "rename", "changeEvent", "joinPrevious", "split", "export", "localOnly", "shared", "report",
-      "trash"]);
+      "deleteAudio", "trash"]);
   assert.equal(c.find((x) => x.id === "rename").label, "Rename Meeting");  // "Rename…" in the ⋯ menu
   assert.deepEqual(c.find((x) => x.id === "trash"), { kind: "command", id: "trash", label: "Move to Trash", shortcut: "⌘⌫", danger: true });
   assert.equal(c.find((x) => x.id === "writeNotes").label, "Rewrite notes");

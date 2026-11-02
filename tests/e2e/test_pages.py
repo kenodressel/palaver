@@ -139,6 +139,27 @@ def test_settings_say_how_palaver_updates_and_uninstalling_asks_first(page, app_
     expect(box).to_have_count(0)
 
 
+def test_settings_show_what_meetings_and_models_take(page, app_server, monkeypatch):
+    """#9: the meetings' size, how long audio stays (kept by default), the
+    models; only a notes model not in use offers Delete, and asks first."""
+    from palaver import storage
+
+    monkeypatch.setattr(storage, "models", lambda cfg=None: [
+        {"id": "gemma", "label": "Gemma 4 12B", "purpose": "notes and projects", "bytes": 9 * 1024 ** 3, "deletable": False},
+        {"id": "qwen", "label": "Qwen3 30B A3B", "purpose": "notes and projects", "bytes": 17 * 1024 ** 3, "deletable": True},
+    ])
+    goto(page, app_server, "#/settings")
+    section = page.locator("#storage-section")
+    expect(section.get_by_role("heading", name="Storage")).to_be_visible()
+    expect(section).to_contain_text(re.compile(r"\d+ meetings take .+ of it audio\."))
+    expect(section.get_by_role("combobox", name="Delete the audio of transcribed meetings")).to_have_value("0")
+    expect(section.locator('[data-model="gemma"] button')).to_have_count(0)
+    section.locator('[data-model="qwen"]').get_by_role("button", name="Delete").click()
+    box = page.get_by_role("dialog", name="Delete Qwen3 30B A3B?")
+    box.get_by_role("button", name="Cancel").click()
+    expect(box).to_have_count(0)
+
+
 def test_a_new_release_shows_in_the_top_bar_and_opens_settings(page, app_server, monkeypatch):
     """The top bar's "Update to 0.9.0" on every page while there is one; a click
     shows it in Settings. Up to date, the top bar says nothing."""

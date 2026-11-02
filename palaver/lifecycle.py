@@ -20,6 +20,7 @@ STOP_REASONS = {
     "restart": "Palaver restarted",
     "auto_off": "Automatic recording turned off",
     "max_length": "Reached the maximum length",
+    "silence": "Silent on this Mac for 30 minutes",  # a call taken on another device (#7)
 }
 GAP_WHY = {"restart": "Palaver restarted"}
 

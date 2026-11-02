@@ -56,3 +56,31 @@ test("memoryPolling: only while Settings is shown and the window is visible", ()
   assert.equal(memoryPolling("settings", true), false);
   assert.equal(memoryPolling("meetings", false), false);
 });
+
+// --- storage (#9) ---
+import { storageTotalText, audioDaysLabel, audioDaysConfirm, audioDeletedText, aboutLines } from "../../palaver/webapp/static/logic.js";
+import { meetingCommands } from "../../palaver/webapp/static/logic.js";
+
+test("storageTotalText: meetings, their size and the audio's share", () => {
+  assert.equal(storageTotalText({ meetings: 38, bytes: 5.2 * GB, audio_bytes: 5 * GB }), "38 meetings take 5.2 GB, 5 GB of it audio.");
+  assert.equal(storageTotalText({ meetings: 1, bytes: 0.1 * GB, audio_bytes: 0 }), "1 meeting takes 102 MB, none of it audio.");
+  assert.equal(storageTotalText({ meetings: 0, bytes: 0, audio_bytes: 0 }), "No meetings yet.");
+});
+
+test("audioDaysConfirm asks only when something goes now", () => {
+  const s = { older: { 7: { meetings: 3, bytes: 0.5 * GB }, 30: { meetings: 0, bytes: 0 } } };
+  assert.match(audioDaysConfirm(s, 7), /^The audio of 3 meetings older than 7 days goes now \(512 MB\)/);
+  assert.equal(audioDaysConfirm(s, 30), null);
+  assert.equal(audioDaysConfirm(s, 0), null);
+  assert.equal(audioDaysLabel(0), "Never");
+  assert.equal(audioDaysLabel(14), "After 14 days");
+});
+
+test("a meeting without its audio says so, and offers no Delete Audio", () => {
+  const m = { status: "ready", has_audio: false, audio_deleted: { at: "2026-11-02T10:00:00+01:00", bytes: 0.2 * GB } };
+  assert.equal(audioDeletedText(m.audio_deleted), "Audio deleted on 2 Nov to free 205 MB");
+  assert.ok(aboutLines(m, null).some((l) => l.kind === "deleted"));
+  assert.equal(meetingCommands(m).deleteAudio.hidden, true);
+  assert.equal(meetingCommands({ ...m, has_audio: true }).deleteAudio.enabled, true);
+  assert.equal(meetingCommands({ ...m, has_audio: true, status: "processing" }).deleteAudio.enabled, false);
+});

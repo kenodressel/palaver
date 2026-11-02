@@ -695,7 +695,7 @@ def test_available_memory_reads_vm_stat(monkeypatch):
 
 # --- a manual recording whose call has ended (issue #52) -----------------------
 
-from palaver.daemon import StopQuestion, stop_question_text  # noqa: E402
+from palaver.daemon import SilentCall, StopQuestion, stop_question_text  # noqa: E402
 
 
 def _ask(q: StopQuestion, timeline) -> list[tuple[float, str]]:
@@ -827,12 +827,163 @@ def test_manual_recording_asks_after_ten_silent_minutes(tmp_path: Path, sent_not
     d.shutdown()
 
 
-def test_an_automatic_recording_is_never_asked_about(tmp_path: Path, sent_notifications):
-    d, _, _ = _daemon(tmp_path, lambda now: 10 <= now < 700)
-    d._silence = lambda: 10**6
-    d.run(until=lambda: d.now() > 760)
+def test_an_automatic_recording_with_sound_is_never_asked_about(tmp_path: Path, sent_notifications):
+    d, _, _ = _daemon(tmp_path, lambda now: 10 <= now < 3000)
+    d._silence = lambda: 5.0  # someone talks
+    d.run(until=lambda: d.now() > 3060)
     assert d.status()["stop_question"] is None
     assert not any("Stop recording?" in m for _, m in sent_notifications)
+
+
+# --- a call taken on another device (#7) ---------------------------------------
+
+def test_silent_call_asks_without_the_others_and_stops_only_when_all_is_silent():
+    q = SilentCall(ask_after=600, stop_after=1800)
+    assert q.update(0, 0, 0) is None and q.update(100, None, None) is None
+    assert q.update(600, 600, 5) == "ask" and q.open == "silent_call" and q.minutes == 10  # the user talks
+    assert q.update(700, 700, 5) is None  # asked once
+    assert q.update(2000, 2000, 30) is None  # the user still talks: never stopped by itself
+    assert q.update(2100, 3, 3) is None and q.open is None  # the others are heard: the question goes
+    assert q.update(2800, 703, 703) == "ask"
+    assert q.update(4000, 1903, 1903) == "stop"
+
+
+def test_silent_call_kept_never_stops_and_asks_again_after_a_quiet_while():
+    q = SilentCall(ask_after=600, stop_after=1800, quiet_after_keep=1800)
+    assert q.update(600, 600, 600) == "ask"
+    q.keep(650)
+    assert q.update(2000, 2000, 2000) is None and q.open is None  # 1350 s since the answer
+    assert q.update(2450, 2450, 2450) == "ask"
+    assert q.update(9000, 9000, 9000) is None  # kept: it never stops by itself
+
+
+SLACK = "com.tinyspeck.slackmacgap.helper"
+TEAMS = "com.microsoft.teams2.modulehost"
+
+
+def _apps(slack=(), teams=()):
+    """A detector over fake processes: Slack and Teams hold the mic in these
+    (start, end) spans of the fake clock."""
+    clock = [0.0]
+
+    def procs():
+        now = clock[0]
+        out = []
+        if any(a <= now < b for a, b in slack):
+            out.append(_proc(SLACK, True, True))
+        if any(a <= now < b for a, b in teams):
+            out.append(_proc(TEAMS, True, True))
+        return out
+
+    return CallDetector(procs, clock=lambda: clock[0]), clock
+
+
+def _daemon_held(tmp_path, *, slack=(), teams=(), heard=(), talking=False, sessions=None, start=0.0):
+    """The daemon over a real CallDetector. The others are heard in the
+    ``heard`` spans; with ``talking`` the user always is. Silence counts
+    from the start of the running recording, as the menu bar's meter does."""
+    sessions = sessions if sessions is not None else []
+    clock = [start]
+    detector, dclock = _apps(slack, teams)
+
+    def _new_session(trigger):
+        s = _FakeSession(tmp_path / f"rec{len(sessions)}", 600.0)
+        s.t0 = clock[0]
+        sessions.append(s)
+        return s
+
+    def _sleep(seconds):
+        clock[0] += seconds
+        dclock[0] = clock[0]
+
+    def others_quiet():
+        now = clock[0]
+        if any(a <= now < b for a, b in heard):
+            return 0.0
+        last = max([b for a, b in heard if b <= now] + [sessions[-1].t0 if sessions else start])
+        return max(0.0, now - max(last, sessions[-1].t0 if sessions else start))
+
+    dclock[0] = start
+    launched = []
+    d = Daemon(detect=detector, new_session=_new_session,
+               launch_processing=lambda folder: launched.append(folder) or _Done(),
+               state_path=tmp_path / "state.json", poll_seconds=2, clock=lambda: clock[0], sleep=_sleep,
+               wall=lambda: WALL0 + timedelta(seconds=clock[0]),
+               trigger=Trigger(start_after=4, grace=10, max_session=4 * 3600),
+               others_silence=others_quiet, silence=lambda: 5.0 if talking else others_quiet())
+    return d, sessions, launched, detector
+
+
+def test_a_huddle_taken_on_the_phone_is_asked_about_then_stopped(tmp_path: Path, monkeypatch):
+    """Slack holds the Mac's microphone, nothing is heard: asked after 10 min,
+    stopped after 30, and no new recording while Slack holds on."""
+    sent = _capture_notifications(monkeypatch)
+    d, sessions, launched, detector = _daemon_held(tmp_path, slack=[(10, 10**6)])
+    d.run(until=lambda: d.now() > 640)
+    q = d.status()["stop_question"]
+    assert q["reason"] == "silent_call" and "Slack huddle" in q["message"] and not sessions[0].stopped
+    assert ("Silent for 10 min — still recording", q["message"], "rec0") in sent
+    d.run(until=lambda: d.now() > 1900)
+    assert sessions[0].stopped and sessions[0].stop_reason == "silence" and launched == [tmp_path / "rec0"]
+    assert any(t == "Recording stopped: nothing heard" for t, _, _ in sent)
+    d.run(until=lambda: d.now() > 4000)
+    assert len(sessions) == 1  # Slack still holds the mic: not a call
+    assert json.loads((tmp_path / "state.json").read_text())["ignored"] == ["slack"]
+
+
+def test_the_user_talking_next_to_the_mac_is_asked_but_never_stopped(tmp_path: Path, sent_notifications):
+    """The huddle on the phone, the user talking into it next to the Mac."""
+    d, sessions, _, _ = _daemon_held(tmp_path, slack=[(10, 10**6)], talking=True)
+    d.run(until=lambda: d.now() > 640)
+    assert d.status()["stop_question"]["reason"] == "silent_call"
+    d.run(until=lambda: d.now() > 3600)
+    assert not sessions[0].stopped
+
+
+def test_this_afternoon_a_teams_call_after_a_phone_huddle(tmp_path: Path, sent_notifications):
+    """Slack keeps the mic from a phone huddle on; a Teams call comes and
+    goes. The Teams call is recorded, Slack's stale hold never again."""
+    d, sessions, _, _ = _daemon_held(tmp_path, slack=[(10, 10**6)], teams=[(2100, 2900)], heard=[(2100, 2900)])
+    d.run(until=lambda: d.now() > 1900)
+    assert sessions[0].stop_reason == "silence"
+    d.run(until=lambda: d.now() > 4000)
+    assert len(sessions) == 2 and sessions[1].stop_reason == "call_ended"
+
+
+def test_stop_from_the_silent_call_question(tmp_path: Path, sent_notifications):
+    d, sessions, _, _ = _daemon_held(tmp_path, slack=[(10, 10**6)], teams=[(1000, 1500)], heard=[(1000, 1500)],
+                                     talking=True)
+    d.run(until=lambda: d.now() > 640)
+    assert d.answer_stop_question("stop", "rec0")
+    assert sessions[0].stopped and sessions[0].stop_reason == "by_you"
+    d.run(until=lambda: d.now() > 900)
+    assert len(sessions) == 1  # Slack's hold: not again
+    d.run(until=lambda: d.now() > 1600)
+    assert len(sessions) == 2  # a Teams call records as always
+
+
+def test_keep_a_silent_call(tmp_path: Path, sent_notifications):
+    d, sessions, _, _ = _daemon_held(tmp_path, slack=[(10, 10**6)])
+    assert not d.answer_stop_question("keep")  # nothing asked yet
+    d.run(until=lambda: d.now() > 640)
+    assert d.answer_stop_question("keep")
+    d.run(until=lambda: d.now() > 3 * 3600)
+    assert not sessions[0].stopped
+
+
+def test_an_ignored_hold_survives_a_restart_until_the_app_lets_go(tmp_path: Path, sent_notifications):
+    sessions = []
+    d, _, _, _ = _daemon_held(tmp_path, slack=[(10, 3000), (3100, 10**6)], sessions=sessions)
+    d.run(until=lambda: d.now() > 1900)
+    assert sessions[0].stop_reason == "silence"
+    d.shutdown()
+    again, _, _, detector = _daemon_held(tmp_path, slack=[(10, 3000), (3100, 10**6)], sessions=sessions,
+                                         start=2000, heard=[(3100, 10**6)])
+    assert detector.ignored == {"slack"}
+    again.run(until=lambda: again.now() > 2900)
+    assert len(sessions) == 1  # the restarted app doesn't record the same stale hold
+    again.run(until=lambda: again.now() > 3200)
+    assert len(sessions) == 2 and detector.ignored == set()  # let go, then a huddle again: recorded
 
 
 def test_a_start_right_after_a_stop_is_ignored_as_a_double_click(tmp_path: Path, caplog):
@@ -1517,3 +1668,24 @@ def test_a_switch_is_a_call_ended_for_the_meeting_before():
     _run_apps(t, [(0, "teams"), (4, "teams"), (10, "slack")])
     assert _run_apps(t, [(14, "slack")]) == [(14, "stop"), (14, "start")]
     assert t.stopped_because == "call_ended" and t.app == "slack" and t.state == "recording"
+
+
+def test_the_detector_ignores_an_apps_hold_until_it_lets_go():
+    detector, clock = _apps(slack=[(0, 100), (102, 130), (200, 300)], teams=[(50, 80)])
+    assert detector() == "slack"
+    detector.ignore("slack")
+    assert detector() is None
+    clock[0] = 60
+    assert detector() == "teams"  # another app's call
+    clock[0] = 101
+    assert detector() is None
+    clock[0] = 103
+    assert detector() is None and detector.ignored == {"slack"}  # let go for a moment only
+    clock[0] = 140
+    assert detector() is None
+    clock[0] = 150
+    assert detector() is None and detector.ignored == set()  # let go for 10 s
+    clock[0] = 250
+    assert detector() == "slack"
+    detector.ignore("zoom")
+    assert detector.ignored == set()

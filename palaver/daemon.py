@@ -53,6 +53,11 @@ INDEX_MEMORY_GB = 1.0
 # "Keep recording" makes it wait this long (issue #52).
 SILENCE_ASK_SECONDS = 10 * 60
 KEEP_QUIET_SECONDS = 30 * 60
+# A call recorded automatically that nothing of the others is heard of on
+# this Mac (#7): a huddle taken on the phone, while Slack keeps the Mac's
+# microphone. Asked after SILENCE_ASK_SECONDS of a silent system track;
+# stopped after this long with both tracks silent, unless the user said keep.
+SILENT_CALL_STOP_SECONDS = 30 * 60
 # A manual start this soon after a stop is a double click on the menu item.
 DOUBLE_CLICK_SECONDS = 3.0
 # A recording cut by Palaver quitting is continued by the next one of the
@@ -166,9 +171,13 @@ class Trigger:
 _CALL_NAMES = {"teams": "Teams call", "slack": "Slack huddle"}
 
 
-def stop_question_text(reason: str, minutes: int) -> str:
+def stop_question_text(reason: str, minutes: int, app: str | None = None) -> str:
     """The question for a manual recording that ran on: ``reason`` is the
-    call app that ended ("teams", "slack") or "silence"."""
+    call app that ended ("teams", "slack") or "silence"; "silent_call" for a
+    call recorded automatically that nothing is heard of (``app``)."""
+    if reason == "silent_call":
+        return (f"Nothing has been heard from the others in your {_CALL_NAMES.get(app or '', 'call')} on this Mac "
+                f"for {minutes} minutes. Taken on another device? Stop recording?")
     if reason in _CALL_NAMES:
         return f"You started this recording yourself, and your {_CALL_NAMES[reason]} just ended. Stop recording?"
     return f"You started this recording yourself, and it has been silent for {minutes} minutes. Stop recording?"
@@ -232,6 +241,47 @@ class StopQuestion:
     def _ask(self, reason: str) -> str:
         self.open, self._call, self._released_since = reason, None, None
         return reason
+
+
+class SilentCall:
+    """Whether a call recorded automatically runs on this Mac (#7): the app
+    holds the microphone, but nothing of the others is heard. Pure: fed
+    (time, seconds the system track was silent, seconds both were; None:
+    not known). Asks after ``ask_after`` without the others, even while the
+    user talks (a huddle on the phone, next to the Mac); stops by itself only
+    after ``stop_after`` with both silent, so a long talk of the user's is
+    never cut. Kept, it asks again after ``quiet_after_keep`` counted from
+    the answer, and never stops by itself."""
+
+    def __init__(self, *, ask_after: float = SILENCE_ASK_SECONDS, stop_after: float = SILENT_CALL_STOP_SECONDS,
+                 quiet_after_keep: float = KEEP_QUIET_SECONDS):
+        self.ask_after, self.stop_after, self.quiet_after_keep = ask_after, stop_after, quiet_after_keep
+        self.open: str | None = None  # "silent_call" while asked, until answered or sound comes back
+        self.minutes = round(ask_after / 60)
+        self._asked = False
+        self._kept_at: float | None = None
+
+    def keep(self, now: float) -> None:
+        self.open, self._asked, self._kept_at = None, False, now
+
+    def update(self, now: float, others_silent: float | None, all_silent: float | None = None) -> str | None:
+        """"ask" or "stop" when that is to happen now, else None."""
+        if others_silent is None:
+            return None
+        if self._kept_at is not None:
+            others_silent = min(others_silent, now - self._kept_at)
+            threshold = self.quiet_after_keep
+        else:
+            threshold = self.ask_after
+        if others_silent < threshold:
+            self.open, self._asked = None, False  # the others are heard: nothing to ask
+            return None
+        if self._kept_at is None and all_silent is not None and all_silent >= self.stop_after:
+            return "stop"
+        if self._asked:
+            return None
+        self.open, self._asked, self.minutes = "silent_call", True, round(threshold / 60)
+        return "ask"
 
 
 class DaemonRunning(RuntimeError):
@@ -376,6 +426,7 @@ class Daemon:
         live: Callable[[], bool] = lambda: True,
         before_record: Callable[[], Any] = contextlib.nullcontext,
         silence: Callable[[], float | None] = lambda: None,
+        others_silence: Callable[[], float | None] = lambda: None,
         live_running: Callable[[Path], bool] = lambda folder: False,
         stop_live: Callable[[Path], None] = lambda folder: None,
         done_marker: str = "notion.json",
@@ -407,6 +458,7 @@ class Daemon:
         # Held around a recording's start: the setup assistant's test recording gives way (#55).
         self._before_record = before_record
         self._silence = silence  # seconds both tracks were silent; None: not known
+        self._others_silence = others_silence  # seconds the system track was (#7)
         self._live_running = live_running
         self._stop_live = stop_live
         self._waiting_since: dict[Path, float] = {}
@@ -471,6 +523,7 @@ class Daemon:
         self._auto = True  # record Teams calls automatically
         self._manual = False  # current session was started by hand
         self._question: StopQuestion | None = None  # whether to ask to stop a manual one
+        self._silent: SilentCall | None = None  # whether a call recorded automatically is heard here (#7)
         self._stopped_at: float | None = None  # when a recording last stopped
         self._notified_problems: set[int] = set()  # audio incidents of the running recording seen
         self._notified_at: float | None = None  # the start of the last one a notification was sent for
@@ -479,6 +532,8 @@ class Daemon:
         if state.get("state") not in (None, "stopped") and pid != os.getpid() and palaver_alive(pid):
             raise DaemonRunning(f"Palaver is already running (pid {pid}); quit it before starting another one.")
         self._recover_crash(state)
+        for app in state.get("ignored") or []:  # an app's stale hold on the mic, across a restart (#7)
+            self._ignore(app)
 
     def now(self) -> float:
         return self._clock()
@@ -504,9 +559,57 @@ class Daemon:
                     self._start()
                 else:
                     self._stop(self._trigger.stopped_because)
+        self._watch_silent_call()
         self._watch_audio()
         self._pump_processing()
         self._write_state()
+
+    def _watch_silent_call(self) -> None:
+        """A call recorded automatically that nothing is heard of on this Mac
+        (#7): asked about, then stopped; no new recording until the app lets
+        go of the microphone."""
+        if self._session is None or self._manual or self._folder is None:
+            self._silent = None
+            return
+        if self._silent is None:
+            self._silent = SilentCall()
+        try:
+            others, silent_for = self._others_silence(), self._silence()
+        except Exception:
+            LOGGER.debug("reading the silence failed", exc_info=True)
+            others = silent_for = None
+        action = self._silent.update(self.now(), others, silent_for)
+        app = self._call_app
+        name = _CALL_NAMES.get(app, "call")
+        if action == "ask":
+            minutes = self._silent.minutes
+            LOGGER.info("asking whether to stop %s: silent for %d min", self._folder.name, minutes)
+            notify.notify(stop_question_title("silence", minutes),
+                          stop_question_text("silent_call", minutes, self._call_app), self._folder.name)
+        elif action == "stop":
+            LOGGER.info("stopping %s: silent for %d min", self._folder.name, round(silent_for / 60))
+            self._stop("silence")
+            self._release_hold(app)
+            notify.notify("Recording stopped: nothing heard",
+                          f"Your {name} was silent on this Mac for {round(SILENT_CALL_STOP_SECONDS / 60)} minutes. "
+                          f"Palaver records {name}s again once the app lets go of the microphone; other calls as "
+                          "always.")
+
+    def _ignore(self, app: str | None) -> bool:
+        ignore = getattr(self._detect, "ignore", None)
+        if ignore is None or app is None:
+            return False
+        ignore(app)
+        return True
+
+    def _release_hold(self, app: str | None) -> None:
+        """A call stopped while ``app`` keeps the mic: that app's hold is no
+        call until it lets go; another app's call records as always. A
+        detector that can't tell apps apart blocks until the mic is free."""
+        if self._ignore(app):
+            self._trigger.reset()
+        else:
+            self._trigger.block_until_released()
 
     def _watch_audio(self) -> None:
         """One notification per cause of audio trouble in the running
@@ -564,38 +667,46 @@ class Daemon:
         return self._session is not None
 
     def stop_manual(self) -> None:
-        """Stop whatever is recording; don't restart until Teams releases the mic."""
+        """Stop whatever is recording; don't restart until the call app
+        releases the mic (another app's call records, #7)."""
+        call = self._session is not None and not self._manual
         if self._session is not None:
             self._stop("by_you")
         self._manual = False
-        self._trigger.block_until_released()
+        if call:
+            self._release_hold(self._call_app)
+        else:
+            self._trigger.block_until_released()
         self._pump_processing()
         self._write_state()
 
     def stop_question(self) -> dict | None:
         """The open question whether to stop the manual recording, or None."""
-        q, folder = self._question, self._folder
+        q, folder = self._question if self._manual else self._silent, self._folder
         if q is None or not q.open or folder is None:
             return None
         return {"meeting": folder.name, "reason": q.open, "minutes": q.minutes,
-                "message": stop_question_text(q.open, q.minutes)}
+                "message": stop_question_text(q.open, q.minutes, self._call_app)}
 
     def answer_stop_question(self, choice: str, meeting: str | None = None) -> bool:
         """"stop" or "keep", for the manual recording ``meeting`` (None: the
         one running). False when that recording is no longer running (or
         no question is open, for "keep")."""
-        if choice not in ("stop", "keep") or not self._manual or self._folder is None:
+        if choice not in ("stop", "keep") or self._folder is None:
             return False
+        if not self._manual and (self._silent is None or not self._silent.open):
+            return False  # an automatic recording is asked about only when silent (#7)
         if meeting is not None and meeting != self._folder.name:
             return False
         if choice == "stop":
-            LOGGER.info("stopping the manual recording %s as asked", self._folder.name)
+            LOGGER.info("stopping the recording %s as asked", self._folder.name)
             self.stop_manual()
             return True
-        if self._question is None or not self._question.open:
+        q = self._question if self._manual else self._silent
+        if q is None or not q.open:
             return False
-        LOGGER.info("keeping the manual recording %s", self._folder.name)
-        self._question.keep(self.now())
+        LOGGER.info("keeping the recording %s", self._folder.name)
+        q.keep(self.now())
         self._write_state()
         return True
 
@@ -663,6 +774,7 @@ class Daemon:
             "missing": list(getattr(self._session, "missing", [])),
             "teams_active": self._last_active,
             "stop_question": self.stop_question(),
+            "ignored": sorted(getattr(self._detect, "ignored", ())),  # kept across a restart (#7)
             "why": why,
             "why_text": self._why_text(why),
             "warnings": lifecycle.recording_warnings(why),
@@ -846,7 +958,10 @@ class Daemon:
         self._session, self._folder, self._trigger_name = session, folder, trigger
         self._notified_problems, self._notified_at = set(), None
         self._since = self._wall()
-        LOGGER.info("%s call detected; recording to %s", self._call_app.capitalize(), folder)
+        if self._manual:
+            LOGGER.info("recording started by you; recording to %s", folder)
+        else:
+            LOGGER.info("%s call detected; recording to %s", self._call_app.capitalize(), folder)
         if continues:
             cut, self._cut = self._cut, None
             parts = [Path(f) for f in cut["folders"] if Path(f).is_dir()]
@@ -1053,8 +1168,8 @@ class Daemon:
         return self._live_running(folder)
 
     def _stop(self, reason: str | None = None) -> None:
-        """``reason``: "call_ended", "max_length", "by_you", "auto_off" or
-        "restart" (Palaver quits) — kept in meta.json (lifecycle)."""
+        """``reason``: "call_ended", "max_length", "by_you", "auto_off",
+        "silence" (#7) or "restart" (Palaver quits) — kept in meta.json (lifecycle)."""
         session, folder, trigger, since = self._session, self._folder, self._trigger_name, self._since
         parts, before = self._parts, self._parts_seconds
         self._session, self._folder, self._trigger_name = None, None, None
@@ -1065,7 +1180,7 @@ class Daemon:
                 coach.stop()
             except Exception:
                 LOGGER.exception("could not stop the live coach")
-        self._manual, self._question = False, None
+        self._manual, self._question, self._silent = False, None, None
         if session is not None:
             self._stopped_at = self.now()
         self._since = self._wall()
@@ -1414,7 +1529,8 @@ def read_status(state_path: Path | None = None) -> str:
     return line
 
 
-def build_daemon(cfg, cli_options: list[str] = (), silence: Callable[[], float | None] = lambda: None) -> Daemon:
+def build_daemon(cfg, cli_options: list[str] = (), silence: Callable[[], float | None] = lambda: None,
+                 others_silence: Callable[[], float | None] = lambda: None) -> Daemon:
     """The daemon as `daemon` and `menubar` run it. ``silence``: seconds both
     tracks of the running recording were silent (the menu bar's levels)."""
     from . import live, live_coach, llm, onboarding, semantic, settings
@@ -1453,6 +1569,7 @@ def build_daemon(cfg, cli_options: list[str] = (), silence: Callable[[], float |
         live_coach=lambda folder: live_coach.LiveCoach(
             folder, enabled=lambda: live_coach.enabled_kinds(current()), context=lambda: _coach_context(cfg)),
         silence=silence,
+        others_silence=others_silence,
         calendar_event_at=_calendar_lookup(cfg),
         watchdog=memory.Watchdog(memory.budgets_for(cfg), free_gb=available_memory_gb,
                                  budget_for=memory.budget_hook(cfg)),

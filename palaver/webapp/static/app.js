@@ -14,6 +14,7 @@ import { meetingCommands, nextAfter, laneCommands, laneLines, linesText, namingT
   clientName, mcpIndicator, mcpArgsText, mcpSizeText, mcpReadOf, logShown, logClients, logMeetings,
   clearedText, linkTitle, eventLinkView, eventChangeText,
   noteKind, relatedOnly, firstMoment, chipRemoved, untranscribedText, memoryRows, memoryTotalText, memoryPolling,
+  sizeText, storageTotalText, audioDaysLabel, audioDaysConfirm,
   SETUP_STEPS, setupStepAfter, setupStepBefore, stepButtons, gbText, downloadsText,
   downloadProgress, permissionText, recommendedHint, setupOfferText, testRecordingText, seedChecked,
   optionLabel, liveCoachFor, speakingText, questionsNote, questionButton, heartbeat, notesFromJobs,
@@ -905,6 +906,7 @@ const ICONS = {
   shared: "M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM16 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM2 20c0-3 3-5 6-5s6 2 6 5M14.5 15.3A6.5 6.5 0 0 1 16 15c3 0 6 2 6 5",
   report: "M5 21V4M5 4h12l-2 4 2 4H5",
   trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
+  deleteAudio: "M4 9h4l5-4v14l-5-4H4zM16 9l5 6M21 9l-5 6",
 };
 
 // What each command does to a meeting; ``from`` is the button (⋯ or the
@@ -934,12 +936,13 @@ const ACTIONS = tracked("meeting", {
   forgetSeries: (m, from) => rememberSeries(m, false, from),
   export: (m) => openExport(m, titleOf(m)),
   report: (m) => openReport(m.id),
+  deleteAudio: (m, from) => deleteAudio(m, from),
   trash: (m, from) => trashMeeting(m, from),
 });
 
 // The ⋯ menu, in the spec's order: Move to Trash last, red, after a separator.
 const MENU_ORDER = ["transcribe", "rename", "changeEvent", "joinPrevious", "joinNext", "split", "reviewAgain", "export", "localOnly",
-  "shared", "forgetSeries", "report", null, "trash"];
+  "shared", "forgetSeries", "report", null, "deleteAudio", "trash"];
 function itemsFor(m, from) {
   const c = meetingCommands(m);
   return MENU_ORDER.filter((name) => !name || !c[name].hidden).map((name) => name && {
@@ -3791,6 +3794,32 @@ async function transcribeAgain(m, from) {
   loadList();  // its state in the list too
 }
 
+// #9: asked first; the audio can't come back.
+async function deleteAudio(m, from) {
+  const answer = await dialog({
+    title: "Delete this meeting's audio?",
+    body: [h("p", { class: "meta" }, `“${titleOf(m)}” keeps its transcript, notes and speakers. Without the audio it `,
+      "can't be played, exported with its audio or transcribed again. This can't be undone.")],
+    buttons: [{ label: "Cancel" }, { label: "Delete Audio", value: "delete" }],
+  }).result;
+  if (answer !== "delete") return;
+  let updated;
+  try {
+    updated = await working(from, api(`/api/meetings/${encodeURIComponent(m.id)}/delete-audio`, {}));
+  } catch (err) {
+    errorToast(`Audio not deleted: ${err.message}`);
+    return;
+  }
+  if (state.meeting?.id === m.id) {
+    audio.pause();
+    audio.removeAttribute("src");
+    $("#player").hidden = true;
+    state.meeting = updated;
+    renderMeeting();
+  }
+  toast(`Audio deleted: ${sizeText(updated.freed)} free again.`, { short: true });
+}
+
 async function reviewAgain(m) {
   try {
     await putBackInReview(m.id);
@@ -3986,8 +4015,8 @@ async function openSettings(how = "push") {
   const here = leaveMeeting("settings", "#/settings", how);
   try {
     let rec;
-    [state.settings, state.lm, state.tr, , , rec, state.update, state.calendar] = await Promise.all([api("/api/settings"),
-      api("/api/language-model"), api("/api/transcription"), refreshMcp(), refreshMemory(),
+    [state.settings, state.lm, state.tr, , , , rec, state.update, state.calendar] = await Promise.all([api("/api/settings"),
+      api("/api/language-model"), api("/api/transcription"), refreshMcp(), refreshMemory(), refreshStorage(),
       // "Recommended for this Mac" (#55): the setup assistant's recommendations; the page works without them.
       api("/api/setup/recommendations").catch(() => null),
       api("/api/update").catch(() => null), api("/api/setup/calendar").catch(() => null)]);
@@ -4011,7 +4040,10 @@ function calendarCard() {
   return h("div", { class: "gloss-card settings-card", id: "calendar-card" },
     h("div", { class: "lm-row" },
       h("span", {}, h("strong", {}, "Calendar"), " ", h("span", { class: `setup-check-detail calendar-${t.status}` }, t.text), h("br"),
-        h("span", { class: "meta" }, "Each meeting's title and invitees come from the macOS calendar, on this Mac. Palaver never changes anything in it.")),
+        h("span", { class: "meta" }, "Each meeting's title and invitees come from the macOS calendar, on this Mac. Palaver never changes anything in it."),
+        // #10: Microsoft 365 comes in through macOS, not a sign-in of Palaver's own.
+        h("br"), h("span", { class: "meta" }, "Microsoft 365, Exchange or Google: add the account in System Settings → Internet Accounts ",
+          "with Calendars on. If your organization blocks that, its admin approves it once.")),
       cal && cal.state !== "granted" ? h("button", { type: "button", class: "btn", onclick: (e) => connectCalendarHere(e.currentTarget) },
         cal.state === "denied" ? "Open System Settings" : "Connect Calendar") : null));
 }
@@ -4115,7 +4147,7 @@ function renderSettings() {
   }
   if (state.tr) page.append(...renderTranscription(state.tr));
   if (state.lm) page.append(...renderLanguageModel(state.lm));
-  page.append(renderMemorySection(), renderMcpSection(), renderUpdateSection(),
+  page.append(renderMemorySection(), renderStorageSection(), renderMcpSection(), renderUpdateSection(),
     h("h2", {}, "Help"),
     h("div", { class: "gloss-card settings-card" },
       h("p", { class: "meta" }, "Something went wrong, or you wish Palaver did something differently? A report puts ",
@@ -4262,6 +4294,79 @@ function renderMemorySection() {
 }
 
 setInterval(() => { if (memoryPolling(state.view, document.hidden)) refreshMemory(); }, 5000);
+
+// --- storage (#9) --------------------------------------------------------------------
+
+async function refreshStorage() {
+  try {
+    state.storage = await api("/api/storage");
+  } catch {
+    return;
+  }
+  document.getElementById("storage-section")?.replaceWith(renderStorageSection());
+}
+
+// What the meetings and the models take, how long a meeting keeps its audio,
+// and a notes model no longer used to delete.
+function renderStorageSection() {
+  const s = state.storage;
+  const section = h("section", { id: "storage-section" }, h("h2", {}, "Storage"));
+  if (!s) return section;
+  const select = h("select", { "aria-label": "Delete the audio of transcribed meetings" },
+    s.days.map((d) => h("option", { value: String(d), selected: d === s.audio_days }, audioDaysLabel(d))));
+  select.addEventListener("change", () => changeAudioDays(Number(select.value), select));
+  section.append(h("div", { class: "gloss-card settings-card" },
+    h("p", {}, storageTotalText(s)),
+    h("div", { class: "lm-row" }, h("span", {}, "Delete the audio of transcribed meetings"), select),
+    h("p", { class: "meta" }, "Transcripts, notes and speakers stay. Without its audio a meeting can't be played or ",
+      "transcribed again. A single meeting's audio: Delete Audio… in its ⋯ menu."),
+    s.models.map((mod) => h("div", { class: "lm-row", "data-model": mod.id },
+      h("span", {}, mod.label, h("span", { class: "meta" }, ` · ${mod.purpose}`)),
+      h("span", { class: "storage-size" }, h("span", { class: "meta" }, sizeText(mod.bytes)),
+        mod.deletable ? h("button", { type: "button", class: "btn btn-quiet small",
+          onclick: (e) => deleteModel(mod, e.currentTarget) }, "Delete") : null))),
+    h("p", { class: "meta" }, `Meetings are in ${s.folder}. Models from Hugging Face are in ~/.cache/huggingface.`)));
+  return section;
+}
+
+async function changeAudioDays(days, select) {
+  const ask = audioDaysConfirm(state.storage, days);
+  if (ask) {
+    const answer = await dialog({ title: "Delete old audio now?", body: [h("p", { class: "meta" }, ask)],
+      buttons: [{ label: "Cancel" }, { label: "Delete Audio", value: "delete" }] }).result;
+    if (answer !== "delete") {
+      select.value = String(state.storage.audio_days);
+      return;
+    }
+  }
+  try {
+    state.storage = await api("/api/storage", { audio_days: days, now: true });
+  } catch (err) {
+    errorToast(`Not saved: ${err.message}`);
+    select.value = String(state.storage.audio_days);
+    return;
+  }
+  const d = state.storage.dropped;
+  toast(d?.meetings ? `Audio of ${d.meetings} meeting${d.meetings === 1 ? "" : "s"} deleted: ${sizeText(d.bytes)} free again.`
+    : "Saved.", { short: true });
+  document.getElementById("storage-section")?.replaceWith(renderStorageSection());
+}
+
+async function deleteModel(mod, button) {
+  const answer = await dialog({ title: `Delete ${mod.label}?`,
+    body: [h("p", { class: "meta" }, `Palaver doesn't use it now. It frees ${sizeText(mod.bytes)}; choosing it again in `,
+      "Language model downloads it again.")],
+    buttons: [{ label: "Cancel" }, { label: "Delete", value: "delete" }] }).result;
+  if (answer !== "delete") return;
+  try {
+    state.storage = await busy(button, api("/api/storage", { delete_model: mod.id }));
+  } catch (err) {
+    errorToast(`Not deleted: ${err.message}`);
+    return;
+  }
+  toast(`${mod.label} deleted: ${sizeText(mod.bytes)} free again.`, { short: true });
+  document.getElementById("storage-section")?.replaceWith(renderStorageSection());
+}
 
 // --- settings: the language model (#53) ---------------------------------------------
 
@@ -5027,7 +5132,7 @@ function recommendedStep(p, next) {
         h("p", { class: "meta" }, "Calls are only recorded while Palaver runs.")),
       h("p", { class: "meta" }, cloud.length
         ? `${cloud.map((c) => c.label).join(" and ")} use a cloud model; everything else runs on this Mac. Meetings are kept in ${s.recordings}.`
-        : `Everything runs on this Mac: nothing leaves it. Meetings are kept in ${s.recordings}, their audio ${s.retention_days} days.`),
+        : `Everything runs on this Mac: nothing leaves it. Meetings are kept in ${s.recordings}${s.audio_days ? `, their audio ${s.audio_days} days` : ""}.`),
       d.needed.length ? h("p", { class: fits ? "meta setup-downloads" : "meta setup-downloads error" },
         `${downloadsText(d.needed)} ${Math.round(d.free_disk_gb)} GB free on this Mac.${fits ? " They download in the background." : " Free up space first."}`) : null,
       disk ? h("p", { class: "meta error" }, disk.reason) : null,

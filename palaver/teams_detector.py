@@ -32,6 +32,7 @@ _PROCESS_RUNNING_OUTPUT = 0x7069726F  # 'piro'
 
 TEAMS_BUNDLE_PREFIXES = ("com.microsoft.teams",)
 SLACK_BUNDLE_PREFIXES = ("com.tinyspeck.slackmacgap",)
+RELEASED_SECONDS = 10.0  # an ignored app's hold ends once it let go this long (#7)
 
 
 class _Address(ctypes.Structure):
@@ -154,6 +155,21 @@ class CallDetector:
         self._in_huddle = False
         self._audio: str | None = None
         self._mic_since: dict[str, float] = {}  # app → since when it holds the mic
+        # Apps whose hold on the mic is no call here (#7): Slack keeps the Mac's
+        # microphone after a huddle was taken on the phone. Not a call until
+        # the app has let go of the mic for RELEASED_SECONDS: Slack lets go for
+        # a second or two now and then. App → since when it let go, or None.
+        self._ignored: dict[str, float | None] = {}
+
+    @property
+    def ignored(self) -> set[str]:
+        return set(self._ignored)
+
+    def ignore(self, app: str) -> None:
+        """``app``'s hold on the microphone is no call, until it lets go."""
+        if app in ("teams", "slack"):
+            LOGGER.info("ignoring %s's hold on the microphone until it lets go", app)
+            self._ignored[app] = None
 
     def __call__(self) -> str | None:
         processes = self._list()
@@ -164,6 +180,15 @@ class CallDetector:
             ("teams", self._teams() and any(p.running_input and _app(p, TEAMS_BUNDLE_PREFIXES) for p in processes)),
             ("slack", any(p.running_input for p in slack))) if on}
         now = self._clock()
+        for app, since in list(self._ignored.items()):
+            if app in holding:
+                self._ignored[app] = None
+            elif since is None:
+                self._ignored[app] = now
+            elif now - since >= RELEASED_SECONDS:
+                LOGGER.info("%s let go of the microphone", app)
+                del self._ignored[app]
+        holding -= set(self._ignored)
         self._mic_since = {app: self._mic_since.get(app, now) for app in holding}
         if "slack" in holding:
             self._in_huddle = True
@@ -171,7 +196,7 @@ class CallDetector:
             return max(sorted(holding, key=lambda app: app != "teams"), key=lambda app: self._mic_since[app])
         if not slack_on:
             return None
-        if self._in_huddle and any(p.running_output for p in slack):
+        if self._in_huddle and "slack" not in self.ignored and any(p.running_output for p in slack):
             return "slack"  # muted: the others still play
         self._in_huddle = False
         return None

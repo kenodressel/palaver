@@ -244,6 +244,8 @@ def _handler(app: App, port: int, key: str | None = None) -> type[BaseHTTPReques
                     return self._json(api.memory_status(app.recording))
                 if url.path == "/api/update":  # #60
                     return self._json(api.update_status())
+                if url.path == "/api/storage":  # #9
+                    return self._json(api.storage_status(app))
                 if url.path == "/api/upcoming":
                     return self._json(api.upcoming(app.calendar))
                 if url.path == "/api/mcp":
@@ -391,6 +393,11 @@ def _handler(app: App, port: int, key: str | None = None) -> type[BaseHTTPReques
                     api.transcribe_again(app.output_dir, m.group(1), app.recording, app.cfg)
                     return self._json(api.get_meeting(app.output_dir, m.group(1), user_name=app.user_name,
                                                       calendar=app.calendar))
+                m = re.fullmatch(r"/api/meetings/([^/]+)/delete-audio", self.path)
+                if m:
+                    freed = api.delete_audio(app.output_dir, m.group(1))
+                    return self._json({**api.get_meeting(app.output_dir, m.group(1), user_name=app.user_name,
+                                                         calendar=app.calendar), "freed": freed})
                 m = re.fullmatch(r"/api/meetings/([^/]+)/export", self.path)
                 if m:
                     return self._json(api.export_meeting(
@@ -414,6 +421,8 @@ def _handler(app: App, port: int, key: str | None = None) -> type[BaseHTTPReques
                     return self._json(api.answer_recording_question(app.recording, m.group(1), str(body["meeting"])))
                 if self.path in ("/api/update/check", "/api/update/install"):
                     return self._json(api.update_action(self.path.rsplit("/", 1)[1]))
+                if self.path == "/api/storage":
+                    return self._json(api.set_storage(app, body))
                 if self.path == "/api/uninstall":
                     return self._json(api.uninstall_palaver(body))
                 if self.path == "/api/mcp/clear":

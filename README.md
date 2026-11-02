@@ -37,7 +37,15 @@ changed:
 |---|---|---|---|
 | App: Palaver's code and its launcher | `~/Applications/Palaver.app` | 3 MB | every release |
 | Runtime: a standalone Python ([python-build-standalone](https://github.com/astral-sh/python-build-standalone)) with every locked dependency, prebuilt | `~/Library/Application Support/palaver/runtime/<id>/` | 530 MB download, 1.6 GB on disk | when `uv.lock` changes |
-| Models | `~/Library/Application Support/palaver/models/` (pyannote, hosted with the release: no token) and `~/.cache/huggingface` (Parakeet, the notes model) | up to ~10 GB | once, again when a model changes |
+| Models | `~/Library/Application Support/palaver/models/` (pyannote, hosted with the release: no token) and `~/.cache/huggingface` (Parakeet, the notes model, the search model) | ~12 GB (Parakeet 2.5, Gemma 4 12B 9, search 0.5) | once, again when a model changes |
+
+**Storage.** A meeting is about 350 MB of audio per hour (three 16 kHz WAV tracks)
+plus its transcript and notes. Settings → Storage shows what the meetings and
+the models take, deletes the audio of transcribed meetings after 7, 14, 30 or
+90 days (never, by default), and deletes a notes model no longer chosen. Qwen3 30B A3B, offered until 0.3.9, is deleted at the
+first start after the update unless config.toml names it. A
+single meeting's audio goes with Delete Audio… in its ⋯ menu; its transcript,
+notes and speakers stay, but it can't be played or transcribed again.
 
 **Updates.** Palaver looks for a new release at start, every hour and when you open its window (one
 anonymous request for the release's `manifest.json`; turn it off in Settings →

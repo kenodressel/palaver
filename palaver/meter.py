@@ -87,6 +87,7 @@ class LevelTracker:
         self._offsets = {label: _HEADER_SIZE for label, _ in self._tracks}
         self._last_audio = {label: start for label, _ in self._tracks}
         self._last_sound = start
+        self._last_sound_of = {label: start for label, _ in self._tracks}
         self._last_read = start
 
     def read(self) -> list[tuple[str, float | None, float]]:
@@ -98,13 +99,14 @@ class LevelTracker:
             if db is not None:
                 self._last_audio[label] = now
                 if db >= self._sound_dbfs:
-                    self._last_sound = now
+                    self._last_sound = self._last_sound_of[label] = now
             readings.append((label, db, now - self._last_audio[label]))
         return readings
 
-    def quiet_for(self) -> float:
-        """Seconds, up to the last ``read()``, that no track had sound."""
-        return self._last_read - self._last_sound
+    def quiet_for(self, label: str | None = None) -> float:
+        """Seconds, up to the last ``read()``, that no track had sound (or
+        the track ``label``: "system", the others in a call)."""
+        return self._last_read - (self._last_sound if label is None else self._last_sound_of[label])
 
     def _read_new(self, label: str, path: Path) -> float | None:
         try:
