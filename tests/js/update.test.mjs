@@ -61,3 +61,21 @@ test("Today leads with a card while a release waits for a click", async () => {
     assert.equal(updateCard(u), null);  // under way (the top bar follows it), or nothing to install
   }
 });
+
+test("up to date says when it looked", () => {
+  const at = Date.UTC(2026, 10, 2, 15, 1) / 1000;
+  assert.equal(updateView({ state: "up_to_date", current: "0.3.10", checked_at: at }, (d) => d.toISOString().slice(11, 16)).text,
+    "Palaver 0.3.10 is the latest version (checked at 15:01).");
+  assert.equal(updateView({ state: "up_to_date", current: "0.3.10" }).text, "Palaver 0.3.10 is the latest version.");
+});
+
+import { SETTINGS_PANES, settingsPane } from "../../palaver/webapp/static/logic.js";
+
+test("settingsPane: a pane, an older section's pane, else General", () => {
+  assert.equal(settingsPane("storage"), "storage");
+  assert.equal(settingsPane("update"), "update");  // the update notification's settings/update
+  assert.equal(settingsPane("live"), "recording");
+  assert.equal(settingsPane(undefined), "general");
+  assert.equal(settingsPane("nope"), "general");
+  assert.equal(SETTINGS_PANES[0][0], "general");
+});

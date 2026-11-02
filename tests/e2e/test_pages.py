@@ -88,7 +88,7 @@ def test_the_filter_shows_one_persons_meetings(page, shared_server):
 
 
 def test_a_settings_switch_persists_after_reload(page, app_server):
-    goto(page, app_server, "#/settings")
+    goto(page, app_server, "#/settings/recording")
     switch = page.get_by_role("switch", name="Realtime transcription")
     expect(switch).to_be_checked()  # on by default
     page.locator("label.switch-row", has_text="Realtime transcription").click()
@@ -102,7 +102,7 @@ def test_a_settings_switch_persists_after_reload(page, app_server):
 
 def test_a_provider_card_saves_its_key_with_one_save(page, app_server, fake_keychain):
     """No separate "Save key": the card's Save stores a key typed into it, then the rest."""
-    goto(page, app_server, "#/settings")
+    goto(page, app_server, "#/settings/language-model")
     card = page.locator(".settings-card", has=page.get_by_role("heading", name="Anthropic API"))
     expect(card.get_by_role("button", name="Save key")).to_have_count(0)
     card.get_by_role("textbox", name="Model for Anthropic API").fill("claude-test-model")
@@ -114,7 +114,9 @@ def test_a_provider_card_saves_its_key_with_one_save(page, app_server, fake_keyc
     anthropic = next(p for p in app_server.api("/api/language-model")["providers"] if p["label"] == "Anthropic API")
     assert anthropic["model"] == "claude-test-model" and anthropic["key_set"]
 
-    # Enter in the key field is that Save too: a transcription service.
+    # Enter in the key field is that Save too: a transcription service, in its own pane.
+    page.locator(".settings-nav").get_by_role("link", name="Transcription").click()
+    expect(page).to_have_url(re.compile("#/settings/transcription$"))
     card = page.locator(".settings-card", has=page.get_by_role("heading", name="Soniox"))
     field = card.get_by_role("textbox", name="API key for Soniox")
     field.fill("soniox-key")
@@ -127,7 +129,7 @@ def test_a_provider_card_saves_its_key_with_one_save(page, app_server, fake_keyc
 def test_settings_say_how_palaver_updates_and_uninstalling_asks_first(page, app_server):
     """#60: a checkout has no updates; "Uninstall Palaver…" asks, and Cancel
     changes nothing."""
-    goto(page, app_server, "#/settings")
+    goto(page, app_server, "#/settings/update")
     section = page.locator("#update-section")
     expect(section.get_by_role("heading", name="Updates")).to_be_visible()
     expect(section.get_by_role("status")).to_contain_text("runs from a checkout")
@@ -148,7 +150,7 @@ def test_settings_show_what_meetings_and_models_take(page, app_server, monkeypat
         {"id": "gemma", "label": "Gemma 4 12B", "purpose": "notes and projects", "bytes": 9 * 1024 ** 3, "deletable": False},
         {"id": "qwen", "label": "Qwen3 30B A3B", "purpose": "notes and projects", "bytes": 17 * 1024 ** 3, "deletable": True},
     ])
-    goto(page, app_server, "#/settings")
+    goto(page, app_server, "#/settings/storage")
     section = page.locator("#storage-section")
     expect(section.get_by_role("heading", name="Storage")).to_be_visible()
     expect(section).to_contain_text(re.compile(r"\d+ meetings take .+ of it audio\."))
@@ -169,9 +171,10 @@ def test_settings_say_when_notifications_are_off(page, app_server, monkeypatch, 
     monkeypatch.setenv("PALAVER_NOTIFY_STATE", str(state))
     opened = []
     monkeypatch.setattr("subprocess.run", lambda cmd, check=False: opened.append(cmd))
-    goto(page, app_server, "#/settings")
+    goto(page, app_server, "#/settings/notifications")
     section = page.locator("#notifications-section")
     expect(section).to_contain_text("Off")
+    expect(page.locator('.settings-nav [data-pane="notifications"] .settings-flag')).to_have_count(1)  # said in the list
     section.get_by_role("button", name="Open System Settings").click()
     expect(page.locator("#toasts")).to_contain_text("Allow notifications for Palaver there")
     assert opened == [["open", notify.SETTINGS_URL]]
@@ -193,7 +196,7 @@ def test_a_new_release_shows_in_the_top_bar_and_opens_settings(page, app_server,
     pill = page.locator("#update-status")
     expect(pill).to_have_text("Update to 0.9.0")
     pill.click()
-    expect(page).to_have_url(re.compile("#/settings$"))
+    expect(page).to_have_url(re.compile("#/settings/update$"))
     section = page.locator("#update-section")
     expect(section.get_by_role("status")).to_contain_text("Palaver 0.9.0 is available (3 MB). You have 0.3.6.")
     expect(section.get_by_role("button", name="Download and install")).to_be_visible()
@@ -220,12 +223,12 @@ def test_today_leads_with_a_new_release_until_it_is_installed(page, app_server, 
     page.wait_for_timeout(300)
     assert asked == ["install"]
     card.get_by_role("button", name="What's new").click()
-    expect(page).to_have_url(re.compile("#/settings$"))
+    expect(page).to_have_url(re.compile("#/settings/update$"))
 
 
 def test_settings_connect_the_calendar_and_follow_a_yes_given_elsewhere(page, app_server):
     """The calendar moved from the menu bar's menu to Settings."""
-    goto(page, app_server, "#/settings")
+    goto(page, app_server, "#/settings/calendar")
     card = page.locator("#calendar-card")
     expect(card).to_contain_text("not connected")
     card.get_by_role("button", name="Connect Calendar").click()

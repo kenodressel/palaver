@@ -31,7 +31,7 @@ import { reportMeeting, reportDraft, reportDoneText, actionCatalog } from "./log
 import { inferredText, importedLine, importedText, GLOBAL_COMMANDS } from "./logic.js";
 import { openExport, pickImport, wireDrop, importFile, askVoices, decideVoices, dialog } from "./exchange.js";
 // Updates and uninstalling (#60).
-import { updateIndicator, updateView } from "./logic.js";
+import { updateIndicator, updateView, SETTINGS_PANES, settingsPane } from "./logic.js";
 // One person, one look; the header's people and projects; About this recording (UI cleanup 2026-10-30).
 import { personColor, laneColors, attendeeTokens, meetingPeople, ownerTokens, nameMarks, projectView, aboutLines,
   sameTitle } from "./logic.js";
@@ -4023,8 +4023,16 @@ document.addEventListener("keydown", (e) => {
 
 // --- settings --------------------------------------------------------------------
 
-async function openSettings(how = "push") {
-  const here = leaveMeeting("settings", "#/settings", how);
+async function openSettings(how = "push", pane = null) {
+  const before = state.view;
+  if (pane) state.settingsPane = settingsPane(pane);
+  const shown = settingsPane(state.settingsPane);
+  const here = leaveMeeting("settings", `#/settings/${shown}`, how);
+  if (before === "settings" && state.settings) {  // another pane: what was loaded stays
+    renderSettings();
+    $("#main .settings-pane")?.scrollIntoView?.({ block: "start" });
+    return;
+  }
   try {
     let rec;
     [state.settings, state.lm, state.tr, , , , , rec, state.update, state.calendar] = await Promise.all([api("/api/settings"),
@@ -4075,7 +4083,11 @@ async function refreshNotifications() {
 function notificationsSection() {
   const n = state.notifications;
   const section = h("section", { id: "notifications-section" });
-  if (!n || n.state === "unknown") return section;  // outside the app nobody knows
+  if (!n || n.state === "unknown") {  // outside the app nobody knows
+    section.append(h("h2", {}, "Notifications"), h("div", { class: "gloss-card settings-card" },
+      h("p", { class: "meta" }, "Shown in the Palaver app: run from a terminal, Palaver can't ask macOS.")));
+    return section;
+  }
   const on = n.state === "granted";
   section.append(h("h2", {}, "Notifications"), h("div", { class: "gloss-card settings-card" },
     h("div", { class: "lm-row" },
@@ -4172,20 +4184,40 @@ function setupCard() {
       h("button", { type: "button", class: "btn", onclick: () => openSetup() }, "Open setup assistant")));
 }
 
+// Settings as panes beside a list, like the Mac's System Settings: one pane at
+// a time, each at #/settings/<pane> (a notification or a button opens the one meant).
 function renderSettings() {
-  const page = h("article", { class: "meeting people settings" }, h("h1", {}, "Settings"));
-  if (state.error) page.append(h("p", { class: "error" }, state.error));
-  page.append(setupCard());
-  if (state.settings) {
-    page.append(
+  const pane = settingsPane(state.settingsPane);
+  const nav = h("nav", { class: "settings-nav", "aria-label": "Settings" }, SETTINGS_PANES.map(([id, label]) => {
+    const flag = settingsFlag(id);
+    return h("a", { href: `#/settings/${id}`, class: "settings-nav-item", "data-pane": id,
+      "aria-current": id === pane ? "page" : false,
+      onclick: (e) => { e.preventDefault(); openSettings("push", id); } },
+    h("span", {}, label), flag ? h("span", { class: "settings-flag", title: flag, "aria-label": flag }) : null);
+  }));
+  const page = h("article", { class: "meeting settings" }, h("h1", {}, "Settings"),
+    state.error ? h("p", { class: "error" }, state.error) : null,
+    h("div", { class: "settings-layout" }, nav, h("div", { class: "settings-pane", "data-pane": pane }, settingsContent(pane))));
+  $("#main").replaceChildren(page);
+}
+
+// What wants the user's eye in a pane, said beside its name in the list.
+function settingsFlag(id) {
+  if (id === "notifications" && ["denied", "not_asked"].includes(state.notifications?.state)) return "Notifications are off";
+  if (id === "update" && updateIndicator(state.update)) return "An update is available";
+  if (id === "calendar" && state.calendar && state.calendar.state !== "granted") return "The calendar is not connected";
+  return null;
+}
+
+function settingsContent(pane) {
+  const s = !!state.settings;
+  switch (pane) {
+    case "recording": return s ? [
       h("h2", {}, "Recording"),
       h("div", { class: "gloss-card settings-card" },
         settingSwitch("record_teams", "Record Teams calls automatically"),
         settingSwitch("record_slack", "Record Slack huddles automatically"),
         h("p", { class: "meta" }, "Start recording now in the menu bar works either way.")),
-      h("h2", {}, "Calendar"),
-      calendarCard(),
-      notificationsSection(),
       h("h2", {}, "Live"),
       h("div", { class: "gloss-card settings-card" },
         settingSwitch("realtime", "Realtime transcription"),
@@ -4202,20 +4234,29 @@ function renderSettings() {
         settingSwitch("nudge_pace", "Speaking much faster than usual (experimental)"),
         settingSwitch("nudge_fillers", "More filler words than usual (experimental)"),
         h("p", { class: "meta" }, "“Usual” is your own average over your last 30 meetings. Pace and filler words are experimental and off by default: they come from the realtime text, which is not yet checked against your transcripts. Who hasn't spoken counts only invitees who accepted (or, without responses, whose voice you have named), and only when every voice in the call has a name. Calls only: never for a recording you started yourself.")),
+    ] : [];
+    case "calendar": return [h("h2", {}, "Calendar"), calendarCard()];
+    case "notifications": return [notificationsSection()];
+    case "transcription": return state.tr ? renderTranscription(state.tr) : [];
+    case "language-model": return state.lm ? renderLanguageModel(state.lm) : [];
+    case "search": return s ? [
       h("h2", {}, "Search"),
       h("div", { class: "gloss-card settings-card" },
         settingSwitch("search_meaning", "Search by meaning"),
-        h("p", { class: "meta" }, "Also finds meetings about what you search for in other words or another language: “pricing” finds “Kosten”. Meetings are indexed in the background when no call is recorded. The first time, a 470 MB model is downloaded.")));
+        h("p", { class: "meta" }, "Also finds meetings about what you search for in other words or another language: “pricing” finds “Kosten”. Meetings are indexed in the background when no call is recorded. The first time, a 470 MB model is downloaded."))] : [];
+    case "storage": return [renderStorageSection()];
+    case "memory": return [renderMemorySection()];
+    case "mcp": return [renderMcpSection()];
+    case "update": return [renderUpdateSection()];
+    default: return [
+      h("h2", {}, "General"),
+      setupCard(),
+      h("h2", {}, "Help"),
+      h("div", { class: "gloss-card settings-card" },
+        h("p", { class: "meta" }, "Something went wrong, or you wish Palaver did something differently? A report puts ",
+          "everything needed to look into it in one zip on your Desktop, for you to send."),
+        h("button", { type: "button", class: "btn", onclick: () => APP_ACTIONS.reportProblem() }, "Report a Problem…"))];
   }
-  if (state.tr) page.append(...renderTranscription(state.tr));
-  if (state.lm) page.append(...renderLanguageModel(state.lm));
-  page.append(renderMemorySection(), renderStorageSection(), renderMcpSection(), renderUpdateSection(),
-    h("h2", {}, "Help"),
-    h("div", { class: "gloss-card settings-card" },
-      h("p", { class: "meta" }, "Something went wrong, or you wish Palaver did something differently? A report puts ",
-        "everything needed to look into it in one zip on your Desktop, for you to send."),
-      h("button", { type: "button", class: "btn", onclick: () => APP_ACTIONS.reportProblem() }, "Report a Problem…")));
-  $("#main").replaceChildren(page);
 }
 
 // --- updates and uninstalling (#60) -------------------------------------------------------
@@ -4292,8 +4333,7 @@ function showUpdateIndicator() {
 }
 
 async function openUpdate() {
-  await openSettings();
-  document.getElementById("update-section")?.scrollIntoView({ block: "start" });
+  await openSettings("push", "update");
 }
 
 $("#update-status").addEventListener("click", () => openUpdate());
@@ -4783,8 +4823,7 @@ function showMcpIndicator() {
 async function openMcpLog(meeting = "") {
   state.mcpFilter = { client: "", meeting };
   if (meeting) await loadMcpReads(meeting);
-  await openSettings();
-  document.getElementById("mcp-section")?.scrollIntoView({ block: "start" });
+  await openSettings("push", "mcp");
 }
 
 $("#mcp-status").addEventListener("click", () => openMcpLog());
@@ -6225,8 +6264,7 @@ async function route(how = "none", entry = null) {
   else if (place.view === "projects") await openProjects(place.focus, how);
   else if (place.view === "glossary") await openGlossary(how);
   else if (place.view === "settings") {
-    await openSettings(how);
-    if (place.section) document.getElementById(`${place.section}-section`)?.scrollIntoView({ block: "start" });
+    await openSettings(how, place.section);
   }
   else if (place.view === "review") await openReview(entry?.reviewAt ?? 0, how);
   else if (place.view === "coach") await openCoach(how);

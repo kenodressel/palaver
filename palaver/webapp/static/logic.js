@@ -1415,6 +1415,21 @@ export function inferredText(inferred) {
 }
 
 // Commands that need no open meeting, for ⌘K.
+// Settings' panes, in the list's order (#/settings/<id>); Help is in General.
+export const SETTINGS_PANES = [
+  ["general", "General"], ["recording", "Recording"], ["calendar", "Calendar"], ["notifications", "Notifications"],
+  ["transcription", "Transcription"], ["language-model", "Language Model"], ["search", "Search"],
+  ["storage", "Storage"], ["memory", "Memory"], ["mcp", "Claude Access"], ["update", "Updates"],
+];
+// Links from before the panes name a section of the one long page.
+const PANE_OF = { live: "recording", coach: "recording", help: "general", updates: "update", setup: "general" };
+
+// The pane to show for ``asked`` (a pane, an older section name, or nothing).
+export function settingsPane(asked) {
+  if (SETTINGS_PANES.some(([id]) => id === asked)) return asked;
+  return PANE_OF[asked] || "general";
+}
+
 export const GLOBAL_COMMANDS = [{ kind: "command", id: "importMeeting", label: "Import Meeting…", detail: "Command",
   keywords: ["palaver", "file", "colleague"] }];
 
@@ -1458,7 +1473,9 @@ export function actionCatalog() {
 
 // What Settings says about updates, from update.json: { text, action } where
 // action is the button ("install", "check") or null. Quiet: one line.
-export function updateView(u) {
+const hhmm = (at) => at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+
+export function updateView(u, fmt = hhmm) {
   const state = u?.state || "unsupported";
   const version = u?.available?.version;
   const size = u?.available?.download_bytes ? ` (${sizeText(u.available.download_bytes)})` : "";
@@ -1479,7 +1496,9 @@ export function updateView(u) {
     case "failed":
       return { text: u.error || "The update failed; this version stays.", action: version ? "install" : "check" };
     case "up_to_date":
-      return { text: `Palaver ${u.current} is the latest version.`, action: "check" };
+      // When it looked: a release out since then shows at the next look (hourly, or Check now).
+      return { text: `Palaver ${u.current} is the latest version${u.checked_at ? ` (checked at ${fmt(new Date(u.checked_at * 1000))})` : ""}.`,
+        action: "check" };
     case "idle":
     case "checking":
       return { text: u.check_error ? `Palaver ${u.current}. Could not look for updates: ${u.check_error}`

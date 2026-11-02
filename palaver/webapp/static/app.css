@@ -986,7 +986,21 @@ button.mn-time:hover, button.mn-time:focus-visible { background: var(--selected)
 .gear:hover { background: var(--hover); color: var(--ink); }
 .gear[aria-current="page"] { background: var(--ink); color: var(--paper); }
 .gear svg { width: 18px; height: 18px; }
-.settings-card { max-width: 560px; gap: 12px; margin-bottom: 20px; }
+.settings-card { max-width: 640px; gap: 12px; margin-bottom: 20px; }
+/* Settings as panes beside a list, like the Mac's System Settings. */
+.settings-layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 32px; align-items: start; }
+.settings-nav { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 2px; }
+.settings-nav-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px;
+  border-radius: 10px; color: var(--ink); font-weight: 600; text-decoration: none; }
+.settings-nav-item:hover { background: var(--hover); }
+.settings-nav-item[aria-current="page"] { background: var(--selected); }
+.settings-flag { width: 8px; height: 8px; border-radius: 50%; background: var(--coral-ink); flex: none; }
+.settings-pane > h2:first-child, .settings-pane > section:first-child > h2 { margin-top: 0; }
+@media (max-width: 760px) {
+  .settings-layout { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .settings-nav { position: static; flex-direction: row; overflow-x: auto; }
+  .settings-nav-item { white-space: nowrap; }
+}
 /* One rhythm in every card: the card's gap spaces its lines (no paragraph
    margins on top), and a switch after text starts a new group. */
 :where(.settings-card) p { margin: 0; }
