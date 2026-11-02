@@ -157,12 +157,21 @@ class FakeRecording:
         self.answers: list[tuple[str, str]] = []
         self.running = True
         self.live_coach: dict | None = None  # who talks and the nudge (#41), as the daemon says it
+        self.transcribing: list[Path] = []  # Transcribe Again: the meetings the app was asked to transcribe
 
     def question(self):
         return self.asked
 
     def coach(self):
         return self.live_coach
+
+    def transcribe(self, folder: Path) -> bool:
+        from palaver import process_state
+        from palaver.paths import RecordingPaths
+
+        self.transcribing.append(folder)
+        process_state.clear(RecordingPaths(folder))  # as the daemon does: the page shows it transcribing
+        return True
 
     def answer(self, choice: str, meeting: str) -> bool:
         self.answers.append((choice, meeting))
@@ -237,7 +246,7 @@ def _model_run(served: Served, args: list[str]) -> bool:
     return True
 
 
-def _serve(root: Path):
+def _serve(root: Path, key: str | None = None):
     worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(3600)"])
     build_recordings(root, live_pid=worker.pid)
     fake = FakeNotes()
@@ -246,7 +255,7 @@ def _serve(root: Path):
               run_projects=lambda args: _model_run(served, args), recording=served.recording, probe=served.probe,
               ask_model=served.model, free_memory_gb=lambda: served.free_gb,
               downloads=root.parent / "Downloads")  # an export never lands in the real ~/Downloads
-    srv = make_server(app, port=0)
+    srv = make_server(app, port=0, key=key)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     served.url = f"http://127.0.0.1:{srv.server_address[1]}/"
     served.server = srv
@@ -266,6 +275,15 @@ def no_installed_palaver(monkeypatch):
 def app_server(tmp_path):
     """The app over fresh recordings, for a test that changes them."""
     srv, served = _serve(tmp_path / "Recordings")
+    yield served
+    served.close()
+
+
+@pytest.fixture
+def keyed_server(tmp_path):
+    """The app as the menu bar runs it: answering only with its key."""
+    srv, served = _serve(tmp_path / "Recordings", key="the-apps-key")
+    served.key = "the-apps-key"
     yield served
     served.close()
 

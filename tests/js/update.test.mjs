@@ -35,7 +35,7 @@ test("a check that failed is said quietly", () => {
 
 test("the top bar shows an update while there is one to install or one installing", () => {
   assert.deepEqual(updateIndicator({ state: "available", current: "0.1.0", available }),
-    { text: "Update 0.2.0", title: "Palaver 0.2.0 is available (5 MB). You have 0.1.0." });
+    { text: "Update to 0.2.0", title: "Palaver 0.2.0 is available (5 MB). You have 0.1.0." });
   assert.equal(updateIndicator({ state: "downloading", available, done_bytes: 2.5 * 2 ** 20 }).text, "Updating · 50 %");
   assert.equal(updateIndicator({ state: "ready", available, waiting_for: "recording" }).text, "Update waits");
   assert.equal(updateIndicator({ state: "installing", available }).text, "Updating…");
@@ -46,5 +46,18 @@ test("the top bar shows nothing up to date, while checking, from a checkout or b
   for (const u of [{ state: "up_to_date", current: "0.1.0" }, { state: "checking", current: "0.1.0" },
     { state: "idle", current: "0.1.0" }, { state: "unsupported" }, { state: "failed", error: "x" }, null]) {
     assert.equal(updateIndicator(u), null);
+  }
+});
+
+test("Today leads with a card while a release waits for a click", async () => {
+  const { updateCard } = await import("../../palaver/webapp/static/logic.js");
+  assert.deepEqual(updateCard({ state: "available", current: "0.1.0", available }), {
+    title: "Palaver 0.2.0 is available",
+    text: "You have 0.1.0. It installs once Palaver is idle; nothing is lost." });
+  assert.equal(updateCard({ state: "failed", current: "0.1.0", available, error: "Download failed: offline." }).text,
+    "Download failed: offline.");
+  for (const u of [{ state: "downloading", available }, { state: "ready", available }, { state: "up_to_date" },
+    { state: "failed", error: "x" }, null]) {
+    assert.equal(updateCard(u), null);  // under way (the top bar follows it), or nothing to install
   }
 });

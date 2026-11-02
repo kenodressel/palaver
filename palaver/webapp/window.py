@@ -13,12 +13,21 @@ import json
 
 _window = None
 _delegate = None
+# Palaver → Quit Palaver (⌘Q): the menu bar app's own quit, set by it, so a
+# recording is handled as after its Quit; None: the process just ends.
+_quit = None
+
+
+def on_quit(fn) -> None:
+    global _quit
+    _quit = fn
 
 # The "Meeting" menu: (title, the page's command, key equivalent); None is a
 # separator. The page binds these keys itself (Space plays/pauses).
 MEETING_MENU = [
     ("Play/Pause", "play", ""),
     ("Write Notes", "writeNotes", "N"),  # ⌘⇧N
+    ("Transcribe Again", "transcribe", ""),
     ("Rename…", "rename", ""),
     ("Change Event…", "changeEvent", ""),
     ("Join with Previous", "joinPrevious", "j"),
@@ -143,6 +152,15 @@ def _delegate_class():
             self.run_on_page(f"window.palaver && palaver.command({json.dumps(str(item.representedObject()))})")
 
         @objc.typedSelector(b"v@:@")
+        def quitPalaver_(self, _item):
+            if _quit is not None:
+                _quit()
+            else:
+                from AppKit import NSApp
+
+                NSApp.terminate_(None)
+
+        @objc.typedSelector(b"v@:@")
         def pageUndo_(self, _item):
             self.run_on_page("window.palaver && palaver.undo()")
 
@@ -202,6 +220,8 @@ def _main_menu(delegate):
         item("Hide Palaver", "hide:", "h"),
         None,
         item("Close Window", "performClose:", "w"),
+        None,
+        item("Quit Palaver", "quitPalaver:", "q", delegate),
     ]))
     bar.addItem_(menu("Edit", [
         item("Undo", "pageUndo:", "z", delegate),  # the page's undo; it hands text fields theirs
@@ -285,11 +305,15 @@ def _dock_icon() -> None:
         NSApp.setApplicationIconImage_(image)
 
 
-def open_window(url: str) -> None:
-    """Show the Meetings window at ``url``, creating it on first use."""
+def open_window(url: str, key: str | None = None) -> None:
+    """Show the Meetings window at ``url``, creating it on first use. A load
+    carries the app's ``key``, which the server keeps as a cookie and drops
+    from the address (server.with_key)."""
     global _window, _delegate
     from AppKit import NSApp, NSApplicationActivationPolicyRegular, NSMakeRect
     from Foundation import NSURL, NSURLRequest
+
+    from .server import with_key
 
     NSApp.setActivationPolicy_(NSApplicationActivationPolicyRegular)
     _dock_icon()
@@ -301,7 +325,7 @@ def open_window(url: str) -> None:
     web = _window.contentView()
     current = web.URL()
     if needs_load(None if current is None else str(current.absoluteString()), url):
-        web.loadRequest_(NSURLRequest.requestWithURL_(NSURL.URLWithString_(url)))
+        web.loadRequest_(NSURLRequest.requestWithURL_(NSURL.URLWithString_(with_key(url, key))))
     _window.makeKeyAndOrderFront_(None)
     NSApp.activateIgnoringOtherApps_(True)
 

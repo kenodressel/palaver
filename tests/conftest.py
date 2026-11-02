@@ -53,6 +53,12 @@ def no_notes_models(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def models_here(monkeypatch):
+    """The transcription models count as downloaded: tests transcribe with fakes."""
+    monkeypatch.setattr("palaver.process_state._here", lambda cfg, m: True)
+
+
+@pytest.fixture(autouse=True)
 def isolated_config_home(monkeypatch, tmp_path_factory) -> Path:
     """Tests must never read or write the real ~/.config (voice bank!)."""
     home = tmp_path_factory.mktemp("xdg-config")

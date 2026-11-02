@@ -28,7 +28,8 @@ from palaver.webapp import process
 
 # A stand-in server: answers every request with its pid. MODE: "serve";
 # "crash" (exits 1 after a moment); "crash-once" (crashes on its first run,
-# counted in COUNT, then serves); "stubborn" (serves, ignores SIGTERM).
+# counted in COUNT, then serves); "stubborn" (serves, ignores SIGTERM);
+# "key" (answers with the key it was given instead of its pid).
 FAKE_CHILD = textwrap.dedent("""
     import os, signal, socket, sys, time
     mode, count, listen_fd, ready_fd = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
@@ -50,7 +51,7 @@ FAKE_CHILD = textwrap.dedent("""
     while True:
         conn, _ = sock.accept()
         conn.recv(65536)
-        body = str(os.getpid()).encode()
+        body = (os.environ.get("PALAVER_WEB_KEY", "") if mode == "key" else str(os.getpid())).encode()
         conn.sendall(b"HTTP/1.0 200 OK\\r\\nContent-Length: %d\\r\\n\\r\\n%s" % (len(body), body))
         conn.close()
 """)
@@ -90,9 +91,16 @@ def _until(condition, timeout=10.0):
     return condition()
 
 
-def _get(url, timeout=5.0) -> str:
-    with urllib.request.urlopen(url, timeout=timeout) as resp:
+def _get(url, timeout=5.0, headers=None) -> str:
+    with urllib.request.urlopen(urllib.request.Request(url, headers=headers or {}), timeout=timeout) as resp:
         return resp.read().decode()
+
+
+def _signed(sup: process.WebSupervisor) -> dict[str, str]:
+    """What the window sends once it signed in with the app's key."""
+    from palaver.webapp.server import key_cookie
+
+    return {"Host": f"127.0.0.1:{sup.port}", "Cookie": f"{key_cookie(sup.port)}={sup.key}"}
 
 
 def _alive(pid: int) -> bool:
@@ -110,6 +118,62 @@ def test_the_server_runs_as_a_child_on_the_apps_port(fake):
     assert sup.url() == f"http://127.0.0.1:{sup.port}/"
     assert sup.url("2026-10-30T08-02-13") == f"http://127.0.0.1:{sup.port}/#/2026-10-30T08-02-13"
     assert _get(sup.url()) == str(sup.pid) and sup.pid != os.getpid()
+
+
+def test_every_server_gets_the_apps_key_and_the_key_stays_across_restarts(fake):
+    sup = fake("key")
+    sup.start()
+    assert _until(lambda: sup.events == [False])
+    assert len(sup.key) >= 32 and _get(sup.url()) == sup.key
+    assert sup.restart() is not None
+    assert _get(sup.url()) == sup.key  # the window's cookie still fits
+    assert process.WebSupervisor(lambda *_: [], listener=sup.listener).key != sup.key  # each app start its own
+
+
+def test_the_window_gets_the_same_port_at_every_start_unless_it_is_taken():
+    ports = _free_ports(3)
+    first = process.listen_for_window(ports)
+    try:
+        assert first.getsockname()[1] == ports[0]
+        second = process.listen_for_window(ports)  # e.g. a second Palaver, or another program on it
+        try:
+            assert second.getsockname()[1] == ports[1]
+        finally:
+            second.close()
+    finally:
+        first.close()
+    again = process.listen_for_window(ports)  # the next start: the same port, so the page keeps what it remembers
+    try:
+        assert again.getsockname()[1] == ports[0]
+    finally:
+        again.close()
+
+
+def test_with_all_window_ports_taken_any_free_one_will_do():
+    ports = _free_ports(1)
+    taken = process.listen(ports[0])
+    try:
+        sock = process.listen_for_window(ports)
+        assert sock.getsockname()[1] not in (0, ports[0])
+        sock.close()
+    finally:
+        taken.close()
+
+
+def _free_ports(n: int) -> tuple[int, ...]:
+    """n ports nothing listens on: a run of n in a row, as WINDOW_PORTS is."""
+    for _ in range(50):
+        probe = process.listen()
+        start = probe.getsockname()[1]
+        probe.close()
+        try:
+            socks = [process.listen(p) for p in range(start, start + n)]
+        except OSError:
+            continue
+        for s in socks:
+            s.close()
+        return tuple(range(start, start + n))
+    raise RuntimeError("no free ports")
 
 
 def test_a_crashed_server_is_started_again_on_the_same_port(fake):
@@ -261,11 +325,11 @@ def test_the_real_server_serves_the_page_and_the_recording_from_its_own_process(
     sup.start()
     try:
         assert _until(lambda: events == [False], 60), "the server process did not start"
-        req = urllib.request.Request(sup.url() + "api/recording/question", headers={"Host": f"127.0.0.1:{sup.port}"})
+        req = urllib.request.Request(sup.url() + "api/recording/question", headers=_signed(sup))
         with urllib.request.urlopen(req, timeout=5) as resp:
             answer = json.loads(resp.read())
         assert answer["recording"]["meeting"] == "2026-10-30T08-02-13"
-        assert "<html" in _get(sup.url()).lower()
+        assert "<html" in _get(sup.url(), headers=_signed(sup)).lower()
     finally:
         sup.stop()
         sup.listener.close()
@@ -340,7 +404,7 @@ def test_killing_the_server_during_a_recording_never_touches_capture(home):
         assert max(gaps) < 0.25, f"capture stalled for {max(gaps):.3f} s"
         assert ticks and max(ticks) < 0.5, f"a daemon tick took {max(ticks):.3f} s"
         # The new server sees the same recording.
-        req = urllib.request.Request(sup.url() + "api/recording/question", headers={"Host": f"127.0.0.1:{sup.port}"})
+        req = urllib.request.Request(sup.url() + "api/recording/question", headers=_signed(sup))
         with urllib.request.urlopen(req, timeout=5) as resp:
             assert json.loads(resp.read())["recording"]["meeting"] == "rec"
     finally:
@@ -463,7 +527,7 @@ def test_a_restart_while_notes_are_written_keeps_the_run(home):
 
     def post_notes(answers):
         req = urllib.request.Request(sup.url() + f"api/meetings/{MEETING}/notes", data=b"{}", method="POST",
-                                     headers={"Content-Type": "application/json"})
+                                     headers={**_signed(sup), "Content-Type": "application/json"})
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 answers.append(resp.status)
@@ -483,7 +547,8 @@ def test_a_restart_while_notes_are_written_keeps_the_run(home):
         started = time.monotonic()
         assert sup.restart() is not None
         assert time.monotonic() - started < 3, "the restart waited for the notes"
-        with urllib.request.urlopen(sup.url() + "api/model-jobs", timeout=5) as resp:
+        with urllib.request.urlopen(urllib.request.Request(sup.url() + "api/model-jobs", headers=_signed(sup)),
+                                    timeout=5) as resp:
             jobs = json.loads(resp.read())
         assert [(j["kind"], j["key"]) for j in jobs["running"]] == [("notes", MEETING)]
 

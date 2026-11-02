@@ -140,7 +140,7 @@ def test_settings_say_how_palaver_updates_and_uninstalling_asks_first(page, app_
 
 
 def test_a_new_release_shows_in_the_top_bar_and_opens_settings(page, app_server, monkeypatch):
-    """The top bar's "Update 0.9.0" on every page while there is one; a click
+    """The top bar's "Update to 0.9.0" on every page while there is one; a click
     shows it in Settings. Up to date, the top bar says nothing."""
     from palaver import updater
 
@@ -150,7 +150,7 @@ def test_a_new_release_shows_in_the_top_bar_and_opens_settings(page, app_server,
     monkeypatch.setattr(updater, "read_status", lambda home=None: status)
     goto(page, app_server, "#/people")
     pill = page.locator("#update-status")
-    expect(pill).to_have_text("Update 0.9.0")
+    expect(pill).to_have_text("Update to 0.9.0")
     pill.click()
     expect(page).to_have_url(re.compile("#/settings$"))
     section = page.locator("#update-section")
@@ -161,6 +161,25 @@ def test_a_new_release_shows_in_the_top_bar_and_opens_settings(page, app_server,
     goto(page, app_server, "#/settings/update")  # the notification's click
     expect(page.locator("#update-section")).to_be_in_viewport()
     expect(pill).to_be_hidden()
+
+
+def test_today_leads_with_a_new_release_until_it_is_installed(page, app_server, monkeypatch):
+    from palaver import updater
+
+    status = {"state": "available", "current": "0.3.6", "available": {"version": "0.9.0", "download_bytes": 3 << 20}}
+    from palaver.webapp import api
+
+    asked = []
+    monkeypatch.setattr(updater, "read_status", lambda home=None: status)
+    monkeypatch.setattr(api, "update_action", lambda action: asked.append(action) or status)  # the menu bar app's
+    goto(page, app_server, "#/today")
+    card = page.locator(".today .update-card")
+    expect(card).to_contain_text("Palaver 0.9.0 is available")
+    card.get_by_role("button", name="Update Now").click()
+    page.wait_for_timeout(300)
+    assert asked == ["install"]
+    card.get_by_role("button", name="What's new").click()
+    expect(page).to_have_url(re.compile("#/settings$"))
 
 
 def test_settings_connect_the_calendar_and_follow_a_yes_given_elsewhere(page, app_server):

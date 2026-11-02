@@ -924,6 +924,15 @@ def complete(repo: str, probe: str = "config.json") -> bool:
     return False
 
 
+def repo_for(cfg, m: Model) -> str:
+    """The model's repo, as config.toml may override it."""
+    if m.id == "parakeet":
+        return getattr(cfg, "parakeet_repo", m.repo)
+    if m.id == "pyannote":
+        return getattr(cfg, "diarizer_repo", m.repo)
+    return m.repo
+
+
 def model_here(model: Model, repo: str) -> bool:
     """Whether every file of ``model`` is on this Mac: the copy a release
     hosts (model_store), or the Hugging Face cache."""
@@ -1104,12 +1113,7 @@ class Probe:
         self.calendar = Calendar()
 
     def repo_of(self, m: Model) -> str:
-        """The model's repo, as config.toml may override it."""
-        if m.id == "parakeet":
-            return getattr(self.cfg, "parakeet_repo", m.repo)
-        if m.id == "pyannote":
-            return getattr(self.cfg, "diarizer_repo", m.repo)
-        return m.repo
+        return repo_for(self.cfg, m)
 
     def hardware(self) -> Hardware:
         try:

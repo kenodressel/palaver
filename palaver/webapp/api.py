@@ -20,7 +20,7 @@ import numpy as np
 import soundfile as sf
 
 from .. import (attribution, calendar_events, coach, cutting, exchange, glossary, inference, lifecycle, mcp_access,
-                my_notes, notes, organizations, people, prep, projects, settings, shared_mic, titles)
+                my_notes, notes, organizations, people, prep, process_state, projects, settings, shared_mic, titles)
 from .. import search as search_query
 from ..render import render_markdown
 from .. import install_layout, model_jobs, undo
@@ -152,8 +152,28 @@ def _status(paths: RecordingPaths) -> str:
     if status in ("processed", "synced"):
         return "ready"
     if status == "recorded":
+        failed = process_state.read(paths)  # not transcribed: why, and Transcribe Again
+        if failed is not None:
+            return "waiting" if failed["reason"] == process_state.MODELS else "failed"
         return "processing"
     return "incomplete"
+
+
+def transcribe_again(output_dir: Path, meeting_id: str, recording, cfg=None) -> bool:
+    """Transcribe Again, for a meeting `palaver process` failed on or that
+    waits for its models: the menu bar app transcribes it next. False when
+    it does so already."""
+    paths = meeting_paths(output_dir, meeting_id)
+    if _status(paths) not in ("failed", "waiting"):
+        raise Refused("This meeting is transcribed already, or being transcribed.")
+    missing = process_state.missing_models(cfg, paths)
+    if missing:
+        raise Refused(f"{' and '.join(missing)} {'is' if len(missing) == 1 else 'are'} not downloaded yet. "
+                      "Settings shows the download; the meeting is transcribed once it is done.")
+    transcribe = getattr(recording, "transcribe", None)
+    if transcribe is None:
+        raise Refused("Recordings are transcribed by the Palaver menu bar app.")
+    return transcribe(paths.folder)
 
 
 _names = names_in_effect
@@ -714,6 +734,8 @@ def _meeting(output_dir: Path, paths: RecordingPaths, meeting_id: str, *, user_n
         "start": _start(paths),
         "duration": meta.get("duration_seconds"),
         "status": _status(paths),
+        # Not transcribed (failed.json): why, for Transcribe Again; "failure" below is the log's, for a report.
+        "untranscribed": None if paths.transcript_json.exists() else process_state.read(paths),
         # The notes model wrote from the transcript as heard: spell names right.
         "notes": glossary.current().apply_to(notes.with_names(meeting_notes, display)) if meeting_notes else None,
         "notes_stale": stale is not None,

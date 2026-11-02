@@ -127,15 +127,25 @@ def test_nothing_is_announced_when_up_to_date_or_from_a_checkout():
     assert u.announce() is None
 
 
-def test_it_checks_at_start_and_then_every_six_hours():
+def test_it_checks_at_start_and_then_every_hour():
     clock = Clock()
     u, calls = make(clock=clock)
     assert u.due()
     u.check()
-    clock.t += 5 * 3600
+    clock.t += 3599
     assert not u.due()
-    clock.t += 3600
+    clock.t += 1
     assert u.due()
+
+
+def test_opening_the_window_checks_unless_a_check_was_just_made():
+    clock = Clock()
+    u, _ = make(clock=clock)
+    u.check()
+    clock.t += updater.WINDOW_CHECK_AFTER - 1
+    assert not u.due(every=updater.WINDOW_CHECK_AFTER)
+    clock.t += 1
+    assert u.due(every=updater.WINDOW_CHECK_AFTER) and not u.due()  # the hourly one is not due yet
 
 
 def test_automatic_checks_can_be_turned_off():

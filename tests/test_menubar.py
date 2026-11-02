@@ -39,6 +39,8 @@ def test_menu_title_per_state():
     assert menu_title(_status(state="paused")) == "⏸"
     assert menu_title(_status(state="recording", transcribing=True)) == "🔴"  # recording wins
     assert menu_title(_status(), error=True) == "⚠️"
+    assert menu_title(_status(), update=True) == "↑"  # a release to install: not only a notification
+    assert menu_title(_status(state="recording"), update=True) == "🔴"  # what happens now wins
 
 
 def test_the_start_stop_item_does_what_it_said():
@@ -72,7 +74,7 @@ def test_the_menu_starts_and_stops_and_leaves_settings_to_the_window():
         "Report a Problem…",
         None,
         "Check for Updates…",  # with the version; "Update available (…)" when there is one (#60)
-        "Quit",
+        "Quit Palaver",
     ]
     for gone in ("Open latest transcript in Notion", "Open latest recording folder", "Open log",
                  "Record Teams calls and Slack huddles automatically", "Record Teams calls automatically",

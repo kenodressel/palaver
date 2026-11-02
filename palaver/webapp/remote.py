@@ -159,6 +159,20 @@ class RemoteRecording:
                              timeout=ANSWER_TIMEOUT)
         return int(answer["pid"])
 
+    def transcribe(self, folder: Path) -> bool:
+        """Transcribe Again: the menu bar app queues ``folder`` first; False
+        while it is being transcribed already. Raises api.Refused when the
+        app does not answer."""
+        from .api import Refused
+
+        try:
+            return bool(appctl.call("transcribe", {"folder": str(folder)}, path=self._socket_path,
+                                    timeout=ANSWER_TIMEOUT))
+        except appctl.CallRefused as exc:
+            raise Refused(str(exc)) from None
+        except appctl.CallFailed:
+            raise Refused(NO_ANSWER) from None
+
     def switched_off(self, app: str) -> None:
         """A record switch turned off in Settings: that app's call stops now,
         as from the menu. Without the app, the daemon sees the switch on its

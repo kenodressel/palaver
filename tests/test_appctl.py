@@ -121,6 +121,10 @@ class _Daemon:
     def watch_helper(self, folder, process):
         self.helpers.append((folder, process))
 
+    def transcribe_again(self, folder):
+        self.transcribing = [*getattr(self, "transcribing", []), folder]
+        return True
+
     def status(self):
         return {"state": "recording" if self.recording else "idle", "transcribing": False}
 
@@ -207,6 +211,16 @@ def test_the_setup_test_recording_runs_in_the_recording_process(sock_path, serve
     assert test.started == [{"transcribe": "local"}]
     assert appctl.call("test", {"action": "stop"}, path=sock_path) == {"state": "checking"}
     assert appctl.call("test", {}, path=sock_path) == {"state": "idle", "max_seconds": 20.0}
+
+
+def test_transcribe_again_queues_the_folder_on_the_main_thread(sock_path, served, tmp_path):
+    daemon, main = _Daemon(), []
+    calls, refreshed = _calls(daemon, main=main)
+    served(calls)
+    assert appctl.call("transcribe", {"folder": str(tmp_path)}, path=sock_path) is True
+    assert daemon.transcribing == [tmp_path] and main and refreshed
+    with pytest.raises(appctl.CallRefused, match="no recording"):
+        appctl.call("transcribe", {"folder": str(tmp_path / "gone")}, path=sock_path)
 
 
 def test_restart_web_restarts_only_the_server(sock_path, served):

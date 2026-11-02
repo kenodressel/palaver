@@ -15,6 +15,7 @@ from palaver import glossary, notes, projects
 from palaver.models import Utterance
 from palaver.paths import RecordingPaths
 from palaver.webapp import api
+from palaver.webapp import server as server_mod
 from palaver.webapp.server import App, make_server
 
 SR = 16_000
@@ -212,6 +213,62 @@ def test_http_rejects_other_hosts_and_non_json_posts(server):
     with pytest.raises(urllib.error.HTTPError) as err:
         urllib.request.urlopen(req)
     assert err.value.code == 415
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+@pytest.fixture
+def keyed(tmp_path: Path):
+    """The server as the menu bar app runs it: only the window, which got
+    the app's key, may use it; other programs on this Mac may not."""
+    _meeting(tmp_path)
+    srv = make_server(App(tmp_path, "Timo"), port=0, key="s3cret-key")
+    import threading
+
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield srv
+    srv.shutdown()
+    srv.server_close()
+
+
+def test_a_keyed_server_answers_nothing_without_the_key(keyed):
+    assert _req(keyed, "/")[0] == 403
+    assert _req(keyed, "/api/meetings")[0] == 403
+    assert _req(keyed, f"/api/meetings/{MEETING}/audio?track=mix")[0] == 403
+    assert _req(keyed, "/api/meetings", method="POST", body={})[0] == 403
+    assert _req(keyed, "/?key=wrong")[0] == 403
+    port = keyed.server_address[1]
+    wrong = {"Cookie": f"{server_mod.key_cookie(port)}=wrong"}
+    assert _req(keyed, "/api/meetings", headers=wrong)[0] == 403
+    other_port = {"Cookie": f"{server_mod.key_cookie(port + 1)}=s3cret-key"}
+    assert _req(keyed, "/api/meetings", headers=other_port)[0] == 403
+
+
+def test_the_window_signs_in_with_the_key_once_and_then_uses_its_cookie(keyed):
+    port = keyed.server_address[1]
+    req = urllib.request.Request(server_mod.with_key(f"http://127.0.0.1:{port}/", "s3cret-key"),
+                                 headers={"Host": f"127.0.0.1:{port}"})
+    with pytest.raises(urllib.error.HTTPError) as err:
+        urllib.request.build_opener(_NoRedirect).open(req)
+    assert err.value.code == 302
+    assert err.value.headers["Location"] == "/"  # the key leaves the address; the #route stays (the browser keeps it)
+    cookie = err.value.headers["Set-Cookie"]
+    assert cookie.startswith(f"{server_mod.key_cookie(port)}=s3cret-key;")
+    assert "HttpOnly" in cookie and "SameSite=Strict" in cookie
+    signed = {"Cookie": cookie.split(";", 1)[0]}
+    assert _req(keyed, "/", headers=signed)[0] == 200
+    status, _, body = _req(keyed, "/api/meetings", headers=signed)
+    assert status == 200 and json.loads(body)[0]["id"] == MEETING
+    assert _req(keyed, f"/api/meetings/{MEETING}/trash", method="POST", body={}, headers=signed)[0] == 200
+
+
+def test_with_key_keeps_the_route():
+    assert server_mod.with_key("http://127.0.0.1:5/", "k") == "http://127.0.0.1:5/?key=k"
+    assert server_mod.with_key("http://127.0.0.1:5/#/settings", "k") == "http://127.0.0.1:5/?key=k#/settings"
+    assert server_mod.with_key("http://127.0.0.1:5/#/settings", None) == "http://127.0.0.1:5/#/settings"
 
 
 def test_http_names_speakers_and_writes_notes(server):
@@ -2113,3 +2170,101 @@ def test_http_rename_undone_after_the_meeting_went_to_the_trash_brings_nothing_b
     _post(server, f"/api/meetings/{MEETING}/trash")
     assert _post(server, "/api/undo", {"token": answer["undo"]})[0] == 409
     assert not (tmp_path / MEETING).exists()  # no folder made for the title alone
+
+
+# --- not transcribed: failed, or waiting for its models -------------------------------------------
+
+def _untranscribed(root: Path, reason: str, **kw) -> RecordingPaths:
+    from palaver import process_state
+
+    paths = _meeting(root)
+    paths.transcript_json.unlink()
+    paths.notes.unlink()
+    process_state.mark(paths, reason, **kw)
+    return paths
+
+
+class _AppRecording:
+    """The menu bar app as the window's server reaches it."""
+
+    def __init__(self):
+        self.queued: list[Path] = []
+
+    def transcribe(self, folder: Path) -> bool:
+        self.queued.append(folder)
+        from palaver import process_state
+
+        process_state.clear(RecordingPaths(folder))  # as the daemon does
+        return True
+
+
+def test_a_failed_transcription_shows_why_and_can_be_transcribed_again(tmp_path: Path):
+    from palaver import process_state
+
+    paths = _untranscribed(tmp_path, process_state.ERROR, error="Unable to reach MTLCompilerService")
+    m = api.get_meeting(tmp_path, MEETING, user_name="Timo")
+    assert m["status"] == "failed" and m["untranscribed"]["error"] == "Unable to reach MTLCompilerService"
+    assert [x["status"] for x in api.list_meetings(tmp_path)] == ["failed"]
+    rec = _AppRecording()
+    assert api.transcribe_again(tmp_path, MEETING, rec) is True
+    assert rec.queued == [paths.folder]
+    assert api.get_meeting(tmp_path, MEETING, user_name="Timo")["status"] == "processing"
+    with pytest.raises(api.Refused, match="transcribed already, or being transcribed"):
+        api.transcribe_again(tmp_path, MEETING, rec)  # already on its way
+
+
+def test_a_meeting_waiting_for_its_models_says_which(tmp_path: Path, monkeypatch):
+    from palaver import process_state
+
+    _untranscribed(tmp_path, process_state.MODELS, missing=["Parakeet", "pyannote"])
+    m = api.get_meeting(tmp_path, MEETING, user_name="Timo")
+    assert m["status"] == "waiting" and m["untranscribed"]["missing"] == ["Parakeet", "pyannote"]
+    monkeypatch.setattr(process_state, "missing_models", lambda cfg, p: ["Parakeet"])
+    rec = _AppRecording()
+    with pytest.raises(api.Refused, match="Parakeet is not downloaded yet"):
+        api.transcribe_again(tmp_path, MEETING, rec)
+    assert rec.queued == []
+    monkeypatch.setattr(process_state, "missing_models", lambda cfg, p: [])
+    assert api.transcribe_again(tmp_path, MEETING, rec) is True
+
+
+def test_a_transcribed_meeting_is_not_transcribed_again(tmp_path: Path):
+    _meeting(tmp_path)
+    with pytest.raises(api.Refused):
+        api.transcribe_again(tmp_path, MEETING, _AppRecording())
+    assert api.get_meeting(tmp_path, MEETING, user_name="Timo")["untranscribed"] is None
+
+
+def test_without_the_menu_bar_app_nothing_is_transcribed(tmp_path: Path):
+    from palaver import process_state
+
+    _untranscribed(tmp_path, process_state.ERROR)
+    with pytest.raises(api.Refused, match="menu bar app"):
+        api.transcribe_again(tmp_path, MEETING, None)
+
+
+def test_a_failed_meeting_can_go_to_the_trash(tmp_path: Path):
+    """It was "processing" for ever before: nothing could be done with it."""
+    from palaver import process_state
+
+    _untranscribed(tmp_path, process_state.ERROR)
+    assert api.trash_meeting(tmp_path, MEETING, user_name="Timo")
+
+
+def test_http_transcribe_again(tmp_path: Path):
+    import threading
+
+    from palaver import process_state
+
+    _untranscribed(tmp_path, process_state.ERROR, error="boom")
+    rec = _AppRecording()
+    srv = make_server(App(tmp_path, "Timo", recording=rec), port=0)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        status, answer = _post(srv, f"/api/meetings/{MEETING}/transcribe")
+        assert status == 200 and answer["status"] == "processing" and len(rec.queued) == 1
+        status, answer = _post(srv, f"/api/meetings/{MEETING}/transcribe")
+        assert status == 400 and "being transcribed" in answer["error"]
+    finally:
+        srv.shutdown()
+        srv.server_close()

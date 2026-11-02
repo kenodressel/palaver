@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import pytest
 import soundfile as sf
 
 from palaver.cli import (
@@ -262,6 +263,66 @@ def test_process_removes_the_echo_cancelled_part_a_stopped_live_worker_left(tmp_
 
     assert cli._cmd_process(_ns(tmp_path)) == 0
     assert paths.mic_wav.exists() and not stale.exists()
+
+
+def test_process_waits_for_models_not_downloaded_yet(tmp_path: Path, monkeypatch, capsys):
+    """A call recorded right after installing, before the setup's downloads
+    finished: `process` touches nothing, says so, and marks it waiting."""
+    from palaver import cli, process_state
+
+    paths = _recording_folder(tmp_path)
+    seen = _fake_models(monkeypatch)
+    monkeypatch.setattr(process_state, "missing_models", lambda cfg, p: ["Parakeet"])
+
+    assert cli._cmd_process(_ns(tmp_path)) == process_state.EXIT_MODELS
+    assert seen["calls"] == [] and not paths.transcript_json.exists()
+    assert process_state.read(paths)["reason"] == process_state.MODELS
+    assert process_state.read(paths)["missing"] == ["Parakeet"]
+    assert "Parakeet is not downloaded yet" in capsys.readouterr().out
+
+
+def test_a_failed_process_is_marked_with_why_and_a_good_run_clears_it(tmp_path: Path, monkeypatch):
+    from palaver import cli, process_state
+
+    paths = _recording_folder(tmp_path)
+    _fake_models(monkeypatch)
+    monkeypatch.setattr(cli, "_process", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("Unable to load kernel\nno GPU")))
+    with pytest.raises(RuntimeError):
+        cli._cmd_process(_ns(tmp_path))
+    assert process_state.read(paths) | {"at": None} == {"reason": process_state.ERROR, "at": None, "missing": [],
+                                                         "error": "no GPU"}
+    monkeypatch.setattr(cli, "_process", lambda *a, **k: 2)  # a failure it said itself
+    assert cli._cmd_process(_ns(tmp_path)) == 2
+    assert process_state.read(paths)["reason"] == process_state.ERROR
+    monkeypatch.setattr(cli, "_process", lambda *a, **k: 0)
+    assert cli._cmd_process(_ns(tmp_path)) == 0
+    assert process_state.read(paths) is None
+
+
+def test_missing_models_are_only_those_a_run_still_needs(tmp_path: Path, monkeypatch):
+    from palaver import process_state
+    from palaver.paths import RecordingPaths
+
+    here = set()
+    monkeypatch.setattr(process_state, "_here", lambda cfg, m: m.id in here)
+    paths = RecordingPaths(tmp_path)
+
+    class Cfg:
+        transcriber = "parakeet-mlx"
+
+    assert process_state.missing_models(Cfg(), paths) == ["Parakeet", "pyannote"]
+    here.add("parakeet")
+    assert process_state.missing_models(Cfg(), paths) == ["pyannote"]
+    for f in (paths.system_turns, paths.speaker_embeddings):
+        f.write_text("[]")
+    assert process_state.missing_models(Cfg(), paths) == []
+    here.clear()
+    for f in (paths.mic_segments, paths.system_segments):  # transcribed already: Parakeet is not needed
+        f.write_text("[]")
+    assert process_state.missing_models(Cfg(), paths) == []
+    Cfg.transcriber = "mlx-whisper"  # Whisper is not one the setup downloads
+    paths.mic_segments.unlink()
+    assert process_state.missing_models(Cfg(), paths) == []
 
 
 def test_process_uses_dictionary_flag(tmp_path: Path, monkeypatch):

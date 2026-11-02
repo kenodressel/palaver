@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { meetingCommands, nextAfter } from "../../palaver/webapp/static/logic.js";
 
 const NAMES = ["trash", "joinPrevious", "joinNext", "changeEvent", "split", "reviewAgain", "writeNotes", "play",
-  "localOnly", "shared", "forgetSeries", "rename", "export", "report"];
+  "localOnly", "shared", "forgetSeries", "rename", "export", "report", "transcribe"];
 
 function ready(extra = {}) {
   return {
@@ -104,4 +104,25 @@ test("a remembered series can be forgotten from the menu, and only then is it th
   assert.equal(meetingCommands(ready()).forgetSeries.hidden, true);
   const c = meetingCommands(ready({ shared: { meeting: false, series: { can: true, remembered: true } } }));
   assert.deepEqual([c.forgetSeries.label, c.forgetSeries.enabled, c.forgetSeries.hidden], ["Forget for This Series", true, false]);
+});
+
+test("Transcribe Again: only for a meeting not transcribed, which can then go to the trash too", async () => {
+  const { untranscribedText } = await import("../../palaver/webapp/static/logic.js");
+  for (const status of ["failed", "waiting"]) {
+    const c = meetingCommands(ready({ status, transcript: [] }));
+    assert.equal(c.transcribe.enabled, true, status);
+    assert.equal(c.transcribe.hidden, false, status);
+    assert.equal(c.trash.enabled, true, status);  // "processing" for ever before: it could not
+    assert.equal(c.writeNotes.enabled, false, status);
+  }
+  for (const status of ["ready", "processing", "recording"]) {
+    assert.equal(meetingCommands(ready({ status })).transcribe.hidden, true, status);
+  }
+  const waiting = { status: "waiting", untranscribed: { missing: ["Parakeet", "pyannote"] } };
+  assert.match(untranscribedText(waiting), /Parakeet and pyannote are still missing/);
+  assert.match(untranscribedText({ ...waiting, untranscribed: { missing: ["Parakeet"] } }), /Parakeet is still missing/);
+  const failed = { status: "failed", untranscribed: { error: "no GPU" } };
+  assert.match(untranscribedText(failed), /not transcribed \(no GPU\)\. The audio is kept/);
+  // The log's failure line says why already: not twice.
+  assert.doesNotMatch(untranscribedText({ ...failed, failure: { step: "process", error: "no GPU" } }), /no GPU/);
 });

@@ -1334,7 +1334,53 @@ def test_a_failed_transcription_is_reported_and_not_retried(tmp_path, sent_notif
     d._launch = lambda folder: launched.append(folder) or _Running(lambda: True, rc=1)
     d.run(until=lambda: d.now() > 2000)
     assert launched == [tmp_path / "rec0"] and d.status()["queued"] == []
-    assert ("Transcription failed", "rec0: see Open log; run `palaver process` on it to try again") in sent_notifications
+    assert ("Transcription failed", "rec0: open it to see why and to transcribe it again") in sent_notifications
+
+
+def test_transcribe_again_queues_a_failed_meeting_first(tmp_path, sent_notifications):
+    from palaver import process_state
+    from palaver.paths import RecordingPaths
+
+    d, _, launched = _daemon(tmp_path, lambda now: 10 <= now < 700)
+    rcs = [1, 0]
+    d._launch = lambda folder: launched.append(folder) or _Running(lambda: True, rc=rcs.pop(0))
+    d.run(until=lambda: d.now() > 800)
+    rec0 = tmp_path / "rec0"
+    process_state.mark(RecordingPaths(rec0), process_state.ERROR, error="boom")  # as `process` leaves it
+    assert d.transcribe_again(rec0) is True
+    assert process_state.read(RecordingPaths(rec0)) is None  # the window shows it transcribing
+    d.run(until=lambda: d.now() > 810)
+    assert launched == [rec0, rec0] and d.status()["queued"] == []
+
+
+def test_a_meeting_recorded_before_its_models_waits_and_is_transcribed_once_they_are_here(tmp_path, sent_notifications):
+    """Recorded right after installing: `process` says the models are
+    missing. The meeting stays queued (also across a restart), nothing runs
+    while they are missing, and it is transcribed once they are there."""
+    from palaver import process_state
+    from palaver.paths import RecordingPaths
+
+    ready = [False]
+    d, _, launched = _daemon(tmp_path, lambda now: 10 <= now < 700, models_ready=lambda folder: ready[0])
+    rec0 = tmp_path / "rec0"
+
+    def waiting(folder):
+        process_state.mark(RecordingPaths(folder), process_state.MODELS, missing=["Parakeet"])
+        return _Running(lambda: True, rc=process_state.EXIT_MODELS)
+
+    d._launch = lambda folder: launched.append(folder) or waiting(folder)
+    d.run(until=lambda: d.now() > 2000)
+    assert launched == [rec0] and d.status()["queued"] == [str(rec0)]  # not launched again while missing
+    assert ("Meeting recorded", "rec0: transcribed once the models are downloaded") in sent_notifications
+    assert not any(title == "Transcription failed" for title, _ in sent_notifications)
+
+    again, _, relaunched = _daemon(tmp_path, lambda now: False, sessions=[None], start=2000,
+                                   models_ready=lambda folder: ready[0])  # the app restarted
+    again.run(until=lambda: again.now() > 2100)
+    assert relaunched == []  # still waiting: the mark says so, no run to find out
+    ready[0] = True
+    again.run(until=lambda: again.now() > 2200)
+    assert relaunched == [rec0]
 
 
 def test_exited_live_workers_are_reaped_on_every_tick(tmp_path):

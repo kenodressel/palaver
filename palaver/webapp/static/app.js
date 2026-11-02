@@ -13,11 +13,11 @@ import { meetingCommands, nextAfter, laneCommands, laneLines, linesText, namingT
   transcriberOptions, transcriptionSendsText, priceText, transcriptionTestText, monthText,
   clientName, mcpIndicator, mcpArgsText, mcpSizeText, mcpReadOf, logShown, logClients, logMeetings,
   clearedText, linkTitle, eventLinkView, eventChangeText,
-  noteKind, relatedOnly, firstMoment, chipRemoved, indexingNotice, memoryRows, memoryTotalText, memoryPolling,
+  noteKind, relatedOnly, firstMoment, chipRemoved, untranscribedText, memoryRows, memoryTotalText, memoryPolling,
   SETUP_STEPS, setupStepAfter, setupStepBefore, stepButtons, gbText, downloadsText,
   downloadProgress, permissionText, recommendedHint, setupOfferText, testRecordingText, seedChecked,
   optionLabel, liveCoachFor, speakingText, questionsNote, questionButton, heartbeat, notesFromJobs,
-  titleChange, withTitle, retitledText, calendarHint, TITLE_MAX } from "./logic.js";
+  titleChange, updateCard, withTitle, retitledText, calendarHint, TITLE_MAX } from "./logic.js";
 import { notepad, flushNotepads, leaveNotepads, notepadFocus, restoreNotepadFocus } from "./mynotes.js";
 import { meetingTime } from "./mynotes-logic.js";
 // Today, Needs you and the ⌘K palette (UI spec, phase 2).
@@ -136,6 +136,8 @@ const INVITED_CHIPS = 5;
 const STATE_TEXT = {
   recording: "Recording",
   processing: "Transcribing",
+  waiting: "Waiting for models",
+  failed: "Not transcribed",
   incomplete: "Incomplete",
 };
 
@@ -896,6 +898,7 @@ const ICONS = {
   joinNext: "M16 7l5 5-5 5M21 12H9M3 5v14",
   split: "M9 6a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12",
   reviewAgain: "M4 12l5 5L20 6",
+  transcribe: "M4 12a8 8 0 0 1 14-5.3M20 4v4h-4M20 12a8 8 0 0 1-14 5.3M4 20v-4h4",
   localOnly: "M6 11h12v10H6zM9 11V7a3 3 0 0 1 6 0v4",
   forgetSeries: "M4 4l16 16M7 5h12a2 2 0 0 1 2 2v10M3 9v10a2 2 0 0 0 2 2h12M3 9h6",
   export: "M12 3v12M7 8l5-5 5 5M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5",
@@ -925,6 +928,7 @@ const ACTIONS = tracked("meeting", {
     startSplit();
   },
   reviewAgain: (m) => reviewAgain(m),
+  transcribe: (m, from) => transcribeAgain(m, from),
   localOnly: (m, from) => toggleLocalOnly(m, from),
   shared: (m, from) => markShared(m, !m.shared?.meeting, from),
   forgetSeries: (m, from) => rememberSeries(m, false, from),
@@ -934,7 +938,7 @@ const ACTIONS = tracked("meeting", {
 });
 
 // The ⋯ menu, in the spec's order: Move to Trash last, red, after a separator.
-const MENU_ORDER = ["rename", "changeEvent", "joinPrevious", "joinNext", "split", "reviewAgain", "export", "localOnly",
+const MENU_ORDER = ["transcribe", "rename", "changeEvent", "joinPrevious", "joinNext", "split", "reviewAgain", "export", "localOnly",
   "shared", "forgetSeries", "report", null, "trash"];
 function itemsFor(m, from) {
   const c = meetingCommands(m);
@@ -1742,6 +1746,13 @@ function renderNotes(m, color) {
   }
   if (m.status === "processing") {
     wrap.append(h("div", { class: "notes-empty" }, "The recording is being transcribed. Notes follow in a minute or two."));
+    return wrap;
+  }
+  if (m.status === "failed" || m.status === "waiting") {  // the audio is kept: it can be transcribed again
+    wrap.append(h("div", { class: "notes-empty" }, h("p", {}, untranscribedText(m)),
+      h("div", { class: "actions" },
+        h("button", { class: "btn", onclick: (e) => transcribeAgain(m, e.currentTarget) }, "Transcribe Again"),
+        m.status === "waiting" ? h("a", { class: "btn btn-quiet", href: "#/settings" }, "Open Settings") : null)));
     return wrap;
   }
   if (state.error) wrap.append(h("p", { class: "notes-empty error" }, state.error));
@@ -3764,6 +3775,22 @@ async function toggleLocalOnly(m, from) {
     : "Cloud models chosen in Settings, and Claude through MCP, may get this meeting again.", { short: true });
 }
 
+// Transcribe Again: the menu bar app transcribes the meeting next; the page shows it transcribing.
+async function transcribeAgain(m, from) {
+  try {
+    const updated = await working(from, api(`/api/meetings/${encodeURIComponent(m.id)}/transcribe`, {}));
+    if (state.meeting?.id === m.id) {
+      state.meeting = updated;
+      renderMeeting();
+    }
+  } catch (err) {
+    errorToast(`Not transcribed: ${err.message}`, { action: { label: "Try again", run: () => transcribeAgain(m, from) } });
+    return;
+  }
+  toast(`Transcribing “${titleOf(m)}”. Notes follow once it is done.`, { short: true });
+  loadList();  // its state in the list too
+}
+
 async function reviewAgain(m) {
   try {
     await putBackInReview(m.id);
@@ -4116,7 +4143,7 @@ function renderUpdateSection() {
       "Installs when nothing records or processes, then Palaver restarts. Your recordings and settings stay.") : null,
     state.settings && u?.state !== "unsupported" ? settingSwitch("check_updates", "Look for updates automatically") : null,
     state.settings && u?.state !== "unsupported" ? h("p", { class: "meta" },
-      "Once at start and every 6 hours Palaver asks GitHub for its latest release. Nothing is sent about you or this Mac, and nothing downloads until you click.") : null,
+      "At start, every hour and when you open this window Palaver asks GitHub for its latest release. Nothing is sent about you or this Mac, and nothing downloads until you click.") : null,
     h("div", { class: "lm-row" },
       h("span", { class: "meta" }, "Removes Palaver from this Mac. Your recordings stay unless you choose otherwise."),
       h("button", { type: "button", class: "btn", onclick: () => openUninstall() }, "Uninstall Palaver…"))));
@@ -4148,8 +4175,8 @@ function pollUpdate() {
   }, 1000);
 }
 
-// "Update 0.3.7" in the top bar, on every page; a click shows it in Settings.
-// The menu bar app checks (at start, every 6 hours); the window reads what it found.
+// "Update to 0.3.7" in the top bar, on every page, and a card on Today; a click shows it in Settings.
+// The menu bar app checks (at start, every hour, when the window opens); the window reads what it found.
 async function refreshUpdate() {
   try {
     state.update = await api("/api/update");
@@ -4160,6 +4187,7 @@ async function refreshUpdate() {
 }
 
 function showUpdateIndicator() {
+  document.querySelector("#main .today .update-card")?.replaceWith(updateCardSection());
   const shown = updateIndicator(state.update);
   const button = $("#update-status");
   button.hidden = !shown;
@@ -5375,8 +5403,18 @@ function renderToday() {
   $("#main").replaceChildren(h("article", { class: "today" },
     h("header", { class: "today-head" }, h("p", { class: "eyebrow" }, dayFmt.format(new Date())), h("h1", {}, "Today")),
     h("div", { class: "today-cols" },
-      h("div", { class: "today-main" }, liveNowCard(true), needsSection(true)),
+      h("div", { class: "today-main" }, updateCardSection(), liveNowCard(true), needsSection(true)),
       h("div", { class: "today-side" }, nextMeetingCard(), recentSection()))));
+}
+
+// A new release, first on Today until it is installed: not only a notification one may miss.
+function updateCardSection() {
+  const card = updateCard(state.update);
+  if (!card) return h("section", { class: "update-card", hidden: true });
+  return h("section", { class: "update-card", "aria-label": "Update" },
+    h("div", { class: "update-card-text" }, h("h2", {}, card.title), h("p", {}, card.text)),
+    h("button", { type: "button", class: "tbtn", onclick: () => openUpdate() }, "What's new"),
+    h("button", { type: "button", class: "tbtn primary", onclick: (e) => updateAction("install", e.currentTarget) }, "Update Now"));
 }
 
 // "Live now": large, only while a call is recorded; the newest lines and who speaks.
@@ -6073,28 +6111,6 @@ setInterval(refreshMcp, 10000);
 refreshMcp();
 setInterval(refreshUpdate, 60000);
 refreshUpdate();
-
-// Said once per browser: the search index is being built for the first time.
-const INDEXING_KEY = "palaver.search.indexingSaid";
-async function checkIndexing() {
-  let said = false;
-  try {
-    said = localStorage.getItem(INDEXING_KEY) === "1";
-  } catch {
-    /* said again next time */
-  }
-  if (said) return;
-  const text = indexingNotice(await api("/api/search/status").catch(() => null), said);
-  if (!text) return;
-  toast(text);
-  try {
-    localStorage.setItem(INDEXING_KEY, "1");
-  } catch {
-    /* said again next time */
-  }
-}
-setInterval(checkIndexing, 10000);
-checkIndexing();
 
 // --- the window's server restarting (#57) ----------------------------------
 

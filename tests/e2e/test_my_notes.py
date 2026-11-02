@@ -376,6 +376,7 @@ def test_which_tab_a_meeting_opens_on(page, app_server):
 def test_a_paragraph_without_a_time_keeps_no_room_for_one(page, app_server):
     _seed(app_server, A, [{"text": "Warum sind wir hier? Test 12345", "at": None}, {"text": "Deploy blocked", "at": 15}])
     open_meeting(page, app_server, A, tab="Notes")
+    expect(_pad(page).locator(".mn-block")).to_have_count(2)  # rendered before they are looked at
     untimed, timed = _pad(page).locator(".mn-block").all()
     expect(untimed.locator(".mn-time")).to_have_count(0)
     columns = lambda block: block.evaluate("b => getComputedStyle(b).gridTemplateColumns.split(' ').length")  # noqa: E731

@@ -1,8 +1,9 @@
 """Updates from inside the app (#60).
 
-The menu bar app checks the latest release's manifest.json at start and
-every 6 hours (unless turned off in Settings), and says so in the menu, in
-the window's top bar and in Settings when there is a newer one; a
+The menu bar app checks the latest release's manifest.json at start, every
+hour and when the window opens (unless turned off in Settings), and says so
+next to the menu bar icon (↑), in the menu, in the window's top bar, on
+Today and in Settings when there is a newer one; a
 notification tells about each new release once. Nothing downloads until
 the user clicks. Then only what changed is downloaded and checked against the
 manifest's sha256: the app always, the runtime when its id changed, a
@@ -33,7 +34,9 @@ from typing import Callable
 
 from . import install_layout, model_store, release
 
-CHECK_EVERY = 6 * 3600
+CHECK_EVERY = 3600
+# Opening the window looks too, when the last look is this old: a release seen within minutes.
+WINDOW_CHECK_AFTER = 10 * 60
 RETRY_CHECK = 3600  # after a failed check (offline, rate-limited)
 
 # Waiting for an update to download or for an idle moment; the rest are at rest.
@@ -87,14 +90,15 @@ class Updater:
 
     # --- checking ---------------------------------------------------------------------------
 
-    def due(self) -> bool:
-        """Time for an automatic check: at start, then every 6 hours."""
+    def due(self, every: float | None = None) -> bool:
+        """Time for an automatic check: at start, then every hour (``every``:
+        when the last one is older than that, as the window opening asks)."""
         with self._lock:
             if self.state in (UNSUPPORTED, CHECKING, DOWNLOADING, READY, INSTALLING) or not self._enabled():
                 return False
             if self.last_try is None:
                 return True
-            wait = RETRY_CHECK if self.check_error else CHECK_EVERY
+            wait = every if every is not None else RETRY_CHECK if self.check_error else CHECK_EVERY
             return self._now() - self.last_try >= wait
 
     def check(self) -> dict:

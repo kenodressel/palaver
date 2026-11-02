@@ -23,8 +23,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
-from . import continuation, lifecycle, memory, notify
+from . import continuation, lifecycle, memory, notify, process_state
 from .notes import NOTES_MEMORY_GB
+from .paths import RecordingPaths
 
 LOGGER = logging.getLogger(__name__)
 
@@ -67,6 +68,8 @@ CALL_TRIGGERS = ("teams", "slack")
 # meeting is tried again after RETRY_SECONDS, doubling up to LIVE_FINISH_TIMEOUT.
 EXIT_BUSY = 3
 RETRY_SECONDS = 60.0
+# A meeting waiting for its models looks again this often whether they are here.
+MODELS_CHECK_SECONDS = 30.0
 # A stuck live worker asked to stop gets this long to exit before `process` runs.
 STOP_GRACE = 60.0
 # A worker stopped for its memory (#49) is killed if it has not exited after this long.
@@ -368,6 +371,7 @@ class Daemon:
         launch_index: Callable[[], _Process] | None = None,
         index_wanted: Callable[[], bool] = lambda: False,
         index_model_ready: Callable[[], bool] = lambda: True,
+        models_ready: Callable[[Path], bool] = lambda folder: True,
         realtime: Callable[[], bool] = lambda: False,
         live: Callable[[], bool] = lambda: True,
         before_record: Callable[[], Any] = contextlib.nullcontext,
@@ -416,6 +420,9 @@ class Daemon:
         self._calendar_event_at = calendar_event_at  # the calendar event's key at a moment, if any
         self._retry_at: dict[Path, float] = {}  # a meeting `process` refused, and when to try again
         self._retries: dict[Path, int] = {}
+        # Recorded before the setup's downloads finished: transcribed once its models are here.
+        self._models_ready = models_ready
+        self._waiting_models: set[Path] = set()
         self._stop_sent: dict[Path, float] = {}  # stuck live workers asked to stop, by meeting
         self._children: dict[Path, list] = {}  # live and stream processes we started, by folder
         self._kinds: dict[int, str] = {}  # id of a child → "live" or "stream"
@@ -962,6 +969,9 @@ class Daemon:
                 self._memory_ended[id(a.process)] = a.what
                 if a.what == "requeue":
                     self._retry_later(a.folder, why="was stopped: the Mac is low on memory")
+                elif a.what == "drop":  # given up: the window offers to try again
+                    process_state.mark(RecordingPaths(a.folder), process_state.ERROR,
+                                       error="stopped too often: the Mac was low on memory")
             elif a.kind == "index":
                 if self._indexer is a.process:
                     self._indexer = None
@@ -1112,14 +1122,15 @@ class Daemon:
                     self._notes_queue.append(done)
                 if rc == EXIT_BUSY and done is not None:
                     self._retry_later(done)
+                elif rc == process_state.EXIT_MODELS and done is not None:
+                    self._wait_for_models(done)
                 elif done is not None:
                     self._retries.pop(done, None)
                     if rc != 0:
                         # Not retried: running it again would fail the same way.
                         LOGGER.error("processing %s failed (exit %s); its session.log says why", done.name, rc)
                         notify.notify("Transcription failed",
-                                      f"{done.name}: see Open log; run `palaver process` on it to try again",
-                                      done.name)
+                                      f"{done.name}: open it to see why and to transcribe it again", done.name)
             self._index_next = None  # a new transcript to index
         self._processing = None
         self._processing_folder = None
@@ -1127,6 +1138,12 @@ class Daemon:
         folder = next((f for f in self._queue if self._retry_at.get(f, now) <= now), None)
         if folder is None:
             return
+        if self._waits_for_models(folder):
+            if not self._models_ready(folder):
+                self._retry_at[folder] = now + MODELS_CHECK_SECONDS
+                return
+            LOGGER.info("the models of %s are here", folder.name)
+            self._waiting_models.discard(folder)
         # A meeting continued after a restart: the live workers of all its parts.
         busy = [f for f in (folder, *continuation.parts(folder)) if self._worker_busy(f)]
         if busy:
@@ -1149,6 +1166,40 @@ class Daemon:
         LOGGER.info("transcribing %s", folder.name)
         self._processing = self._launch(folder)
         self._processing_folder = folder
+
+    def _waits_for_models(self, folder: Path) -> bool:
+        if folder in self._waiting_models:
+            return True
+        state = process_state.read(RecordingPaths(folder))  # since before a restart of the app
+        return state is not None and state["reason"] == process_state.MODELS
+
+    def _wait_for_models(self, folder: Path) -> None:
+        """`process` found models missing: the setup's downloads have not
+        finished. The meeting stays queued, never dropped, and is
+        transcribed once they are here."""
+        if folder not in self._waiting_models:
+            self._waiting_models.add(folder)
+            LOGGER.info("%s waits for its models to download", folder.name)
+            notify.notify("Meeting recorded", f"{folder.name}: transcribed once the models are downloaded", folder.name)
+        self._retry_at[folder] = self.now() + MODELS_CHECK_SECONDS
+        if folder not in self._queue:
+            self._queue.append(folder)
+
+    def transcribe_again(self, folder: Path) -> bool:
+        """Transcribe Again in the window: a meeting `process` failed on (or
+        that waits for its models) goes first in the queue. False while it
+        is being transcribed already."""
+        if folder == self._processing_folder:
+            return False
+        process_state.clear(RecordingPaths(folder))
+        self._waiting_models.discard(folder)
+        for pending in (self._retry_at, self._retries, self._waiting_since, self._stop_sent):
+            pending.pop(folder, None)
+        if folder in self._queue:
+            self._queue.remove(folder)
+        self._queue.insert(0, folder)
+        LOGGER.info("transcribing %s again, as asked", folder.name)
+        return True
 
     def _retry_later(self, folder: Path, why: str = "is still busy") -> None:
         """`process` refused: something of the meeting is still busy (or it
@@ -1393,6 +1444,7 @@ def build_daemon(cfg, cli_options: list[str] = (), silence: Callable[[], float |
         launch_index=lambda: launch_run(None, list(cli_options), cmd="index", qos="background"),
         index_wanted=lambda: current().search_meaning and bool(semantic.stale(cfg.output_dir)),
         index_model_ready=lambda: semantic.embeddings.model_folder(download=False) is not None,
+        models_ready=lambda folder: not process_state.missing_models(cfg, RecordingPaths(folder)),
         launch_live=lambda folder: launch_run(folder, list(cli_options), cmd="live", qos="background"),
         live=lambda: current().live_processing,
         before_record=onboarding.meeting_starting,

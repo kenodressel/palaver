@@ -150,6 +150,18 @@ def app_calls(daemon, *, on_main: Callable[[Callable[[], Any]], Any], test_recor
             raise CallRefused(str(exc)) from None
         return {"pid": pid}
 
+    def transcribe(args: dict) -> bool:
+        folder = Path(str(args.get("folder")))
+        if not folder.is_dir():
+            raise CallRefused(f"no recording at {folder}")
+
+        def run():
+            queued = daemon.transcribe_again(folder)
+            refresh()
+            return queued
+
+        return bool(on_main(run))
+
     def recording_now() -> bool:
         return daemon.status()["state"] == "recording"
 
@@ -170,6 +182,7 @@ def app_calls(daemon, *, on_main: Callable[[Callable[[], Any]], Any], test_recor
         "switched_off": switched_off,
         "watch": watch,
         "start_helper": start_helper,
+        "transcribe": transcribe,
         "test": test,
         "restart_web": lambda args: {"pid": restart_web()},
     }

@@ -39,12 +39,13 @@ changed:
 | Runtime: a standalone Python ([python-build-standalone](https://github.com/astral-sh/python-build-standalone)) with every locked dependency, prebuilt | `~/Library/Application Support/palaver/runtime/<id>/` | 530 MB download, 1.6 GB on disk | when `uv.lock` changes |
 | Models | `~/Library/Application Support/palaver/models/` (pyannote, hosted with the release: no token) and `~/.cache/huggingface` (Parakeet, the notes model) | up to ~10 GB | once, again when a model changes |
 
-**Updates.** Palaver looks for a new release at start and every 6 hours (one
+**Updates.** Palaver looks for a new release at start, every hour and when you open its window (one
 anonymous request for the release's `manifest.json`; turn it off in Settings →
 Updates). The menu bar menu has "Check for Updates… (Palaver version)" to
 look now. A new release is announced once with a notification; until it is
-installed the menu says "Update available (version)", the window's top bar
-shows "Update (version)", and Settings shows what's new. A click downloads only the changed
+installed the menu bar shows ↑ next to the icon and its menu says "Update
+available (version)", the window's top bar shows "Update to (version)", Today
+leads with an "Update Now" card, and Settings shows what's new. A click downloads only the changed
 layers, checks each against the manifest's SHA-256, and installs at the next
 moment nothing records, transcribes or writes notes; then Palaver restarts.
 A failed download or install keeps the version you have and says why. Running

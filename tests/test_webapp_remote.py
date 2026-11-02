@@ -10,6 +10,7 @@ import os
 import shutil
 import tempfile
 import threading
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -370,7 +371,12 @@ def test_http_changes_count_for_the_drain_and_ping_answers(tmp_path, monkeypatch
     try:
         assert _req(srv, "/api/ping")[0] == 200
         assert _post(srv, f"/api/meetings/{MEETING}/trash")[0] == 200
-        assert seen == [1] and app.inflight.count == 0
+        assert seen == [1]
+        # The answer is sent from inside the change: it ends right after, maybe after the client read it.
+        deadline = time.monotonic() + 5
+        while app.inflight.count and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert app.inflight.count == 0
     finally:
         srv.shutdown()
         srv.server_close()

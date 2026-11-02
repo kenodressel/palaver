@@ -29,7 +29,7 @@ class Settings:
     # stream's text drops hesitations and differs from the final transcript).
     nudge_pace: bool = False
     nudge_fillers: bool = False
-    # Look for a new release at start and every 6 hours (#60): one GET of a
+    # Look for a new release at start, every hour and when the window opens (#60): one GET of a
     # public file; nothing downloads without the user's click.
     check_updates: bool = True
 

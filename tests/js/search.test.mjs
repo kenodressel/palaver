@@ -48,11 +48,3 @@ test("chipRemoved puts a name back as a quoted word, and works on the text as it
   assert.equal(chipRemoved("offer project:ÖNW", { kind: "project", text: "project:ÖNW", written: true }), "offer");
   assert.equal(chipRemoved("Tomas and Tom", person), 'Tomas and "Tom"');  // the whole word only
 });
-
-test("indexingNotice is said once, the first time the index is built", async () => {
-  const { indexingNotice } = await import("../../palaver/webapp/static/logic.js");
-  assert.match(indexingNotice({ indexing: true, downloading: true }, false), /470 MB/);
-  assert.match(indexingNotice({ indexing: true, downloading: false }, false), /^Indexing meetings/);
-  assert.equal(indexingNotice({ indexing: true, downloading: true }, true), null);  // said before
-  assert.equal(indexingNotice({ indexing: false, downloading: false }, false), null);
-});

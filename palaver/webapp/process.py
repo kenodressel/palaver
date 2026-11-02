@@ -10,12 +10,19 @@ waits in the socket's queue instead of failing. The app restarts a crashed
 server with backoff, a requested one (``palaver app restart-web``) at once,
 and stops it when it quits. The server exits by itself when the app is
 gone (its stdin, a pipe from the app, closes).
+
+The port is the same at every start of the app (``WINDOW_PORTS``): the page
+keeps what it remembers (drafts of the user's notes, the palette's recent
+entries) per address. Each start of the app makes a new key, which every
+server it starts gets ($PALAVER_WEB_KEY) and answers nothing without
+(server.py): other programs on this Mac cannot read the meetings through it.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import secrets
 import select
 import signal
 import socket
@@ -38,15 +45,35 @@ READY_TIMEOUT = 20.0  # a server not serving by then is ended and started again
 # a join moves audio); the language model's runs are the app's and go on.
 DRAIN_SECONDS = 60.0
 STOP_TIMEOUT = DRAIN_SECONDS + 5.0  # SIGTERM, then SIGKILL
+# The window's port, the first of these that is free; any free one after them.
+WINDOW_PORTS = tuple(range(47815, 47825))
+KEY_ENV = "PALAVER_WEB_KEY"
 
 
 def listen(port: int = 0) -> socket.socket:
-    """The window's listening socket on 127.0.0.1, kept by the menu bar app."""
+    """A listening socket on 127.0.0.1; ``port`` 0 picks a free one."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind(("127.0.0.1", port))
-    sock.listen(128)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("127.0.0.1", port))
+        sock.listen(128)
+    except OSError:
+        sock.close()
+        raise
     return sock
+
+
+def listen_for_window(ports: Iterable[int] = WINDOW_PORTS) -> socket.socket:
+    """The window's listening socket, kept by the menu bar app: on the
+    first free port of ``ports``, so the page's address stays the same from
+    one start to the next."""
+    for port in ports:
+        try:
+            return listen(port)
+        except OSError:
+            LOGGER.info("port %d is taken; trying the next", port)
+    LOGGER.warning("all of the window's ports are taken; the page forgets what it remembered")
+    return listen()
 
 
 def child_argv(cli_options: Iterable[str], *, listen_fd: int, ready_fd: int, app_socket: Path) -> list[str]:
@@ -136,18 +163,21 @@ class backoff_delays:  # noqa: N801  (used like a function's result)
 
 class WebSupervisor:
     """Starts the server process with ``command(listen_fd, ready_fd)`` and
-    keeps it running. ``on_ready(restarted)`` is called (from a background
-    thread) each time a server is up: ``restarted`` for every one after
-    the first, so the window can load the page again."""
+    keeps it running, each one with ``key`` (None: a new one). ``on_ready(restarted)``
+    is called (from a background thread) each time a server is up:
+    ``restarted`` for every one after the first, so the window can load
+    the page again."""
 
     def __init__(self, command: Callable[[int, int], list[str]], *, listener: socket.socket,
                  env: Mapping[str, str] | None = None, on_ready: Callable[[bool], None] = lambda restarted: None,
+                 key: str | None = None,
                  backoff: Iterable[float] = BACKOFF, stable_after: float = STABLE_AFTER,
                  stop_timeout: float = STOP_TIMEOUT, ready_timeout: float = READY_TIMEOUT):
         self.listener = listener
         self.port = listener.getsockname()[1]
+        self.key = key or secrets.token_urlsafe(32)  # the window signs in with it (server.with_key)
         self._command = command
-        self._env = dict(env) if env is not None else None
+        self._env = {**(env if env is not None else os.environ), KEY_ENV: self.key}
         self._on_ready = on_ready
         self._delays = backoff_delays(backoff, stable_after)
         self._stop_timeout = stop_timeout
@@ -341,14 +371,16 @@ def serve(cfg, cli_options: list[str], *, listen_fd: int | None = None, ready_fd
     """`palaver webapp-serve`: the window's server, until SIGTERM (or the app is gone)."""
     from . import api, build_app
     from .remote import RemoteCalendar, RemoteRecording, RemoteTest
-    from .server import make_server, sweep_leftovers
+    from .server import make_server, sweep_leftovers, url, with_key
 
     recording = RemoteRecording(socket_path=app_socket)
     app = build_app(cfg, cli_options, recording=recording)
     app.probe.test = RemoteTest(app_socket)  # recorded by the app: this process needs no mic
     app.probe.calendar = RemoteCalendar(app_socket)  # the app reads the calendar: it asks for it
     sock = socket.socket(fileno=listen_fd) if listen_fd is not None else None
-    server = make_server(app, port, sock=sock)
+    # The app's key; started by hand (to try the page in a browser), its own.
+    key = os.environ.get(KEY_ENV) or secrets.token_urlsafe(32)
+    server = make_server(app, port, sock=sock, key=key)
 
     def stop(*_):
         threading.Thread(target=server.shutdown, daemon=True).start()
@@ -360,6 +392,8 @@ def serve(cfg, cli_options: list[str], *, listen_fd: int | None = None, ready_fd
     # it is asked, a little later and never during a recording (#46).
     api.start_warming(app.output_dir, user_name=app.user_name, recording=recording)
     LOGGER.info("the window's server (pid %d) serves on port %d", os.getpid(), server.server_address[1])
+    if listen_fd is None:
+        print(f"Open {with_key(url(server), key)}")
     if ready_fd is not None:
         os.write(ready_fd, b"ready\n")
         os.close(ready_fd)

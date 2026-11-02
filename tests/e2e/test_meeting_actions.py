@@ -233,3 +233,44 @@ def test_back_after_a_trash_and_its_undo(page, app_server):
     expect(heading(page)).to_have_text("Team standup")
     cmd(page, "BracketRight")
     expect(heading(page)).to_have_text("Design review")
+
+
+def _not_transcribed(served, mid, reason, **kw):
+    from palaver import process_state
+    from palaver.paths import RecordingPaths
+
+    paths = RecordingPaths(served.root / mid)
+    paths.transcript_json.unlink()
+    paths.notes.unlink(missing_ok=True)
+    process_state.mark(paths, reason, **kw)
+    return paths
+
+
+def test_a_meeting_whose_transcription_failed_can_be_transcribed_again(page, app_server):
+    from palaver import process_state
+
+    paths = _not_transcribed(app_server, A, process_state.ERROR, error="Unable to reach MTLCompilerService")
+    goto(page, app_server, f"#/{A}")
+    notice = page.locator("#main .notes-empty")
+    expect(notice).to_contain_text("This meeting was not transcribed (Unable to reach MTLCompilerService)")
+    expect(list_item(page, A)).to_contain_text("Not transcribed")
+    more(page).click()
+    expect(page.locator(".menu .menu-label").first).to_have_text("Transcribe Again")
+    page.keyboard.press("Escape")
+    notice.get_by_role("button", name="Transcribe Again").click()
+    expect_toast(page, "Transcribing “Team standup”. Notes follow once it is done.")
+    expect(page.locator("#main .notes-empty")).to_contain_text("The recording is being transcribed")
+    expect(list_item(page, A)).to_contain_text("Transcribing")
+    assert app_server.recording.transcribing == [paths.folder]
+
+
+def test_a_meeting_waiting_for_its_models_says_so_and_links_to_settings(page, app_server):
+    from palaver import process_state
+
+    _not_transcribed(app_server, A, process_state.MODELS, missing=["Parakeet"])
+    goto(page, app_server, f"#/{A}")
+    notice = page.locator("#main .notes-empty")
+    expect(notice).to_contain_text("Parakeet is still missing")
+    expect(list_item(page, A)).to_contain_text("Waiting for models")
+    notice.get_by_role("link", name="Open Settings").click()
+    expect(page).to_have_url(re.compile(r"#/settings$"))

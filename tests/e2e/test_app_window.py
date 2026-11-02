@@ -266,6 +266,38 @@ def test_a_restarted_server_reloads_the_window_where_it_was(monkeypatch, app_ser
         win.close()
 
 
+def test_the_window_signs_in_with_the_apps_key(monkeypatch, keyed_server):
+    """The menu bar opens the page with the app's key: it shows at its
+    route, without the key in its address, and everything it loads later
+    (the API, the audio, a reload after a restart) goes through its cookie."""
+    import AppKit
+    from AppKit import NSApplication, NSMakeRect
+
+    from palaver.webapp import window
+
+    NSApplication.sharedApplication()
+    monkeypatch.setattr(AppKit, "NSApp", _QuietApp(AppKit.NSApp))
+    win, delegate = window._new_window(NSMakeRect(-5000, -5000, 900, 600))
+    win.setAlphaValue_(0.0)
+    monkeypatch.setattr(window, "_window", win)
+    monkeypatch.setattr(window, "_delegate", delegate)
+    web = win.contentView()
+    _collect_errors(web)
+    try:
+        window.open_window(keyed_server.url + f"#/{A}", keyed_server.key)
+        assert _until(lambda: _title(web) == "Team standup", 20), "the page did not sign in"
+        assert _js(web, "location.href") == keyed_server.url + f"#/{A}"  # the key left the address
+        assert _js(web, "document.cookie") == ""  # out of the page's reach
+        _js(web, f"fetch('/api/meetings/{A}/audio?track=mix', {{headers: {{Range: 'bytes=0-99'}}}})"
+                 ".then((r) => (window.__audio = r.status))")  # loaded, never played: no sound
+        assert _until(lambda: _js(web, "window.__audio ?? null") == 206)
+        assert window.reload_in_place(keyed_server.url) is True
+        assert _until(lambda: _title(web) == "Team standup", 20), "the reload was not let in"
+        _no_errors(web)
+    finally:
+        win.close()
+
+
 def test_reloading_before_the_window_was_ever_opened_does_nothing(monkeypatch):
     from palaver.webapp import window
 

@@ -5,11 +5,14 @@ own process (process.py, #57).
 Only this machine can reach it. Against other web pages in the browser
 (DNS rebinding, cross-site requests) it accepts only its own Host header and
 JSON bodies, which a foreign page cannot send without a CORS preflight that
-this server never answers.
+this server never answers. Against other programs on this Mac (sandboxed
+apps, other accounts) it answers only with the menu bar app's key: the
+window opens ``/?key=…`` once and keeps it as a cookie (``with_key``).
 """
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import re
@@ -19,10 +22,11 @@ import tempfile
 import threading
 import webbrowser
 from http import HTTPStatus
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, parse_qsl, unquote, urlencode, urlparse
 
 from .. import exchange, model_jobs, undo
 from ..settings import Settings
@@ -37,6 +41,20 @@ _CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; 
 # A browser asks for open-ended ranges ("bytes=0-"); answer in slices so a
 # one-hour recording is never mixed in one go.
 AUDIO_SLICE_BYTES = 1 << 21
+
+
+def key_cookie(port: int) -> str:
+    """The cookie that carries the key. Cookies are per host, not per port:
+    the port in its name keeps two servers on 127.0.0.1 apart."""
+    return f"palaver_key_{port}"
+
+
+def with_key(url: str, key: str | None) -> str:
+    """``url`` with the key, before its #route: what the window opens first."""
+    if not key:
+        return url
+    base, hash_, route = url.partition("#")
+    return f"{base}?{urlencode({'key': key})}{hash_}{route}"
 
 
 # The user's own notes (#44) of a meeting or an upcoming one: the document,
@@ -114,8 +132,9 @@ def sweep_leftovers(app: App) -> None:
         LOGGER.warning("could not sweep import and export leftovers", exc_info=True)
 
 
-def _handler(app: App, port: int) -> type[BaseHTTPRequestHandler]:
+def _handler(app: App, port: int, key: str | None = None) -> type[BaseHTTPRequestHandler]:
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
+    cookie_name = key_cookie(port)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "palaver"
@@ -152,11 +171,38 @@ def _handler(app: App, port: int) -> type[BaseHTTPRequestHandler]:
         def _host_ok(self) -> bool:
             return self.headers.get("Host", "") in allowed_hosts
 
+        def _key_ok(self) -> bool:
+            """Without a key (tests, the dev server) everyone on this Mac may."""
+            if key is None:
+                return True
+            try:
+                cookie = SimpleCookie(self.headers.get("Cookie", "")).get(cookie_name)
+            except CookieError:
+                return False
+            return cookie is not None and hmac.compare_digest(cookie.value.encode(), key.encode())
+
+        def _sign_in(self, url, given: str) -> None:
+            """The window's first visit: the key into a cookie, and out of the
+            address (the browser keeps the #route)."""
+            if key is None or not hmac.compare_digest(given.encode(), key.encode()):
+                return self._error(HTTPStatus.FORBIDDEN, "wrong key")
+            rest = urlencode([(k, v) for k, v in parse_qsl(url.query) if k != "key"])
+            self.send_response(HTTPStatus.FOUND)
+            self.send_header("Location", (url.path or "/") + (f"?{rest}" if rest else ""))
+            self.send_header("Set-Cookie", f"{cookie_name}={key}; Path=/; HttpOnly; SameSite=Strict")
+            self.send_header("Content-Length", "0")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+
         def do_GET(self):
             if not self._host_ok():
                 return self._error(HTTPStatus.FORBIDDEN, "wrong host")
             url = urlparse(self.path)
             query = parse_qs(url.query)
+            if "key" in query:
+                return self._sign_in(url, query["key"][0])
+            if not self._key_ok():
+                return self._error(HTTPStatus.FORBIDDEN, "open Palaver from its menu bar icon")
             try:
                 if url.path == "/api/ping":  # the page's heartbeat: "Reconnecting…" while there is no answer
                     return self._json({"ok": True})
@@ -269,6 +315,8 @@ def _handler(app: App, port: int) -> type[BaseHTTPRequestHandler]:
         def _post(self):
             if not self._host_ok():
                 return self._error(HTTPStatus.FORBIDDEN, "wrong host")
+            if not self._key_ok():
+                return self._error(HTTPStatus.FORBIDDEN, "open Palaver from its menu bar icon")
             if urlparse(self.path).path == "/api/import":
                 return self._import()
             if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
@@ -338,6 +386,11 @@ def _handler(app: App, port: int) -> type[BaseHTTPRequestHandler]:
                     token = api.set_title(app.output_dir, m.group(1), body["title"])
                     return self._json({**api.get_meeting(app.output_dir, m.group(1), user_name=app.user_name,
                                                          calendar=app.calendar), "undo": token})
+                m = re.fullmatch(r"/api/meetings/([^/]+)/transcribe", self.path)
+                if m:
+                    api.transcribe_again(app.output_dir, m.group(1), app.recording, app.cfg)
+                    return self._json(api.get_meeting(app.output_dir, m.group(1), user_name=app.user_name,
+                                                      calendar=app.calendar))
                 m = re.fullmatch(r"/api/meetings/([^/]+)/export", self.path)
                 if m:
                     return self._json(api.export_meeting(
@@ -775,10 +828,12 @@ def _handler(app: App, port: int) -> type[BaseHTTPRequestHandler]:
     return Handler
 
 
-def make_server(app: App, port: int = DEFAULT_PORT, sock: socket.socket | None = None) -> ThreadingHTTPServer:
+def make_server(app: App, port: int = DEFAULT_PORT, sock: socket.socket | None = None,
+                key: str | None = None) -> ThreadingHTTPServer:
     """Bound to 127.0.0.1; ``port`` 0 picks a free one. ``sock``: a socket
     already listening, handed over by the menu bar app (#57), so a new
-    server process answers on the same port."""
+    server process answers on the same port. ``key``: only requests that
+    carry it are answered (None: all)."""
     if sock is None:
         server = ThreadingHTTPServer(("127.0.0.1", port), None)
     else:
@@ -786,7 +841,7 @@ def make_server(app: App, port: int = DEFAULT_PORT, sock: socket.socket | None =
         server.socket.close()
         server.socket = sock
         server.server_address = sock.getsockname()
-    server.RequestHandlerClass = _handler(app, server.server_address[1])
+    server.RequestHandlerClass = _handler(app, server.server_address[1], key)
     server.daemon_threads = True
 
     def handle_error(request, client_address):

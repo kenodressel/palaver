@@ -608,6 +608,7 @@ h1 {
 .need-q .person-token { margin: 0 0 0 4px; }
 .notes-empty { padding: 28px 0; font: 15px/1.5 var(--sans); color: var(--ink-2); }
 .notes-empty p { margin: 0 0 12px; }
+.notes-empty .actions { display: flex; gap: 8px; align-items: center; }
 .error { color: var(--danger); }
 
 /* My notes (#44): the Notes tab of a meeting, and the prep page. */
@@ -1067,9 +1068,17 @@ button.mn-time:hover, button.mn-time:focus-visible { background: var(--selected)
 }
 .mcp-status:hover, .update-status:hover { background: var(--hover); color: var(--ink); }
 .mcp-status[hidden], .update-status[hidden] { display: none; }
-/* "Update 0.3.7" left of it while there is one: in violet, as it asks for a click. */
-.update-status { color: var(--you-ink); }
-.update-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--you); }
+/* "Update to 0.3.7" left of it while there is one: filled violet, the one thing up there asking for a click. */
+.update-status { background: var(--you); color: var(--on-color); }
+.update-status:hover { background: var(--you-ink); color: var(--on-color); }
+.update-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--on-color); }
+/* Today, first: the release waiting for a click, until it is installed. */
+.update-card { display: flex; align-items: center; gap: 16px; padding: 16px 20px; border-radius: var(--card);
+  background: color-mix(in srgb, var(--you) 12%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--you) 30%, transparent); }
+.update-card[hidden] { display: none; }
+.update-card-text { flex: 1; min-width: 0; }
+.update-card h2 { margin: 0 0 4px; font-size: 17px; }
+.update-card p { margin: 0; color: var(--ink-2); font-size: 14px; }
 .mcp-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--v1); }
 /* Memory in Settings (#49): each worker against its budget. */
 .memory-total { margin: 0; font-weight: 650; font-variant-numeric: tabular-nums; }

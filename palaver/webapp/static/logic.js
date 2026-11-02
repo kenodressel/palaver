@@ -23,11 +23,14 @@ export function meetingCommands(m) {
   const live = !!m.live || m.status === "recording";
   const busy = live || m.status === "processing";  // its files are still being written
   const ready = m.status === "ready" && !live;
+  const untranscribed = m.status === "failed" || m.status === "waiting";
   const nb = m.neighbours || {};
   return {
     play: { label: "Play", shortcut: "Space", enabled: !!m.has_audio },
     // A title is harmless metadata: any meeting, also one being recorded.
     rename: { label: "Rename…", paletteLabel: "Rename Meeting", enabled: true },
+    // Not transcribed: `palaver process` failed on it, or it waits for its models.
+    transcribe: { label: "Transcribe Again", enabled: untranscribed, hidden: !untranscribed },
     writeNotes: { label: m.notes ? "Rewrite notes" : "Write notes", shortcut: "⌘⇧N", enabled: ready },
     changeEvent: { label: "Change Event…", enabled: ready },
     joinPrevious: { label: "Join with Previous", shortcut: "⌘J", enabled: ready && !!nb.previous },
@@ -48,6 +51,20 @@ export function meetingCommands(m) {
     report: { label: "Report a Problem with This Meeting…", paletteLabel: "Report a Problem with This Meeting",
       enabled: true },
   };
+}
+
+// Why a meeting has no transcript (its "untranscribed", failed.json): what the page says above Transcribe Again.
+// A failed run's own error shows in the failure line above it (m.failure, from the log), with Report.
+export function untranscribedText(m) {
+  const u = m.untranscribed || {};
+  if (m.status === "waiting") {
+    const missing = (u.missing || []).join(" and ") || "The transcription models";
+    const are = (u.missing || []).length > 1 ? "are" : "is";
+    return `Recorded before the models were downloaded: ${missing} ${are} still missing. `
+      + "The meeting is transcribed by itself once the download in Settings is done.";
+  }
+  const why = !m.failure && u.error ? ` (${u.error})` : "";
+  return `This meeting was not transcribed${why}. The audio is kept: it can be transcribed again.`;
 }
 
 // --- a meeting's own title ---------------------------------------------------------
@@ -820,15 +837,6 @@ export function logMeetings(log) {
 
 export const clearedText = (n) => `Access log cleared · ${n} ${n === 1 ? "entry" : "entries"}`;
 
-// The one-time notice when the search index is first built (#46): what
-// happens, and that a model is downloaded. null once said, or while idle.
-export function indexingNotice(status, said) {
-  if (said || !status?.indexing) return null;
-  return status.downloading
-    ? "Downloading the search model (470 MB) and indexing meetings for search by meaning, in the background."
-    : "Indexing meetings for search by meaning, in the background.";
-}
-
 // --- attribution (#48) ------------------------------------------------------------
 
 // How a link came about, as the server sends it: {kind, target, source,
@@ -1216,7 +1224,7 @@ export function paletteMatch(query, entries, limit = 30) {
   return found.slice(0, limit).map((x) => x.e);
 }
 
-const PALETTE_COMMANDS = ["play", "writeNotes", "rename", "changeEvent", "joinPrevious", "joinNext", "split", "reviewAgain",
+const PALETTE_COMMANDS = ["play", "transcribe", "writeNotes", "rename", "changeEvent", "joinPrevious", "joinNext", "split", "reviewAgain",
   "export", "localOnly", "shared", "forgetSeries", "report", "trash"];
 
 // The open meeting's commands that apply now, with their shortcuts.
@@ -1449,7 +1457,7 @@ export function updateView(u) {
   }
 }
 
-// The top bar's "Update 0.2.0": while there is one to install or one installing;
+// The top bar's "Update to 0.2.0": while there is one to install or one installing;
 // nothing while up to date (Settings says that).
 export function updateIndicator(u) {
   const version = u?.available?.version;
@@ -1457,13 +1465,24 @@ export function updateIndicator(u) {
   const { text: title } = updateView(u);
   const total = u.available.download_bytes || 0;
   const text = {
-    available: `Update ${version}`,
+    available: `Update to ${version}`,
     downloading: total ? `Updating · ${Math.min(99, Math.floor((100 * (u.done_bytes || 0)) / total))} %` : "Updating…",
     ready: u.waiting_for ? "Update waits" : "Updating…",
     installing: "Updating…",
     failed: "Update failed",
   }[u.state];
   return text ? { text, title } : null;
+}
+
+// Today's card about a new release: while it waits for a click (available, or failed and to be tried again).
+export function updateCard(u) {
+  const version = u?.available?.version;
+  if (!version || !["available", "failed"].includes(u.state)) return null;
+  return {
+    title: `Palaver ${version} is available`,
+    text: u.state === "failed" ? (u.error || "The update failed; this version stays.")
+      : `You have ${u.current}. It installs once Palaver is idle; nothing is lost.`,
+  };
 }
 
 // --- one person, one look (UI cleanup 2026-10-30) ---------------------------------------

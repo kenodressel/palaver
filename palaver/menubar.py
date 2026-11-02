@@ -42,8 +42,10 @@ def menu_title(
     error: bool = False,
     now: datetime | None = None,
     progress: tuple[int, int, str] | None = None,
+    update: bool = False,
 ) -> str:
-    """Menu bar text next to the icon: what is happening, if anything."""
+    """Menu bar text next to the icon: what is happening, if anything;
+    ``update``: a new release is there to install."""
     if error:
         return "⚠️"
     if status["state"] == "recording":
@@ -53,6 +55,8 @@ def menu_title(
         return "⏳" + (f" {progress[0]}/{progress[1]}" if progress and progress[0] else "")
     if status["state"] == "paused":
         return "⏸"
+    if update:  # a new release, until it is installed: the icon says so too, not only a notification
+        return "↑"
     return ""
 
 
@@ -191,7 +195,7 @@ OPEN_TITLE = "Open Meetings"
 UPDATE_TITLE = "Check for Updates…"  # #60: with the version; "Update available (0.3.1)" when there is one
 SETTINGS_TITLE = "Settings…"  # the window's Settings: the record switches, the calendar and the rest
 REPORT_TITLE = "Report a Problem…"  # #59: the window's report form
-QUIT_TITLE = "Quit"
+QUIT_TITLE = "Quit Palaver"
 
 
 def menu_layout() -> list[str | None]:
@@ -345,6 +349,13 @@ class Updates:
             self._background(self.updater.download)
         return self.updater.status()
 
+    def window_opened(self) -> None:
+        """The window opens: a look for a new release, unless one was just made."""
+        from .updater import WINDOW_CHECK_AFTER
+
+        if self.updater.due(every=WINDOW_CHECK_AFTER):
+            self._background(self.updater.check)
+
     def tick(self) -> bool:
         """Each second: start a due check; True when the app must quit now
         (an update is swapped in, or the user uninstalled)."""
@@ -458,7 +469,7 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
     from .daemon import build_daemon
     from .meter import LevelTracker
     from .webapp import process as web_process
-    from .webapp.window import open_window, reload_in_place
+    from .webapp.window import on_quit, open_window, reload_in_place
     from .calendar_eventkit import has_access as calendar_access
     from .calendar_eventkit import request_access as request_calendar_access
 
@@ -504,7 +515,7 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
             self.web = web_process.WebSupervisor(
                 lambda listen_fd, ready_fd: web_process.child_argv(
                     cli_options, listen_fd=listen_fd, ready_fd=ready_fd, app_socket=appctl.APP_SOCKET),
-                listener=web_process.listen(), env=web_process.child_env(os.environ),
+                listener=web_process.listen_for_window(), env=web_process.child_env(os.environ),
                 on_ready=lambda restarted: restarted and AppHelper.callAfter(reload_in_place, self.web.url()))
             self.web.start()
             self._error = False
@@ -522,7 +533,7 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
                      SETTINGS_TITLE: rumps.MenuItem(SETTINGS_TITLE, callback=self.open_settings, key=","),
                      REPORT_TITLE: rumps.MenuItem(REPORT_TITLE, callback=self.report_problem),
                      UPDATE_TITLE: self.update_item,
-                     QUIT_TITLE: rumps.MenuItem(QUIT_TITLE, callback=self.quit)}
+                     QUIT_TITLE: rumps.MenuItem(QUIT_TITLE, callback=self.quit, key="q")}
             self.menu = [
                 self.status_item,
                 *self.live_items,
@@ -592,13 +603,15 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
             progress = None
             if status.get("transcribing_folder"):
                 progress = processing_progress(Path(status["transcribing_folder"]) / "session.log")
-            self.title = menu_title(status, error=self._error, now=now, progress=progress)
-            self.status_item.title = status_line(status, now, progress)
-            self.manual_item.title = manual_title(status)
-            self.keep_item._menuitem.setHidden_(not status.get("stop_question"))
             from .updater import menu_title as update_title
 
             update_status = self.updates.updater.status()
+            self.title = menu_title(status, error=self._error, now=now, progress=progress,
+                                    update=update_status.get("state") in ("available", "failed")
+                                    and bool(update_status.get("available")))
+            self.status_item.title = status_line(status, now, progress)
+            self.manual_item.title = manual_title(status)
+            self.keep_item._menuitem.setHidden_(not status.get("stop_question"))
             update = update_title(update_status)
             self.update_item.title = update or UPDATE_TITLE
             self.update_item._menuitem.setHidden_(update is None)  # from a checkout: nothing to update
@@ -668,10 +681,12 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
                 print(f"warning: attaching calendar events failed: {exc}")
 
         def open_meetings(self, _sender):
-            open_window(self.web.url())
+            self.updates.window_opened()
+            open_window(self.web.url(), self.web.key)
 
         def open_settings(self, _sender):
-            open_window(self.web.url("settings"))  # "#/settings"
+            self.updates.window_opened()
+            open_window(self.web.url("settings"), self.web.key)  # "#/settings"
 
         def install_update(self, _sender):
             """Install the update there is; with none known, check now (the
@@ -686,7 +701,7 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
         def report_problem(self, _sender):
             """One form for the report, in the window (#59): its server writes the zip."""
             usage.record("action", "menubar.reportProblem")
-            open_window(self.web.url("report"))
+            open_window(self.web.url("report"), self.web.key)
 
         def quit(self, _sender):
             # The user's own stop: the recording is processed now. A quit from
@@ -724,7 +739,8 @@ def create_app(cfg, cli_options: list[str] = ()):  # pragma: no cover - UI shell
     MeetingApp.start_timer = start_timer
     app = MeetingApp()
     # A click on one of the app's notifications opens its meeting.
-    notify.on_click(lambda meeting: AppHelper.callAfter(open_window, app.web.url(meeting)))
+    notify.on_click(lambda meeting: AppHelper.callAfter(open_window, app.web.url(meeting), app.web.key))
+    on_quit(lambda: app.quit(None))  # ⌘Q in the window: as Quit Palaver in the menu bar's menu
 
     @rumps.events.before_quit.register
     def _finalize():

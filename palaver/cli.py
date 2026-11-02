@@ -235,17 +235,29 @@ def _cmd_process(args: argparse.Namespace) -> int:
     if busy:
         print(f"error: {busy[0].name} is still being processed live; try again in a minute.")
         return 3
-    from . import usage
+    from . import process_state, usage
 
+    missing = process_state.missing_models(cfg, paths)
+    if missing:  # recorded before the setup's downloads finished: the app transcribes it once they did
+        process_state.mark(paths, process_state.MODELS, missing=missing)
+        print(f"error: {', '.join(missing)} is not downloaded yet; {folder.name} is transcribed once it is.")
+        return process_state.EXIT_MODELS
     started = time.monotonic()
-    rc = 1
+    rc, error = 1, None
     try:
         with session_log(paths.session_log):
             event("process_start", dictionary=str(dictionary_path) if dictionary_path else None)
             rc = _process(cfg, folder, paths, dictionary_path, notes=not getattr(args, "no_notes", False))
             event("process_done", rc=rc)
+    except Exception as exc:
+        error = str(exc).strip().splitlines()[-1] if str(exc).strip() else type(exc).__name__
+        raise
     finally:
         usage.record("process", seconds=time.monotonic() - started, ok=rc == 0, transcriber=getattr(cfg, "transcriber", None))
+        if rc == 0:
+            process_state.clear(paths)
+        else:
+            process_state.mark(paths, process_state.ERROR, error=error)
     if rc == 0:
         _refresh_coach_baseline(cfg)
     if rc == 0 and getattr(args, "cmd", None) == "process":

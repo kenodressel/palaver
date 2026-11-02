@@ -145,7 +145,7 @@ def test_meeting_menu_sits_between_edit_and_view(offscreen):
     assert not menu.autoenablesItems()
     items = [menu.itemAtIndex_(i) for i in range(menu.numberOfItems())]
     assert [None if i.isSeparatorItem() else i.title() for i in items] == [
-        "Play/Pause", "Write Notes", "Rename…", "Change Event…", "Join with Previous", "Join with Next",
+        "Play/Pause", "Write Notes", "Transcribe Again", "Rename…", "Change Event…", "Join with Previous", "Join with Next",
         "Split At…", "Review Again", "Report a Problem with This Meeting…", None, "Export…", "Import…", None,
         "Move to Trash"]
     keys = {i.title(): i.keyEquivalent() for i in items if i.keyEquivalent()}
@@ -313,3 +313,16 @@ def test_cmd_f_on_a_full_width_page_goes_to_the_meeting_search(offscreen, served
     web.evaluateJavaScript_completionHandler_(
         "document.title = document.querySelector('#search').getClientRects().length ? 'shown' : 'hidden'", None)
     assert _until(lambda: web.title() == "shown")
+
+
+def test_quit_palaver_is_in_the_palaver_menu_with_cmd_q(offscreen, monkeypatch):
+    """⌘Q quits like the menu bar's Quit Palaver: the app's own quit, which
+    handles a running recording."""
+    from palaver.webapp import window
+
+    quit_calls = []
+    monkeypatch.setattr(window, "_quit", lambda: quit_calls.append(1))
+    menu, item = _menu_item("Palaver", "Quit Palaver")
+    assert item.keyEquivalent() == "q" and item.isEnabled()
+    _perform("Palaver", "Quit Palaver")
+    assert quit_calls == [1]
