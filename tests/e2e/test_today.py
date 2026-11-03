@@ -6,6 +6,8 @@ that needs something; the ⌘K palette, by keyboard."""
 import json
 from datetime import datetime, timedelta
 
+import re
+
 import pytest
 
 from playwright.sync_api import expect  # noqa: E402
@@ -211,6 +213,16 @@ def test_the_palette_by_keyboard(page, shared_server):
     page.keyboard.press("Escape")
     expect(_palette(page)).to_have_count(0)
     expect(heading(page)).to_have_text("People")
+
+
+def test_the_palette_opens_a_settings_pane(page, shared_server):
+    goto(page, shared_server, "#/today")
+    cmd(page, "k")
+    page.keyboard.type("disk")
+    expect(_options(page).first).to_contain_text("Storage")
+    page.keyboard.press("Enter")
+    expect(page).to_have_url(re.compile("#/settings/storage$"))
+    expect(page.locator("#storage-section")).to_be_visible()
 
 
 def test_the_palette_opens_while_typing_in_a_field(page, shared_server):

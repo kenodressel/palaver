@@ -25,7 +25,7 @@ from typing import Any, Callable, Protocol
 
 from . import continuation, lifecycle, memory, notify, process_state
 from .notes import NOTES_MEMORY_GB
-from .paths import RecordingPaths
+from .paths import RecordingPaths, is_recording_folder_name
 
 LOGGER = logging.getLogger(__name__)
 
@@ -308,6 +308,15 @@ def palaver_alive(pid) -> bool:
     return re.search(r"\bpalaver\s+(menubar|daemon)\b", command.lower()) is not None
 
 
+def palaver_processes() -> list[str]:
+    """The command lines of the running `palaver` processes."""
+    try:
+        out = subprocess.run(["ps", "-axo", "command="], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [line for line in out.splitlines() if re.search(r"\bpalaver\b", line)]
+
+
 def recording_into(folder: Path) -> bool:
     """Whether a running daemon records into ``folder`` (its daemon.json)."""
     state = _read_state(STATE_PATH)
@@ -430,6 +439,8 @@ class Daemon:
         live_running: Callable[[Path], bool] = lambda folder: False,
         stop_live: Callable[[Path], None] = lambda folder: None,
         done_marker: str = "notion.json",
+        output_dir: Path | None = None,  # where recordings are; at start, those left behind are marked
+        processes: Callable[[], list[str]] = lambda: [],  # the command lines of Palaver's running processes
         state_path: Path | None = None,  # STATE_PATH, read when the daemon is made
         poll_seconds: float = 2.0,
         clock: Callable[[], float] = time.monotonic,
@@ -532,6 +543,7 @@ class Daemon:
         if state.get("state") not in (None, "stopped") and pid != os.getpid() and palaver_alive(pid):
             raise DaemonRunning(f"Palaver is already running (pid {pid}); quit it before starting another one.")
         self._recover_crash(state)
+        self._mark_left_behind(output_dir, processes)
         for app in state.get("ignored") or []:  # an app's stale hold on the mic, across a restart (#7)
             self._ignore(app)
 
@@ -921,6 +933,33 @@ class Daemon:
         if head is not None:
             LOGGER.info("%s was not continued after the restart; transcribing it", head.name)
 
+    def _mark_left_behind(self, output_dir: Path | None, processes: Callable[[], list[str]]) -> None:
+        """At start: a recording without a transcript that nothing will
+        transcribe — it failed before failed.json existed, or its `process`
+        died with the Mac — is marked not transcribed. The window then offers
+        Transcribe Again; before, it showed it transcribing for ever."""
+        if output_dir is None:
+            return
+        try:
+            folders = [f for f in output_dir.iterdir() if f.is_dir() and is_recording_folder_name(f.name)]
+        except OSError:
+            return
+        held = {*self._queue, *(Path(f) for f in (self._cut or {}).get("folders", []))}
+        held |= {p for f in folders for p in continuation.parts(f)}
+        running = None
+        for folder in sorted(folders):
+            paths = RecordingPaths(folder)
+            recorded = (paths.mic_wav.exists() or paths.mic_raw_wav.exists()) and paths.system_wav.exists()
+            if (folder in held or not recorded or paths.transcript_json.exists()
+                    or process_state.read(paths) is not None or self._live_running(folder)):
+                continue
+            if running is None:
+                running = processes()
+            if any(str(folder) in command for command in running):
+                continue  # a `process` from before the restart still runs
+            LOGGER.info("%s has no transcript and nothing transcribes it; marked not transcribed", folder.name)
+            process_state.mark(paths, process_state.ERROR)
+
     def _queue_meeting(self, folders: list[Path], seconds: float | None = None) -> Path | None:
         """Queue the meeting recorded in ``folders`` (its parts, in order):
         the first one still there, with the others listed as its parts.
@@ -930,6 +969,7 @@ class Daemon:
             return None
         if seconds is not None and seconds < MIN_PROCESS_SECONDS:
             LOGGER.info("recording %s too short (%.0f s); not transcribing", alive[0].name, seconds)
+            process_state.mark(RecordingPaths(alive[0]), process_state.ERROR, error="shorter than a minute")
             return None
         head, alone = alive[0], []
         for part in alive[1:]:
@@ -1244,6 +1284,9 @@ class Daemon:
                     if rc != 0:
                         # Not retried: running it again would fail the same way.
                         LOGGER.error("processing %s failed (exit %s); its session.log says why", done.name, rc)
+                        if process_state.read(RecordingPaths(done)) is None:  # killed before it could say so
+                            process_state.mark(RecordingPaths(done), process_state.ERROR,
+                                               error=f"it stopped unexpectedly, exit {rc}")
                         notify.notify("Transcription failed",
                                       f"{done.name}: open it to see why and to transcribe it again", done.name)
             self._index_next = None  # a new transcript to index
@@ -1577,6 +1620,8 @@ def build_daemon(cfg, cli_options: list[str] = (), silence: Callable[[], float |
         live_running=live.worker_running,
         stop_live=live.stop_worker,
         done_marker="notion.json" if cfg.notion_auto_sync else "transcript.md",
+        output_dir=Path(cfg.output_dir).expanduser(),
+        processes=palaver_processes,
         trigger=Trigger(
             start_after=START_AFTER_SECONDS,
             grace=cfg.grace_period_seconds,

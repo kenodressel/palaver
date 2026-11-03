@@ -88,3 +88,17 @@ test("paletteRecentShown: only places that still exist, meetings as the list has
   assert.deepEqual(shown.map((x) => x.label), ["New title", "Foundry", "Anna"]);
   assert.equal(paletteRecentShown(recent, { meetings, people: ["Anna"], projects: ["p1"] }, 2).length, 2);
 });
+
+import { settingsEntries } from "../../palaver/webapp/static/logic.js";
+
+test("the palette finds Settings' panes by name and by what is in them", () => {
+  const entries = settingsEntries();
+  const first = (q) => paletteMatch(q, entries)[0]?.id;
+  assert.equal(first("storage"), "storage");
+  assert.equal(first("disk space"), "storage");
+  assert.equal(first("realtime"), "recording");
+  assert.equal(first("gemma"), "language-model");
+  assert.equal(first("uninstall"), "update");
+  assert.equal(paletteMatch("settings", entries).length, entries.length);
+  assert.ok(entries.every((e) => e.kind === "setting" && e.detail === "Settings"));
+});

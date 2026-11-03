@@ -1504,6 +1504,68 @@ def test_transcribe_again_queues_a_failed_meeting_first(tmp_path, sent_notificat
     assert launched == [rec0, rec0] and d.status()["queued"] == []
 
 
+def test_a_transcription_that_dies_without_a_word_is_marked_not_transcribed(tmp_path):
+    """Killed, or crashed before `process` could write failed.json: the
+    window offers Transcribe Again instead of showing it transcribing."""
+    from palaver import process_state
+    from palaver.paths import RecordingPaths
+
+    d, _, launched = _daemon(tmp_path, lambda now: 10 <= now < 700)
+    d._launch = lambda folder: launched.append(folder) or _Running(lambda: True, rc=-9)
+    d.run(until=lambda: d.now() > 800)
+    state = process_state.read(RecordingPaths(tmp_path / "rec0"))
+    assert state["reason"] == process_state.ERROR and "exit -9" in state["error"]
+
+
+def test_a_recording_too_short_to_transcribe_says_so(tmp_path):
+    from palaver import process_state
+    from palaver.paths import RecordingPaths
+
+    d, _, launched = _daemon(tmp_path, lambda now: 10 <= now < 40, duration=30.0)
+    d.run(until=lambda: d.now() > 80)
+    assert launched == []
+    assert process_state.read(RecordingPaths(tmp_path / "rec0"))["error"] == "shorter than a minute"
+
+
+def _recorded(folder: Path, *files: str) -> Path:
+    folder.mkdir()
+    for name in ("mic.wav", "system.wav", *files):
+        (folder / name).write_bytes(b"")
+    return folder
+
+
+def test_recordings_nothing_transcribes_are_marked_at_start(tmp_path):
+    """Failed before failed.json existed (before 0.3.9), or its `process`
+    died with the Mac: each said not transcribed when Palaver starts. Not
+    the queued ones, a part of another, one a `process` still runs on, or
+    one that waits for its models."""
+    from palaver import continuation, process_state
+    from palaver.paths import RecordingPaths
+
+    out = tmp_path / "Recordings"
+    out.mkdir()
+    old = _recorded(out / "2026-11-02T09-00-00")
+    done = _recorded(out / "2026-11-02T10-00-00", "transcript.json")
+    queued = _recorded(out / "2026-11-02T11-00-00")
+    head = _recorded(out / "2026-11-02T12-00-00")
+    part = _recorded(out / "2026-11-02T12-30-00")
+    continuation.add_part(head, part)
+    running = _recorded(out / "2026-11-02T13-00-00")
+    waiting = _recorded(out / "2026-11-02T14-00-00")
+    process_state.mark(RecordingPaths(waiting), process_state.MODELS, missing=["Parakeet"])
+    (tmp_path / "state.json").write_text(json.dumps({"state": "stopped", "queued": [str(queued), str(head)]}))
+
+    _daemon(tmp_path, lambda now: False, output_dir=out,
+            processes=lambda: [f"/Applications/Palaver.app/python -m palaver process {running}"])
+
+    def reason(folder):
+        return (process_state.read(RecordingPaths(folder)) or {}).get("reason")
+
+    assert reason(old) == process_state.ERROR
+    assert [reason(f) for f in (done, queued, head, part, running)] == [None] * 5
+    assert reason(waiting) == process_state.MODELS
+
+
 def test_a_meeting_recorded_before_its_models_waits_and_is_transcribed_once_they_are_here(tmp_path, sent_notifications):
     """Recorded right after installing: `process` says the models are
     missing. The meeting stays queued (also across a restart), nothing runs

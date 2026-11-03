@@ -31,7 +31,7 @@ import { reportMeeting, reportDraft, reportDoneText, actionCatalog } from "./log
 import { inferredText, importedLine, importedText, GLOBAL_COMMANDS } from "./logic.js";
 import { openExport, pickImport, wireDrop, importFile, askVoices, decideVoices, dialog } from "./exchange.js";
 // Updates and uninstalling (#60).
-import { updateIndicator, updateView, SETTINGS_PANES, settingsPane } from "./logic.js";
+import { updateIndicator, updateView, SETTINGS_PANES, settingsPane, settingsEntries } from "./logic.js";
 // One person, one look; the header's people and projects; About this recording (UI cleanup 2026-10-30).
 import { personColor, laneColors, attendeeTokens, meetingPeople, ownerTokens, nameMarks, projectView, aboutLines,
   sameTitle } from "./logic.js";
@@ -6090,7 +6090,8 @@ function paletteGroups(query) {
   const people = state.names.map((n) => ({ kind: "person", id: n, label: n, detail: "Person" }));
   const projects = [...new Map(state.meetings.flatMap((x) => x.projects).map((p) => [p.id, p])).values()]
     .map((p) => ({ kind: "project", id: p.id, label: p.name, detail: "Project" }));
-  return [{ title: null, entries: paletteMatch(query, [...cmds, ...pages, ...HELP_COMMANDS, ...meetings, ...people, ...projects]) },
+  return [{ title: null, entries: paletteMatch(query,
+    [...cmds, ...pages, ...settingsEntries(), ...HELP_COMMANDS, ...meetings, ...people, ...projects]) },
     { title: null, entries: [{ kind: "search", id: query.trim(), label: `Search transcripts for “${query.trim()}”` }] }];
 }
 
@@ -6104,6 +6105,7 @@ async function pickFromPalette(e) {
   else if (e.kind === "person") openPeople(e.id);
   else if (e.kind === "project") openProjects(e.id);
   else if (e.kind === "page") goTo(e.id);
+  else if (e.kind === "setting") openSettings("push", e.id);
   else if (e.kind === "command") commands.run(e.id);
   else if (e.kind === "search") {
     if (document.body.dataset.page !== "meetings") await (lastMeeting() ? openMeeting(lastMeeting()) : openMeetingsList());
@@ -6365,7 +6367,7 @@ usage.catalog("action", [...actionCatalog(), "meeting.reportFromError", "app.rep
 usage.catalog("view", ["today", "meetings", "people", "projects", "glossary", "settings", "review", "coach", "prep",
   "setup", "report"]);
 usage.catalog("tab", Object.keys(TAB_LABELS));
-usage.catalog("palette", ["open", "meeting", "person", "project", "page", "search", "command.reportProblem",
+usage.catalog("palette", ["open", "meeting", "person", "project", "page", "setting", "search", "command.reportProblem",
   ...GLOBAL_COMMANDS.map((c) => `command.${c.id}`),
   ...Object.keys(meetingCommands({})).map((name) => `command.${name}`)]);
 

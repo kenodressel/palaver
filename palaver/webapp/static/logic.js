@@ -1234,7 +1234,7 @@ export function cutAtPointer(fraction, duration, lines) {
 const folded = (s) => String(s || "").normalize("NFKD").replace(/[̀-ͯ]/g, "")
   .replace(/ß/g, "ss").toLocaleLowerCase();
 const wordsOf = (s) => folded(s).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
-const KIND_RANK = { command: 0, page: 1, meeting: 2, person: 3, project: 4 };
+const KIND_RANK = { command: 0, page: 1, setting: 2, meeting: 3, person: 4, project: 5 };
 
 // What the palette finds for ``query``: every word typed starts a word of
 // the label or of its keywords (people, projects). A label that starts with
@@ -1421,6 +1421,27 @@ export const SETTINGS_PANES = [
   ["transcription", "Transcription"], ["language-model", "Language Model"], ["search", "Search"],
   ["storage", "Storage"], ["memory", "Memory"], ["mcp", "Claude Access"], ["update", "Updates"],
 ];
+// What each pane is found by in the palette, besides its name: the settings in it.
+const PANE_WORDS = {
+  general: ["setup", "assistant", "help", "report", "problem", "feedback"],
+  recording: ["teams", "slack", "huddle", "automatic", "realtime", "live", "coach", "nudge", "monologue", "process"],
+  calendar: ["events", "invitees", "microsoft", "365", "outlook", "google", "exchange"],
+  notifications: ["notification", "alerts", "banner", "system"],
+  transcription: ["parakeet", "soniox", "cloud", "speech", "service", "key"],
+  "language-model": ["notes", "llm", "gemma", "anthropic", "claude", "openai", "provider", "api", "key", "cloud", "model"],
+  search: ["meaning", "semantic", "index"],
+  storage: ["disk", "space", "audio", "delete", "models", "size", "gb", "free"],
+  memory: ["ram", "budget", "workers"],
+  mcp: ["mcp", "claude", "desktop", "code", "access", "log"],
+  update: ["updates", "version", "uninstall", "release", "check"],
+};
+
+// The palette's entries for the panes: "Storage" opens Settings at Storage.
+export function settingsEntries() {
+  return SETTINGS_PANES.map(([id, label]) => ({ kind: "setting", id, label, detail: "Settings",
+    keywords: ["settings", "preferences", ...(PANE_WORDS[id] || [])] }));
+}
+
 // Links from before the panes name a section of the one long page.
 const PANE_OF = { live: "recording", coach: "recording", help: "general", updates: "update", setup: "general" };
 
