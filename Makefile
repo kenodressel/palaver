@@ -82,7 +82,7 @@ VERSION = $(shell sed -n 's/^__version__ = "\(.*\)"/\1/p' palaver/__init__.py)
 
 # Ad hoc signatures differ every build, and macOS asks testers for the
 # microphone and system audio again after each update: a release is signed
-# with the kept certificate (README, "Signing releases").
+# with the kept certificate (CONTRIBUTING.md, "Signing releases").
 publish: ## Create the GitHub release of this version from dist/upload.txt (needs gh and PALAVER_SIGN_IDENTITY)
 	@test -n "$$PALAVER_SIGN_IDENTITY" \
 		|| { echo "✗ publish needs PALAVER_SIGN_IDENTITY (and make release built with it)"; exit 1; }

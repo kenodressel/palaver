@@ -94,7 +94,7 @@ def check_aec() -> Check:
         aec._load_lib()
     except (RuntimeError, OSError) as exc:
         return Check("Echo cancellation library", "fail", str(exc).split(". ")[0],
-                     "build it as described in the README (cmake, Xcode Command Line Tools)")
+                     "build it with make aec, as described in CONTRIBUTING.md (cmake, Xcode Command Line Tools)")
     return Check("Echo cancellation library", "ok", "loaded")
 
 

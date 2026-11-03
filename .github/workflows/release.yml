@@ -2,7 +2,7 @@ name: Release dry run
 
 # Builds and smoke-installs the release assets; publishes nothing. A release
 # is signed with the kept certificate, which only the maintainer's Mac has:
-# it is made there (make release, make publish; README, "Signing releases").
+# it is made there (make release, make publish; CONTRIBUTING.md, "Signing releases").
 on:
   workflow_dispatch:
 

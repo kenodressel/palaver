@@ -1,734 +1,337 @@
 # Palaver
 
-Aus dem Palaver wird ein Plan. Local transcription with speaker diarization
-for Microsoft Teams meetings and Slack huddles on macOS: a menu bar app that
-records, transcribes, says who spoke when, and writes notes. Fully offline
-except for the optional Notion upload and the update check. Until October 2026 it was called
-meeting-transcribe; its settings move to the new folders on the first start.
+Aus dem Palaver wird ein Plan. Palaver is a meeting notetaker for the Mac
+that runs on the Mac. It records your Microsoft Teams calls and Slack
+huddles by itself, writes down who said what, and turns the call into notes:
+a summary, the topics, decisions and next steps with their owners. The
+recording, the transcript and the notes stay on your Mac.
+
+![Today in Palaver: the next meeting, what needs you, and the latest meetings](docs/images/today.png)
+
+## Why Palaver
+
+- **Private.** Speech recognition, speaker detection and the notes all run
+  on your Mac, with local models. Nothing goes to a cloud unless you choose
+  a cloud service for a feature yourself.
+- **Automatic.** A Teams call or a Slack huddle starts a recording, and the
+  end of the call stops it. No bot joins your meeting, and nobody has to
+  invite anything.
+- **Notes you can use.** Soon after the call, the meeting has its
+  transcript, a summary, the topics in order, decisions and next steps with
+  owners.
+- **It knows who spoke.** Each voice gets a lane. Name a voice once and
+  Palaver recognizes it in your next meetings.
+- **Organized for you.** Meetings are sorted into projects (a customer, an
+  initiative, a topic), people are grouped by organization, and everything
+  is searchable.
+
+Palaver was called meeting-transcribe until October 2026; its settings move
+to the new folders at the first start.
+
+## What you get
+
+![A meeting: who spoke when, the summary, decisions and next steps](docs/images/meeting.png)
+
+- **Today.** Your start page: the call being recorded, the next meeting in
+  your calendar with what led up to it, what needs you (an unnamed voice, a
+  project to confirm), and the latest meetings.
+- **Automatic recording.** Teams calls and Slack huddles, each with its own
+  switch. Palaver notices a call when Teams or Slack uses the microphone,
+  so it needs no access to your Teams or Slack account. Muting yourself
+  does not end the recording.
+- **Record by hand.** "Start Recording" in the window or "Start recording
+  now" in the menu bar records anything else: a meeting in the room, a
+  phone call on speaker, a call in another app.
+- **Live transcript.** Palaver can transcribe during the call (recommended
+  with 24 GB of memory or more): open a meeting while it records and the
+  transcript builds up, about a minute behind, and the meeting is ready
+  seconds after the call. With realtime transcription on (recommended for an
+  M2 Pro, M3 or newer with 16 GB or more), the other side's words show up a
+  few seconds after they are said.
+- **Notes.** Title, a one-line summary, the topics in the order they came
+  up, decisions, and next steps with owners. Written by a local language
+  model (Gemma 4 12B) in the meeting's language, German or English. Your own
+  notes from the Notes tab (text and screenshots) go into them too.
+- **Transcript.** Without filler words and stutters. Click a line to hear
+  it, fix a word by hand, or cut a recording in two where one call ran into
+  the next.
+- **Who spoke when.** One lane per speaker. Type a name, or take a
+  suggestion: an invitee from the calendar, a voice Palaver knows, or a name
+  the conversation reveals ("Hi Timo"). With the calendar and a few
+  meetings, many voices name themselves, and Palaver says why it thinks so.
+- **Calendar.** Palaver matches a recording to the event in the macOS
+  Calendar app (any account added there, such as Microsoft 365 or Google):
+  the meeting gets the event's title and invitees. Read-only, on this Mac.
+- **Projects.** Meetings join the project they clearly belong to: the same
+  people, title words or customer. Otherwise the notes model suggests one.
+  Rename, merge and correct projects; a meeting you take out stays out.
+- **People.** Everyone you meet, with their organization from their email
+  domain: "Timo Strauß (KLOUD)".
+- **Search.** Across all notes and transcripts, by words and by meaning
+  (⌘K for search and commands, ⌘F in a meeting).
+- **Glossary.** Names and terms the transcription gets wrong, differently
+  each time. Palaver suggests fixes, and you accept or reject them.
+- **Coach.** How you talked in a meeting compared with what is usual for
+  you: talk share, monologues, pace, filler words, questions and
+  interruptions. Optional quiet nudges during a call. Only your own speech
+  is analyzed.
+- **Review.** Step through finished meetings one by one: confirm the
+  project, name the speakers, check the notes.
+- **Share a meeting.** Export a meeting as a .zip and send it to a
+  colleague, who imports it into their Palaver.
+- **Dark mode.** The window follows your Mac's appearance.
+
+![Notes in dark mode: decisions, next steps and the topics](docs/images/notes-dark.png)
+
+![The transcript with speaker names and organizations](docs/images/transcript.png)
+
+![Projects with their meetings and people](docs/images/projects.png)
 
 ## Requirements
 
 - macOS 15 or later on Apple Silicon (M1 or later)
 - About 3 GB of disk for the app and its runtime, plus the models you choose
   in the setup assistant (Parakeet 2.3 GB; the notes model 8 GB or more)
+- For notes written on your Mac: enough memory for the notes model. It needs
+  about 10 GB while it writes, up to 12 GB for a long meeting. The setup
+  assistant says what your Mac can run and recommends the rest.
 
-Nothing else: no Python, Homebrew, Hugging Face account or Notion. Notion is
-optional (meetings upload there when `config.toml` has a token); without it
-everything stays on this Mac.
+Nothing else: no Python, Homebrew, Hugging Face account or Notion.
 
-## Install, update, uninstall
+## Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kenodressel/palaver/master/install.sh | sh
-# options: --autostart (start at login), --cli (the palaver command in ~/.local/bin)
+```
+
+Options: `--autostart` starts Palaver at login, and `--cli` adds the
+`palaver` command to `~/.local/bin`:
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/kenodressel/palaver/master/install.sh | sh -s -- --autostart --cli
 ```
 
-Then open Palaver (`~/Applications/Palaver.app`). Its setup assistant
-recommends the settings for this Mac and downloads the models it needs, with
-your OK and with progress, and macOS asks for the Microphone and System Audio
-Recording permissions.
-
 The installer writes only into your home folder and changes no shell or
-`PATH` setting. A release has three layers, each downloaded only when it
-changed:
+`PATH` setting:
 
-| Layer | Where | Size | Downloaded |
+| What | Where | Size | Downloaded |
 |---|---|---|---|
-| App: Palaver's code and its launcher | `~/Applications/Palaver.app` | 3 MB | every release |
-| Runtime: a standalone Python ([python-build-standalone](https://github.com/astral-sh/python-build-standalone)) with every locked dependency, prebuilt | `~/Library/Application Support/palaver/runtime/<id>/` | 530 MB download, 1.6 GB on disk | when `uv.lock` changes |
-| Models | `~/Library/Application Support/palaver/models/` (pyannote, hosted with the release: no token) and `~/.cache/huggingface` (Parakeet, the notes model, the search model) | ~12 GB (Parakeet 2.5, Gemma 4 12B 9, search 0.5) | once, again when a model changes |
+| The app: Palaver's code and its launcher | `~/Applications/Palaver.app` | 3 MB | every release |
+| Its runtime: Python and every library Palaver uses, prebuilt | `~/Library/Application Support/palaver/runtime/` | 530 MB download, 1.6 GB on disk | only when it changed |
+| The models, with your OK in the setup assistant | `~/Library/Application Support/palaver/models/` and `~/.cache/huggingface` | ~12 GB (Parakeet 2.5, Gemma 4 12B 9, search 0.5) | once, again when a model changes |
 
-**Storage.** A meeting is about 350 MB of audio per hour (three 16 kHz WAV tracks)
-plus its transcript and notes. Settings → Storage shows what the meetings and
-the models take, deletes the audio of transcribed meetings after 7, 14, 30 or
-90 days (never, by default), and deletes a notes model no longer chosen. Qwen3 30B A3B, offered until 0.3.9, is deleted at the
-first start after the update unless config.toml names it. A
-single meeting's audio goes with Delete Audio… in its ⋯ menu; its transcript,
-notes and speakers stay, but it can't be played or transcribed again.
+## First start
 
-**Updates.** Palaver looks for a new release at start, every hour and when you open its window (one
-anonymous request for the release's `manifest.json`; turn it off in Settings →
-Updates). The menu bar menu has "Check for Updates… (Palaver version)" to
-look now. A new release is announced once with a notification; until it is
-installed the menu bar shows ↑ next to the icon and its menu says "Update
-available (version)", the window's top bar shows "Update to (version)", Today
-leads with an "Update Now" card, and Settings shows what's new. A click downloads only the changed
-layers, checks each against the manifest's SHA-256, and installs at the next
-moment nothing records, transcribes or writes notes; then Palaver restarts.
-A failed download or install keeps the version you have and says why. Running
-the install command again updates too. The runtime before the current one is
-kept, so `PALAVER_VERSION=0.1.0 sh install.sh` goes back without a download.
+Open Palaver (`~/Applications/Palaver.app`). It lives in the menu bar; "Open
+Meetings" (⌘M) opens its window.
 
-**Uninstall.** Settings → Uninstall Palaver… asks first, then removes the app,
-its runtime, the login item and the `palaver` command; the models only when
-ticked; your recordings, settings and voices only when ticked. Or:
+1. **Setup assistant.** It looks at your Mac (chip, memory, free disk) and
+   recommends the settings for it. It downloads the models it needs with
+   your OK and shows the progress. An optional test recording checks that
+   the microphone and the Mac's sound come through.
+2. **Permissions.** macOS asks for **Microphone** and **System Audio
+   Recording** under Palaver's name. Palaver does not need Screen Recording.
+   You can also connect the **Calendar** (in the setup assistant or Settings
+   → Calendar) for meeting titles and invitees.
+3. **Your name.** It is how you show up in transcripts: lines from your
+   microphone carry it.
+
+`palaver doctor` (with `--cli`) checks the setup, permissions, models and
+disk, and says how to fix what is missing.
+
+## Using Palaver
+
+**Recording.** Join a Teams call or a Slack huddle; the menu bar icon shows
+🔴 while Palaver records. It stops a few seconds after the call ends. To
+record anything else, click "Start Recording" in the window or "Start
+recording now" in the menu bar menu. The menu has a switch each for Teams
+calls and Slack huddles; with both off, automatic recording is paused.
+
+The menu bar icon says what Palaver is doing: the icon alone while it waits,
+🔴 while it records, ⏳ while it transcribes, ⏸ while automatic recording
+is paused, ↑ when an update is ready.
+
+**Speakers or headphones.** Both work, and you can switch during a call.
+Palaver records your microphone and the Mac's sound as separate tracks and
+removes the other side's voices from your microphone track, so they are not
+transcribed twice.
+
+**After the call.** The transcript comes first, the notes a little later.
+A notification says when they are ready. Open the meeting from Today or
+Meetings, name any voice Palaver did not know, and check the notes.
+
+**Before a call.** The next meetings from your calendar are listed under
+"Coming up". "Prepare" shows the meetings that led up to it, with their
+summary and next steps. You can pick its project and write notes there in
+advance.
+
+**A meeting's ⋯ menu** has Export…, Keep on This Mac, Delete Audio… and
+Move to Trash, among others. Most changes can be undone.
+
+## Privacy
+
+- **On your Mac by default.** Recording, transcription, speaker detection,
+  notes, projects and search all run locally. Recordings are in
+  `~/Meetings/Recordings`, settings in `~/.config/palaver`.
+- **What goes over the network:** the model downloads you agree to in the
+  setup assistant, and the update check: one anonymous request for the
+  latest release's `manifest.json` at start, every hour and when you open
+  the window. Turn it off in Settings → Updates.
+- **Cloud is opt-in, per feature.** Settings → Language Model and Settings →
+  Transcription can use a cloud service instead of the local model (see
+  below). Nothing goes to the cloud until you choose it, and nothing falls
+  back to another service by itself. Settings shows what each feature sends
+  where and lists every call to a cloud service.
+- **Keep on This Mac.** A meeting marked so in its ⋯ menu is never sent to a
+  cloud model or service, and Claude cannot read it through MCP.
+- **Voices.** Voice samples are biometric data. They are stored only on this
+  Mac, in `~/.config/palaver/voices/`, one file per person, and never
+  uploaded. `palaver voices forget "Name"` deletes someone's voice.
+- **API keys** for cloud services live in the macOS login Keychain, never in
+  a file.
+- **Problem reports** are a zip on your Desktop that you send yourself;
+  nothing is uploaded.
+
+Recording other people may need their consent where you live. Tell the
+people in your meetings that you take notes with Palaver.
+
+## Optional: cloud services
+
+You don't need any of these. Each one is off until you set it up.
+
+- **Language model** (Settings → Language Model): write notes and sort
+  projects with the Anthropic API, an OpenAI-compatible endpoint (OpenAI,
+  your Azure OpenAI tenant, a company or self-hosted gateway) or the Claude
+  Code CLI, chosen per feature. A meeting too long for the model is refused
+  with a message, never cut short.
+- **Transcription** (Settings → Transcription): AssemblyAI, Soniox (both on
+  EU servers by default), Mistral Voxtral or an OpenAI-compatible endpoint.
+  Only the Mac's sound (the other side) goes out, after the call; your
+  microphone and who spoke when stay on this Mac. If the service fails, the
+  meeting is transcribed on this Mac and a notification says so. What the
+  service keeps is deleted there once the words are back. Settings shows the
+  estimated cost this month.
+- **Notion:** each meeting's transcript can be uploaded to a Notion page or
+  database after the call (see [Advanced settings](#advanced-settings)).
+- **Claude (MCP):** `palaver mcp --install` lets Claude Code read your
+  meetings, notes, projects and people, read-only (`--install --desktop` for
+  Claude Desktop). Settings → Claude Access shows what Claude read.
+
+## Storage, updates, uninstall
+
+**Storage.** A meeting is about 350 MB of audio per hour plus its transcript
+and notes. Settings → Storage shows what the meetings and the models take,
+deletes the audio of transcribed meetings after 7, 14, 30 or 90 days (never,
+by default), and deletes a notes model no longer chosen. Delete Audio… in a
+meeting's ⋯ menu deletes one meeting's audio: its transcript, notes and
+speakers stay, but it can't be played or transcribed again.
+
+**Updates.** Palaver looks for a new release at start, every hour and when
+you open its window. "Check for Updates…" in the menu bar menu looks now. A
+new release is announced once with a notification; until it is installed,
+the menu bar shows ↑, the window shows "Update to (version)", and Settings
+says what's new. Palaver downloads only what changed, checks it, and
+installs at the next moment nothing records, transcribes or writes notes;
+then it restarts. A failed update keeps the version you have and says why.
+Running the install command again updates too.
+
+**Uninstall.** Settings → Updates → Uninstall Palaver… asks first, then
+removes the app, its runtime, the login item and the `palaver` command; the
+models only when ticked; your recordings, settings and voices only when
+ticked. Or in a terminal:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kenodressel/palaver/master/install.sh | sh -s -- --uninstall [--models]
 ```
 
-which keeps recordings, settings and data. Models downloaded from Hugging Face
-stay in `~/.cache/huggingface`.
+which keeps recordings, settings and data. Models downloaded from Hugging
+Face stay in `~/.cache/huggingface`.
 
-**Permissions after an update.** macOS remembers Microphone and System Audio
-Recording for an app by its signature. A release signed with the same
-certificate every time keeps them; an ad-hoc signature (a local `make
-release` without `PALAVER_SIGN_IDENTITY`) is new with every build. When the
-signature changed, an update makes Palaver ask again right after its restart,
-while it is idle, instead of in the middle of the next call.
+## Command line
 
-### Releases
-
-`make release` builds every asset on this Mac into `dist/`. GitHub Actions'
-`release.yml` runs the same recipe as a manual dry run but never publishes:
-only the Mac with the signing certificate does (below).
-
-- `palaver-app-<version>.zip`: Palaver.app with the code from the wheel
-  (including the echo-cancellation library), compiled ahead
-- `palaver-runtime-<id>.tar.gz`: built only when its id is new; the id is a
-  hash of the locked requirements (exported from `uv.lock`), the Python
-  version, its python-build-standalone release and the arch
-  (`RUNTIME_PYTHON` and `PBS_RELEASE` in the Makefile). The build downloads
-  python-build-standalone into `dist/build`, checked against the release's
-  `SHA256SUMS`, installs the requirements into it with uv, makes the entry
-  points relocatable, and `otool` checks that no library names `/Users`,
-  Homebrew or `/usr/local`
-- `palaver-models-pyannote-community-1-<revision>.tar`: pyannote's pipeline
-  from your Hugging Face cache, with its license (see
-  [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md))
-- `manifest.json`, `install.sh`, and `upload.txt`: the files this release must
-  upload. An asset the previous release published unchanged keeps its URL
-  there and is not uploaded again; `make publish` creates the GitHub release
-  from `upload.txt`.
-
-#### Signing releases
-
-`make publish` refuses an app signed ad hoc. Create one code-signing
-certificate, keep it (with a backup), and sign every release with it:
-
-- **Keychain Access:** Keychain Access → Certificate Assistant → Create a
-  Certificate… → Name "Palaver Release", Identity Type "Self-Signed Root",
-  Certificate Type "Code Signing" → Create. Export it with its private key as
-  a `.p12` for the backup.
-- **Or in a terminal:**
-
-  ```bash
-  openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=Palaver Release" \
-    -addext "keyUsage=critical,digitalSignature" -addext "extendedKeyUsage=critical,codeSigning" \
-    -keyout palaver-release.key -out palaver-release.crt
-  openssl pkcs12 -export -inkey palaver-release.key -in palaver-release.crt \
-    -name "Palaver Release" -out palaver-release.p12   # asks for a password: this is the backup
-  security import palaver-release.p12 -k ~/Library/Keychains/login.keychain-db -T /usr/bin/codesign
-  rm palaver-release.key                               # the .p12 holds it; keep that somewhere safe
-  security find-identity -p codesigning                # "Palaver Release" is listed
-  ```
-
-Then `PALAVER_SIGN_IDENTITY="Palaver Release" make release publish`. A lost
-certificate means a new one, and every tester is asked for the permissions
-once more. A Developer ID certificate works the same way and also satisfies
-Gatekeeper for downloads.
-
-`make smoke-install` installs `dist/` into a throwaway home under
-`sandbox-exec` (no writes outside it, no network), imports Palaver and its
-dependencies as the app runs them, loads pyannote from the hosted copy
-without a token, and updates twice, with `install.sh` and with the app's
-updater, checking the runtime is not downloaded again.
-
-## Setup (from source)
-
-1. Install dependencies and build the vendored AEC library:
-
-   ```bash
-   uv venv
-   uv pip install -e ".[dev]"
-   ```
-
-   Then build the WebRTC AEC library (see [V2: Speaker-bleed removal](#v2-speaker-bleed-removal)
-   for details — requires Xcode Command Line Tools):
-
-   ```bash
-   cd palaver/_vendored/webrtc_aec
-   cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
-   cd -
-   ```
-
-2. pyannote's model: a checkout downloads it from Hugging Face, where it is
-   gated: accept the terms for `pyannote/speaker-diarization-community-1`
-   and create a token with Read permission (an installed release downloads
-   Palaver's own copy instead, without a token).
-
-3. (Optional) In Notion, create an internal integration at notion.so/profile/integrations.
-   Share a parent page with the integration (this is where meeting transcripts
-   will appear).
-
-4. (Optional: without it the defaults apply) Create `~/.config/palaver/config.toml`:
-
-   ```toml
-   [user]
-   name = "Timo"
-
-   [notion]
-   parent_page_id = "<your-parent-page-id>"
-
-   [recording]
-   output_dir = "~/Meetings/Recordings"
-   retention_days = 14
-   ```
-
-   To file meetings as rows of a Notion **database** instead of child pages,
-   share the database with the integration and set:
-
-   ```toml
-   [notion]
-   mode = "database"
-   database_id = "<your-database-id>"
-   ```
-
-   Columns are matched by type and name, and only those that exist are
-   filled: the title column, a date column (`Date`/`Datum`), number columns
-   for duration (`Duration`/`Dauer`) and speakers (`Speakers`/`Teilnehmer`),
-   and a select column `Source` (set to "Teams").
-
-5. Export tokens (or add them to `config.toml` directly); without a Notion
-   token meetings stay on this Mac:
-
-   ```bash
-   export HF_TOKEN=hf_xxx
-   export NOTION_TOKEN=ntn_xxx
-   ```
-
-6. (Optional) Create `~/.config/palaver/dictionary.toml` for
-   domain-specific terms:
-
-   ```toml
-   [initial_prompt]
-   text = "Sprint Planning, OKRs, KPIs, Kubernetes."
-
-   [replacements]
-   "kay pee eye" = "KPI"
-   ```
-
-## Usage
-
-Check the setup first — permissions, tokens, models, disk — with exact fixes:
+With `--cli`, the `palaver` command does from a terminal what the app does,
+and a little more:
 
 ```bash
-palaver doctor           # --offline skips the Notion API check
-```
-
-Record a meeting:
-
-```bash
-palaver record           # Ctrl+C stops
-palaver record --run     # process + sync immediately after stop
-palaver record --quiet   # no live level meter
-```
-
-While recording, a live meter shows both tracks once per second:
-
-```
-rec 00:42 | mic ███▂      -35 dB | system            -- dB (silent 12s)
-```
-
-`system` reading `--` with a silence counter is normal while nobody remote
-is talking — the system-audio tap delivers nothing while no audio plays. If
-the microphone delivers nothing for 30 s, `record` prints a warning.
-
-Record Teams calls automatically — leave this running in a terminal tab:
-
-```bash
-palaver daemon           # watches for Teams calls
-palaver daemon status    # from another terminal
-```
-
-The daemon starts recording once Teams has held the microphone for 4 s
-(Teams keeps it open while you're muted), stops 10 s after Teams releases it
-(`[recording] grace_period_seconds`), force-stops after
-`max_session_hours`, and transcribes + uploads each recording longer than a
-minute in the background, one at a time. It reads Teams' microphone use from
-CoreAudio's per-process audio objects (macOS 14.4+). Slack huddles start
-the same way (Slack holding the microphone); since Slack may close it while
-you're muted, a huddle goes on while Slack still plays sound. No Slack
-account access is needed. `[recording] slack = false` turns it off. It runs in a terminal
-rather than as a launchd agent so it inherits the terminal's microphone,
-screen and system-audio permissions. Log: `~/Library/Logs/palaver/daemon.log`.
-
-**Processing during the call.** While it records, the daemon runs
-`palaver live <folder>` at background priority (efficiency
-cores, yields to Teams). It echo-cancels and transcribes the audio in ~1
-minute blocks cut at pauses, and computes the expensive part of
-diarization — the voice embeddings of pyannote's sliding windows — as the
-audio arrives. When the call ends only the last block and the speaker
-clustering are left, so the transcript is ready in seconds instead of
-minutes, and the result is the same as processing the finished file. If the
-live worker fails, `run` does everything after the call as before. Turn it
-off with:
-
-```toml
-[processing]
-live = false
-```
-
-**Memory budgets.** Each worker has a budget, measured as Activity Monitor's
-"Memory" (the phys_footprint, GPU memory included). A live or realtime
-worker over its budget for 10 s is restarted (twice per meeting, then
-stopped: the transcript is then written after the call); the recording
-itself goes on, since capture runs in the app. Notes, transcriptions and the
-search index over budget only get a notification and finish, unless the Mac runs low on
-memory (under 1.5 GB free for 10 s): then they stop and are tried again
-later; the third time Palaver says what to do instead. The status line
-shows what Palaver costs during a call ("· Palaver 5.4 GB"), Settings →
-Memory shows each worker, and `palaver doctor` checks the budgets. The
-defaults:
-
-```toml
-[memory]
-live_gb = 6             # measured 2.4–3.7 GB over a 60-min call, 4.8 GB peak
-stream_gb = 3.5         # measured ~1.9 GB, 2.5 GB peak
-process_gb = 8
-# notes_gb = 14         # default: what the notes model chosen in Settings needs (Gemma 14)
-index_gb = 1            # the search index
-```
-
-With the Notion upload on, `run` writes the notes in the same process, so
-its budget is at least what the notes model needs.
-
-To keep transcripts local and upload by hand with `palaver sync
-<folder>`, turn off the upload after each call:
-
-```toml
-[notion]
-auto_sync = false
-```
-
-Or as a menu bar app (same auto-recording, plus manual start/stop, pause,
-the Meetings window, and shortcuts to the latest recording and Notion page):
-
-```bash
-palaver menubar          # icon alone: waiting · 🔴 recording · ⏳ transcribing · ⏸ paused
-```
-
-Install it as a real Mac app that starts at login (no terminal tab needed):
-
-```bash
-palaver app install --login   # → ~/Applications/Palaver.app
-palaver app uninstall
-```
-
-On first launch it asks for Microphone and System Audio Recording under its
-own name — not Screen Recording: the microphone is captured with
-AVCaptureSession and system audio with a Core Audio Process Tap.
-ScreenCaptureKit (which needs Screen Recording) is only a fallback for a
-source that fails. The bundle contains only a small
-launcher that runs this checkout's virtualenv, so code changes apply on the
-next launch; rebuild with `app install` if the venv moves. Tokens are read
-from `config.toml`, the environment, or the login Keychain
-(`app install --store-tokens` copies them there from the current shell).
-
-The Meetings window's server runs in a process of its own, which the app
-starts again when it crashes. After a change to the window or its API,
-restart only that process, at any time, also during a call (the recording
-is never touched; the window reloads where it was):
-
-```bash
-palaver app restart-web
-```
-
-A change anywhere else (recording, call detection, the menu) still needs the
-whole app restarted, and that should wait until nothing records or processes
-(`palaver daemon status`).
-
-**Meetings window.** "Open Meetings" (⌘M in the menu) opens a window of the
-menu bar app with every recording:
-
-- **Notes:** title, one-line summary, the topics in order, next steps with
-  owners and decisions, written by a language model after each call.
-- **Transcript:** without filler words and stutters (`transcript.json` keeps
-  the verbatim text). Click a line to hear it.
-- **Who spoke when:** one lane per speaker. Click a lane to play from there,
-  type a name next to it, or pick a suggestion — a voice-bank match or a
-  name the conversation reveals ("Hi Rico"). Naming takes effect in the
-  transcript and the notes at once; giving two speakers the same name
-  merges them, and correcting a name moves the voice sample to the right
-  person.
-- **Search** across all notes and transcripts (⌘F).
-
-The window is part of the menu bar app — the same process that records — and
-reads the recordings folder directly; nothing leaves the Mac.
-
-**Notes.** By default a local model writes them through MLX
-(`mlx-community/gemma-4-12B-it-OptiQ-4bit`: an 8.3 GB download on first
-use, about 10 GB of memory while writing, up to ~12 GB for a long meeting). It writes the notes in the
-meeting's language (German or English, detected from the transcript).
-`process` writes notes after the transcript and rewrites them only when the
-words change; `palaver notes <folder> [--force]` writes them by
-hand. To use Claude instead (needs the Claude Code CLI, logged in; the
-transcript is sent to Anthropic):
-
-```toml
-[notes]
-engine = "claude"     # "local" (default) or "claude"
-# local_model = "mlx-community/gemma-4-12B-it-OptiQ-4bit"  # or another MLX model
-# model = "sonnet"    # for engine = "claude"
-# enabled = false     # no notes at all
-```
-
-**Cloud models (optional).** Settings → Language model chooses the model
-per feature (notes, projects): on this Mac (the default), the Anthropic
-API, an OpenAI-compatible endpoint (OpenAI, your Azure OpenAI tenant, a
-company or self-hosted gateway) or the Claude Code CLI. A choice made there
-overrides `[notes].engine`. Nothing goes to the cloud until you choose it
-for a feature; a provider that isn't set up never runs, and nothing falls
-back to another model. API keys live in the login Keychain (service
-`palaver`, account `<provider>.api_key`), never in a file; the page only
-shows whether one is set. The Settings page says what each feature sends
-where and lists every call sent to a cloud model (`access-log.jsonl` next
-to `settings.json`, without content). A meeting marked "Keep on This Mac"
-(its ⋯ menu) is never sent to a cloud model, and Claude can't read it
-through MCP: the tools leave it out of lists, searches, projects, people
-and next steps, and `get_meeting` says it is kept on this Mac. An
-OpenAI-compatible endpoint is ready only once its endpoint is saved and,
-unless it runs on this Mac, its key is set; for Azure the endpoint must be
-your resource's. Redirects are never followed, so a key is only ever sent
-to the endpoint you set. A meeting too long for the
-model's context window is refused with a message, never cut short.
-
-**Cloud transcription (optional).** Settings → Transcription chooses who
-transcribes meetings: Parakeet on this Mac (the default), AssemblyAI,
-Soniox (both EU servers by default), Mistral Voxtral or an
-OpenAI-compatible endpoint (`/audio/transcriptions` with word timestamps,
-e.g. `whisper-1`). Only the system track goes out, after the call, in
-`process`: long silences are cut out first and the offsets kept, and a
-recording longer than the service takes at once is sent in overlapping
-chunks and stitched back together. Your microphone stays on Parakeet, and
-who spoke when is still worked out on this Mac: the service's word
-timestamps are lined up with the local speaker turns. The glossary's terms
-and the invitees' names go along as keyterms. The live worker and the
-realtime stream stay local; their text is replaced by the service's. If the
-service fails (or is no longer set up), the meeting is transcribed on this
-Mac and a notification says so; no other cloud is tried. A meeting marked
-"Keep on This Mac" is always transcribed here, and a meeting transcribed
-before you chose a service is never sent. Keys live in the Keychain like
-the language models'; every upload is in the same access log (provider,
-host, seconds of audio, meeting, how it went), and Settings shows the
-estimated cost this month. `transcription.json` in the meeting's folder
-says who transcribed it (split and join carry it along; parts transcribed
-differently join as "mixed", never sent again). What a service keeps is
-deleted there once the words are back; what it refuses to delete yet (a
-job still running) is listed in the meeting's `cloud-pending.json` and
-deleted at the start of the next `process`. Uploads and new jobs are never
-sent twice after a timeout or a server error.
-
-**Calendar.** With "Connect Calendar" in Settings (or the setup assistant), a recording is matched
-to the event in the macOS Calendar app that overlaps it most (any account
-added there, e.g. Microsoft Exchange; read-only, on this Mac). The event's
-title becomes the meeting's title, its invitees are listed and offered as
-names for unnamed speakers, the notes know who was invited, and voice
-recognition among the invitees needs only 0.65 similarity instead of 0.75
-— a voice only has to be told apart from the few people invited. You,
-rooms and people who declined are left out. `[calendar] enabled = false`
-turns it off.
-
-**Projects.** Meetings are grouped into projects (a customer, an initiative,
-a topic such as hiring); a meeting may be in several. After its notes are
-written, a meeting joins the project whose meetings it clearly resembles —
-the same people, title words, or customer (the invitees' email domain) —
-and otherwise the notes model places it, proposing a new project with a
-description when none fits. The Projects tab lists them: rename them, edit
-or let the model write their descriptions, merge two into one, confirm or
-remove meetings. A meeting you take out of a project stays out. Stored in
-`~/.config/palaver/projects.json`; from a terminal:
-
-```bash
-palaver projects suggest     # sort every meeting in no project
-palaver projects describe    # describe projects that have no description
-```
-
-**Glossary.** Names and terms come out of transcription misspelled, and
-differently each time ("Atterkring", "CAREL", "Wasti"/"Vasti"). The
-Glossary tab suggests fixes, which you accept (correcting the spelling if
-needed) or reject:
-- words that look or sound like a name the app knows: calendar titles and
-  attendees, people, projects, the glossary itself;
-- alike-sounding spellings across meetings;
-- rare capitalized terms that recur ("Databricks").
-
-"Rare" means uncommon in German and English (`wordfreq`), so ordinary nouns
-are left alone. The glossary is applied whenever a transcript is shown,
-searched or summarized, while `transcript.json` keeps what was heard. Each
-change reports how many words it respelled in which meetings, and their
-`transcript.md` is rendered again. Stored in
-`~/.config/palaver/glossary.json`.
-
-**Claude (MCP).** `palaver mcp` serves the meetings to Claude
-and other MCP clients over stdio, read-only. Tools:
-- `list_meetings`, `search_meetings`: filter by project, person, dates;
-- `get_meeting`: notes first, the transcript or a time range only on request;
-- `list_projects`, `get_project`;
-- `list_people`;
-- `open_next_steps`.
-
-They use the same data as the window, with names, merges and the glossary
-applied. Add it to Claude Code with `palaver mcp --install`
-(runs `claude mcp add --scope user meetings …`).
-
-**Coming up.** The meeting list starts with the next day and a half of
-calendar meetings (events with someone invited). Each can be prepared:
-- pick its project now, from suggestions; a recurring meeting suggests where
-  its earlier occurrences went. The recording gets the project once it is
-  matched to the event.
-- see the meetings that lead up to it: earlier occurrences of the series,
-  else the last ones with the same people, with their summary and next
-  steps.
-
-**Live.** A meeting being recorded can be opened in the window: the
-transcript builds up minute by minute (the live worker writes `live.json`
-after each block) and refreshes every 10 s. Speakers are clustered from the
-voices heard so far, so labels may still change. A name given meanwhile is
-stored with the voice (`speakers_live.json`) and moves to the right
-speaker in the final transcript. The project can be set too.
-
-**Realtime.** While a call is recorded, `palaver stream <folder>` (started by
-the app) transcribes the last 10 s every second. The Meetings window shows
-the other side's words about 2–3 s after they are said, and your own words
-once their echo is filtered out. It is only for watching live: the final
-transcript is made as before, and nothing depends on the stream. Switch it
-in the settings page (the gear at the top right, or "Settings…" ⌘, in the menu bar menu): "Realtime
-transcription" applies from the next recording; "Record Teams calls
-automatically" and "Record Slack huddles automatically" apply at once.
-Settings are stored in `~/.config/palaver/settings.json`, not in
-`config.toml`; only switches you changed are written there, so the Slack
-switch follows `[recording] slack` in `config.toml` until you change it.
-
-Replay recorded meetings as if they were live, to measure the stream:
-
-```bash
-palaver bench-live <folder>... --out DIR [--speed 1.0]
-```
-
-It writes a numbers-only report (latency, disagreement with the final
-transcript, echo, load) to `DIR/report.md`. At `--speed 1.0` it measures
-latency; faster speeds measure accuracy and load only.
-
-It loads two Parakeet models side by side (the live worker's and the
-stream's) plus pyannote, and the offline baseline after each replay, so
-don't run it during a call. `--out` must
-lie outside the Recordings folder: it keeps full audio copies of every
-replayed meeting and the stream's transcript text, which is meeting
-content. Only `report.md` is numbers only.
-
-**Cut and join.** Back-to-back calls can run into each other. Hover over a
-transcript line (in the meeting or in the review) and press ✂ to cut
-there: the rest becomes a meeting of its own, the start of the recording
-that follows, or goes to the trash; what came before can go to the trash
-too. "join with the one
-before/after" in a meeting's header puts two recordings of one meeting
-back together. Audio, transcript, speakers and names move along; the same
-voice in both parts becomes one speaker. The longer recording keeps the
-meeting (calendar, names, project). The other is moved to
-`<recordings>/.trash`, and notes become stale. When a calendar meeting
-starts while a recording runs and voices come or go around then, the
-meeting page and the review suggest the cut ("Cut at 28:10…", or "Not
-this").
-
-**Review.** "Review · N waiting" at the top of the meeting list steps
-through finished meetings one by one: confirm the project, name the
-speakers, take or skip 1–3 glossary suggestions from that meeting, check
-the notes. "Done, next" marks the meeting reviewed (`review.json`).
-
-Process an existing recording:
-
-```bash
-palaver run ~/Meetings/Recordings/2026-04-17T14-30-00
-```
-
-List recordings and their state:
-
-```bash
-palaver list
-```
-
-Or name the remote speakers in a terminal (plays a short sample of each;
-Enter keeps the label, giving two labels the same name merges them):
-
-```bash
-palaver rename ~/Meetings/Recordings/2026-04-17T14-30-00
-```
-
-**Speaker recognition.** Every speaker you name in `rename` is remembered
-by voice; later meetings name them automatically during `process` (and
-`rename` pre-fills them, Enter confirms). Matching is conservative — cosine
-similarity >= 0.75 and clearly ahead of the next person, speakers with at
-least 10 s of speech — so an unknown voice stays `SPEAKER_xx` rather than
-getting a wrong name. Names you give manually always win.
-
-**Coach.** A meeting's "Coach" tab shows how you talked, compared with
-what is usual for you (1:1s and groups apart, filler words per language):
-- talk share against a fair share;
-- monologues (over 1:30 without anyone else), pace, filler words;
-- questions, and whether you waited for an answer;
-- interruptions both ways, and invitees who barely spoke.
-
-Moments link into the audio. "All meetings →" lists every meeting's
-numbers. Only your own speech is analyzed.
-
-**Organizations.** People show with their organization: "Timo Strauß
-(KLOUD)", "Stefan D (Extern)". It comes from the invitees' email domain
-(contoso.es, .com and .de are all Contoso; gmail and other private
-addresses are "Extern"). The People page renames organizations and gives
-a person one by hand (`~/.config/palaver/organizations.json`).
-Big rounds list their invitees grouped by organization.
-
-**Inferred names.** With the calendar and enough meetings, voices name
-themselves. Four rules:
-- calendar: a 1:1 with one voice that talks;
-- elimination: all invitees but one are known;
-- intersection: a recurring voice, and the one invitee its meetings share;
-- voice: like a voice named by those rules.
-
-Each inferred name says why, how sure it is, and which names it rests on
-(`speakers_inferred.json`). They are recomputed from the facts whenever
-names change, so rejecting one ("No") takes back everything built on it.
-Guards: a voice must talk 30 s, other unnamed voices little, no meeting
-room on the invite, no more voices than invitees. Inferred voices stay out
-of the voice bank until you confirm the name ("Yes").
-
-Voice embeddings are biometric data. They are stored only on this machine in
-`~/.config/palaver/voices/` (one file per person) and never
-uploaded:
-
-```bash
-palaver voices                 # who is stored
+palaver doctor                 # check the setup, say what to fix
+palaver record                 # record now; Ctrl+C stops
+palaver list                   # every recording and its state
+palaver run <folder>           # transcribe, write notes (and upload) a recording
+palaver rename <folder>        # name the speakers, with a short sample of each
+palaver voices                 # whose voices are stored
 palaver voices forget "Anna"   # delete someone's voice
+palaver export <meeting>       # a meeting as a .zip for a colleague
+palaver import <zip>           # a meeting a colleague exported
+palaver mcp --install          # let Claude Code read your meetings
+palaver --help                 # everything else
 ```
 
-Delete synced recordings older than `retention_days` (unsynced ones are kept
-unless `--include-unsynced`):
+## Advanced settings
 
-```bash
-palaver prune --dry-run
-palaver prune
+Almost everything is in the window's Settings. A few things live in
+`~/.config/palaver/config.toml` (optional; without it the defaults apply):
+
+```toml
+[user]
+name = "Timo"
+
+[recording]
+output_dir = "~/Meetings/Recordings"  # where recordings go
+slack = true                          # record Slack huddles (until changed in Settings)
+grace_period_seconds = 10             # stop this long after the call ends
+max_session_hours = 4                 # stop a recording after this long
+
+[calendar]
+enabled = true
+
+[notion]
+parent_page_id = "<your-parent-page-id>"  # with a token, meetings upload here
+auto_sync = true                          # false: upload by hand (palaver sync <folder>)
 ```
 
-Use a meeting-specific vocabulary for one run with
-`palaver --dictionary ~/vocab/legal.toml run <folder>`.
+For Notion, create an internal integration at notion.so/profile/integrations,
+share a parent page with it, and put its token in `[notion] token = "…"` or
+the `NOTION_TOKEN` environment variable. To file meetings as rows of a Notion
+database, share the database with the integration and set `mode =
+"database"` and `database_id`. Columns are matched by type and name, and only
+those that exist are filled: the title, a date (`Date`/`Datum`), numbers for
+duration (`Duration`/`Dauer`) and speakers (`Speakers`/`Teilnehmer`), and a
+select `Source` (set to "Teams").
 
-`process`, `sync` and `run` show a macOS notification when the transcript is
-ready or uploaded, or when a step fails (`--no-notify` to turn off).
+## Troubleshooting
 
-### Reporting a problem
+**Something went wrong.** "Report a Problem…" (in the menu bar menu, ⌘K,
+Settings, a meeting's ⋯ menu, or an error message) writes one zip to the
+Desktop, `Palaver report <date>.zip`, and shows it in Finder: what you
+wrote, versions, this Mac's setup, the settings without secrets, the logs,
+and the chosen meeting (its audio only when ticked). Nothing is uploaded;
+send it to whoever helps you.
 
-"Report a Problem…" (menu bar menu, Help, ⌘K, Settings, a meeting's ⋯, an
-error) writes one zip to the Desktop, `Palaver report <date>.zip`, and
-shows it in Finder: the form, versions, this Mac's setup, `palaver doctor`,
-the settings without secrets, every log (none is ever rotated or trimmed),
-Palaver's crash reports, every meeting's logs and state, the chosen meeting
-complete (its audio only when ticked) and the local usage counts
-(`~/Library/Application Support/palaver/usage.jsonl`). Nothing is uploaded.
+**Nothing records when a call starts.** Check that "Record Teams calls
+automatically" or "Record Slack huddles automatically" is on (Settings →
+Recording, or the menu bar menu) and that automatic recording isn't paused.
+`palaver doctor` checks the permissions.
 
-```bash
-palaver report create -m "Notes never came"   # the same zip, about the latest meeting
-palaver report open <zip>                     # unpack and summarize (versions, errors, devices, pipeline)
-palaver report usage <zip>...                 # feature use across testers
-```
+**macOS asks for the permissions again after an update.** macOS remembers
+them by the app's signature. Releases are signed with the same certificate
+every time, so this should be rare; when the signature changed, Palaver asks
+right after its restart, while it is idle, not in the middle of the next
+call.
 
-## Transcription backends
+**Notes are missing or late.** Notes wait for enough free memory (about 14
+GB for Gemma 4 12B). Settings → Memory shows what each part of Palaver uses.
+"Rewrite notes" on the meeting writes them again.
 
-`[model] transcriber` selects the speech-to-text model:
+**A name is spelled wrong in every meeting.** Add it to the Glossary, or
+accept the Glossary's suggestion. The fix applies everywhere the transcript
+is shown, searched or summarized.
 
-- `"parakeet-mlx"` (default) — NVIDIA Parakeet-TDT v3, same model as sabbel.
-  Transcribes in 15 s chunks: with longer chunks German meetings full of
-  English terms flipped into wrong English. On real meetings it matched
-  Whisper on German and beat it on English (35 s instead of several minutes
-  for 24 min of audio, no text over silence, passages Whisper skipped). It
-  is verbatim (keeps "um", "äh") and has no `initial_prompt`; fix recurring
-  misspellings with `[replacements]` in `dictionary.toml`.
-- `"mlx-whisper"` — Whisper large-v3-turbo, uses the dictionary's
-  `initial_prompt`.
+**Two calls ended up in one recording.** Hover over the transcript line
+where the second call starts and press ✂. "Join with the one before/after"
+puts a split call back together.
 
-## First run
+## Contributing
 
-- macOS will request **Microphone** permission the first time `record` runs.
-- macOS will request **System Audio Recording** permission the first time
-  system audio is captured. Screen Recording is not needed.
-- The Parakeet model (~1.2GB) downloads on first use.
-- The pyannote diarization model downloads on first use.
-
-## How it works
-
-1. **Record**: captures mic and system audio as two separate WAVs (16kHz mono PCM_16) in a timestamped folder under `output_dir`.
-2. **Process**: transcribes both tracks via Parakeet-TDT v3 (`parakeet-mlx`, Apple Silicon GPU; Whisper optional), diarizes the system track via `pyannote.audio`, merges words to speakers, writes `transcript.md` and `transcript.json`.
-3. **Sync**: uploads the transcript as a new Notion page under the configured parent.
-
-Stages are independent and resumable — if a step fails (e.g. model download dies), rerun `process` or `sync` and it skips what's already done.
-
-Before merging, `process` drops Whisper hallucinations over silence ("Thank
-you.", "Yeah." at 30 s window boundaries) and mic segments that repeat
-remote speech from the same moment (speaker bleed the AEC let through). With
-`language = "auto"` the system track's detected language is reused for the
-mic track.
-
-Each recording folder gets a `session.log` (JSON lines): capture warnings
-(tap fallback, mic stalls, resampler re-anchors), stage durations, dropped
-segment counts, the Notion page URL, and any failure with its traceback.
-
-## V2: Speaker-bleed removal
-
-Recordings capture the microphone via ScreenCaptureKit and system audio via a
-Core Audio Process Tap on every process except the recorder itself. All
-sources timestamp on the CoreAudio host-time clock, so the tracks are aligned
-by presentation timestamp. The Process Tap coexists with other system-audio
-recorders (Notion Meeting Recorder, QuickTime, OBS, Teams cloud recording),
-which can starve ScreenCaptureKit's audio output. It follows default-output
-changes (headphones, AirPods) by rebuilding itself on the new device. If the
-tap cannot start — e.g. the terminal lacks the *System Audio Recording*
-permission — `record` warns and falls back to ScreenCaptureKit system audio.
-
-ScreenCaptureKit delivers the microphone at the input device's native rate
-(e.g. 48 kHz), not the configured 16 kHz; the recorder reads each buffer's
-format and resamples per track, following rate changes when the input device
-switches mid-meeting.
-
-The recorder writes:
-
-- `mic_raw.wav` — raw microphone audio.
-- `system.wav` — system-output loopback.
-
-During `palaver process`, a new AEC step produces `mic.wav` from
-those two tracks using WebRTC's AudioProcessing (vendored from
-`Laxcorp-Research/project-raven`, MIT; pre-built WebRTC static libs, BSD-3).
-The downstream transcription / diarization pipeline consumes `mic.wav`
-unchanged.
-
-Result: participants' voices coming out of laptop speakers are no longer
-re-captured in the mic track. Works with any output configuration (built-in
-speakers, headphones, AirPods, external speakers).
-
-### Build step
-
-The vendored WebRTC library needs to be built once after install:
-
-```bash
-cd palaver/_vendored/webrtc_aec
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-```
-
-Requires Xcode Command Line Tools (`xcode-select --install`). Rebuild after
-pulling updates that touch `palaver/_vendored/`.
-
-## Limitations (V1)
-
-- No auto-detect daemon: you run `record` manually and Ctrl+C to stop. Teams auto-start is in Plan 2.
-- Generic speaker labels (`SPEAKER_00`, `SPEAKER_01`, …) for remote participants. Your mic track is labeled with your `[user].name`. Naming remote speakers by voice is a V2 item.
-- SCStream (microphone) can stop delivering without an error (issue #18); there is no watchdog yet.
-
-## Development
-
-```bash
-uv run pytest                    # default tests (no models, no hardware)
-uv run pytest -m integration     # opt-in integration tests
-uv run pytest -m soak tests/test_soak.py -s   # before a release: 60 min of live + stream at real speed under a memory ceiling
-uv run palaver --help
-```
+Palaver is written in Python, with a WKWebView window. To build it from
+source, run the tests or make a release, see [CONTRIBUTING.md](CONTRIBUTING.md).
+Third-party licenses are in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
