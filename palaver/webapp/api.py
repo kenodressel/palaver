@@ -115,6 +115,15 @@ def answer_recording_question(recording, choice: str, meeting_id: str) -> dict:
     return {_ANSWERED[choice]: meeting_id}
 
 
+def record(recording, action: str, meeting_id: str | None = None) -> dict:
+    """Start Recording / Stop Recording in the window (#11): the menu bar
+    app records by hand, microphone and this Mac's sound, as from its menu."""
+    record = getattr(recording, "record", None)
+    if record is None:
+        raise Refused("Recordings are started and stopped by the Palaver menu bar app.")
+    return record(action, meeting_id)
+
+
 _STILL_PROCESSING = "This meeting is still being transcribed. It can {} once that is done."
 
 

@@ -1555,11 +1555,39 @@ def test_http_the_recording_question_and_its_answers(tmp_path: Path):
         srv.server_close()
 
 
+def test_http_the_window_starts_and_stops_a_recording(tmp_path: Path):
+    """#11: Start Recording / Stop in the window go to the menu bar app."""
+    rec = _Recording(None)
+    asked = []
+
+    def record(action, meeting=None):
+        asked.append((action, meeting))
+        if action == "start":
+            return {"meeting": MEETING}
+        if meeting != MEETING:
+            raise api.Refused("This recording is no longer running.")
+        return {"stopped": MEETING}
+
+    rec.record = record
+    srv = _recording_server(tmp_path, rec)
+    try:
+        assert _post(srv, "/api/recording/start", {}) == (200, {"meeting": MEETING})
+        assert _post(srv, "/api/recording/end", {"meeting": MEETING}) == (200, {"stopped": MEETING})
+        status, answer = _post(srv, "/api/recording/end", {"meeting": "2026-10-27T09-00-00"})
+        assert status == 400 and "no longer" in answer["error"]
+        assert asked == [("start", None), ("stop", MEETING), ("stop", "2026-10-27T09-00-00")]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 def test_http_no_recording_question_outside_the_menu_bar_app(tmp_path: Path):
     srv = _recording_server(tmp_path, None)
     try:
         assert json.loads(_req(srv, "/api/recording/question")[2]) == {"question": None, "recording": None}
         assert _post(srv, "/api/recording/stop", {"meeting": MEETING})[0] == 400
+        status, answer = _post(srv, "/api/recording/start", {})
+        assert status == 400 and "menu bar app" in answer["error"]
     finally:
         srv.shutdown()
         srv.server_close()

@@ -1454,6 +1454,22 @@ export function settingsPane(asked) {
 export const GLOBAL_COMMANDS = [{ kind: "command", id: "importMeeting", label: "Import Meeting…", detail: "Command",
   keywords: ["palaver", "file", "colleague"] }];
 
+// --- recording by hand (#11) --------------------------------------------------------
+
+// The meeting being recorded now, as the list knows it; null when none.
+export const recordingNow = (meetings) => (meetings || []).find((m) => m.status === "recording") || null;
+
+// What starting by hand records, said where it can be started.
+export const RECORD_TEXT = "Your microphone and this Mac's sound: a meeting on site, a conversation, any call.";
+
+// The palette's Start Recording, or Stop Recording while one runs.
+export function recordingCommand(recording) {
+  return recording
+    ? { kind: "command", id: "stopRecording", label: "Stop Recording", detail: "Command", keywords: ["end", "record"] }
+    : { kind: "command", id: "startRecording", label: "Start Recording", detail: "Command",
+      keywords: ["record", "new", "on site", "in person", "conversation", "transcribe", "manual"] };
+}
+
 // --- Report a Problem (#59) ---------------------------------------------------------
 
 // The meeting the report form starts with: the one asked for ("none": none), else the open one, else

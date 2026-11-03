@@ -173,6 +173,20 @@ class RemoteRecording:
         except appctl.CallFailed:
             raise Refused(NO_ANSWER) from None
 
+    def record(self, action: str, meeting: str | None = None) -> dict:
+        """Start ("start") or stop ("stop") a recording, as the menu does
+        (#11): {"meeting"} or {"stopped"}. Raises api.Refused when the app
+        does not, or does not answer."""
+        from .api import Refused
+
+        try:
+            return appctl.call("record", {"action": action, "meeting": meeting}, path=self._socket_path,
+                               timeout=ANSWER_TIMEOUT)
+        except appctl.CallRefused as exc:
+            raise Refused(str(exc)) from None
+        except appctl.CallFailed:
+            raise Refused(NO_ANSWER) from None
+
     def switched_off(self, app: str) -> None:
         """A record switch turned off in Settings: that app's call stops now,
         as from the menu. Without the app, the daemon sees the switch on its

@@ -97,6 +97,12 @@ def test_markup_typed_is_shown_as_text(page, app_server):
     expect(text.locator("strong")).to_have_text("<b>hi</b>")
 
 
+def _during_the_live_call(page):
+    """The page's clock a few minutes into the call being recorded: its date
+    is fixed, and notes over 7 days into a meeting are refused (MAX_AT)."""
+    page.clock.install(time=_at(LIVE) + timedelta(minutes=5))
+
+
 def _live_paragraph_gets_its_time(page, app_server):
     expect(page.locator("#main .live-badge, #main .pill.state").first).to_be_visible()
     show_tab(page, "Notes")
@@ -116,11 +122,13 @@ def _live_paragraph_gets_its_time(page, app_server):
 
 
 def test_notes_written_live_get_the_meeting_time(page, app_server):
+    _during_the_live_call(page)
     goto(page, app_server, f"#/{LIVE}")
     _live_paragraph_gets_its_time(page, app_server)
 
 
 def test_notes_written_in_the_first_minute_get_the_meeting_time_too(page, app_server):
+    _during_the_live_call(page)
     (app_server.root / LIVE / "live.json").unlink()  # the live worker has not written its first block yet
     goto(page, app_server, f"#/{LIVE}")
     _live_paragraph_gets_its_time(page, app_server)
@@ -272,6 +280,7 @@ def test_a_cut_moves_the_later_notes_and_the_page_follows(page, app_server):
 
 
 def test_the_live_refresh_leaves_the_notes_tab_alone_while_i_type(page, app_server):
+    _during_the_live_call(page)
     goto(page, app_server, f"#/{LIVE}")
     show_tab(page, "Notes")
     _start_typing(page)

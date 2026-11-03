@@ -418,6 +418,10 @@ def _handler(app: App, port: int, key: str | None = None) -> type[BaseHTTPReques
                 if m:
                     token = api.trash_meeting(app.output_dir, m.group(1), user_name=app.user_name)
                     return self._json({"trashed": m.group(1), "undo": token})
+                if self.path in ("/api/recording/start", "/api/recording/end"):
+                    action = "start" if self.path.endswith("start") else "stop"
+                    meeting = body.get("meeting") if isinstance(body, dict) else None
+                    return self._json(api.record(app.recording, action, None if meeting is None else str(meeting)))
                 m = re.fullmatch(r"/api/recording/(stop|keep)", self.path)
                 if m:
                     return self._json(api.answer_recording_question(app.recording, m.group(1), str(body["meeting"])))

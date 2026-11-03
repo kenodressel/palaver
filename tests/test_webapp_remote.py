@@ -108,6 +108,27 @@ def test_answer_without_a_recording_process_is_refused_with_a_reason(short_dir):
         _remote(short_dir).answer("stop", MEETING)
 
 
+def test_record_goes_to_the_recording_process(short_dir):
+    got = []
+
+    def record(args):
+        got.append(args)
+        if args["action"] == "stop":
+            raise appctl.CallRefused("This recording is no longer running.")
+        return {"meeting": MEETING}
+
+    srv = appctl.serve(short_dir / "app.sock", {"record": record})
+    try:
+        assert _remote(short_dir).record("start") == {"meeting": MEETING}
+        with pytest.raises(api.Refused, match="no longer running"):
+            _remote(short_dir).record("stop", MEETING)
+        assert got == [{"action": "start", "meeting": None}, {"action": "stop", "meeting": MEETING}]
+    finally:
+        srv.close()
+    with pytest.raises(api.Refused, match="did not answer"):
+        _remote(short_dir).record("start")
+
+
 def test_watch_and_switched_off_go_to_the_recording_process(short_dir):
     got = []
     srv = appctl.serve(short_dir / "app.sock", {"watch": lambda args: got.append(("watch", args)),

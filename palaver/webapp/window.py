@@ -25,6 +25,9 @@ def on_quit(fn) -> None:
 # The "Meeting" menu: (title, the page's command, key equivalent); None is a
 # separator. The page binds these keys itself (Space plays/pauses).
 MEETING_MENU = [
+    ("Start Recording", "startRecording", "R"),  # ⌘⇧R (#11)
+    ("Stop Recording", "stopRecording", ""),
+    None,
     ("Play/Pause", "play", ""),
     ("Write Notes", "writeNotes", "N"),  # ⌘⇧N
     ("Transcribe Again", "transcribe", ""),

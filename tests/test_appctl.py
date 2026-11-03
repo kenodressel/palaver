@@ -223,6 +223,53 @@ def test_transcribe_again_queues_the_folder_on_the_main_thread(sock_path, served
         appctl.call("transcribe", {"folder": str(tmp_path / "gone")}, path=sock_path)
 
 
+class _Recorder(_Daemon):
+    """Records by hand into /m/<time>, as the menu's Start Recording."""
+
+    def __init__(self, fails=False):
+        super().__init__()
+        self.recording, self.fails, self.folder = False, fails, None
+
+    def start_manual(self):
+        if self.fails:
+            return False
+        self.recording, self.folder = True, "/m/2026-11-03T14-00-00"
+        return True
+
+    def stop_manual(self):
+        self.recording, self.folder = False, None
+
+    def status(self):
+        return {**super().status(), "folder": self.folder}
+
+
+def test_the_window_starts_and_stops_a_recording_on_the_main_thread(sock_path, served):
+    """#11: the window's Start Recording / Stop, as the menu's."""
+    daemon, main = _Recorder(), []
+    calls, refreshed = _calls(daemon, main=main)
+    served(calls)
+    assert appctl.call("record", {"action": "start"}, path=sock_path) == {"meeting": "2026-11-03T14-00-00"}
+    assert daemon.recording and main and refreshed
+    with pytest.raises(appctl.CallRefused, match="recording already"):
+        appctl.call("record", {"action": "start"}, path=sock_path)
+    with pytest.raises(appctl.CallRefused, match="no longer running"):  # the page showed another one
+        appctl.call("record", {"action": "stop", "meeting": "2026-11-03T09-00-00"}, path=sock_path)
+    assert appctl.call("record", {"action": "stop", "meeting": "2026-11-03T14-00-00"}, path=sock_path) == {
+        "stopped": "2026-11-03T14-00-00"}
+    assert not daemon.recording
+    with pytest.raises(appctl.CallRefused, match="no longer running"):
+        appctl.call("record", {"action": "stop"}, path=sock_path)
+    with pytest.raises(appctl.CallRefused):
+        appctl.call("record", {"action": "pause"}, path=sock_path)
+
+
+def test_a_recording_that_does_not_start_says_so(sock_path, served):
+    calls, _ = _calls(_Recorder(fails=True))
+    served(calls)
+    with pytest.raises(appctl.CallRefused, match="did not start"):
+        appctl.call("record", {"action": "start"}, path=sock_path)
+
+
 def test_restart_web_restarts_only_the_server(sock_path, served):
     restarted = []
     calls, _ = _calls(_Daemon(), restarted=restarted)

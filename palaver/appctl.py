@@ -162,6 +162,34 @@ def app_calls(daemon, *, on_main: Callable[[Callable[[], Any]], Any], test_recor
 
         return bool(on_main(run))
 
+    def record(args: dict) -> dict:
+        """Start Recording / Stop Recording in the window (#11), as the
+        menu's: {"meeting"} it records into, or stopped."""
+        action, meeting = args.get("action"), args.get("meeting")
+        if action not in ("start", "stop"):
+            raise CallRefused(f"no recording action {action!r}")
+
+        def run():
+            status = daemon.status()
+            folder = Path(status["folder"]).name if status.get("folder") else None
+            if action == "stop":
+                if status["state"] != "recording" or (meeting is not None and meeting != folder):
+                    return None, "This recording is no longer running."
+                daemon.stop_manual()
+                refresh()
+                return {"stopped": folder}, None
+            if status["state"] == "recording":
+                return None, "Palaver is recording already."
+            if not daemon.start_manual():
+                return None, "The recording did not start; the log says why."
+            refresh()
+            return {"meeting": Path(daemon.status()["folder"]).name}, None
+
+        answer, refused = on_main(run)
+        if refused:
+            raise CallRefused(refused)
+        return answer
+
     def recording_now() -> bool:
         return daemon.status()["state"] == "recording"
 
@@ -183,6 +211,7 @@ def app_calls(daemon, *, on_main: Callable[[Callable[[], Any]], Any], test_recor
         "watch": watch,
         "start_helper": start_helper,
         "transcribe": transcribe,
+        "record": record,
         "test": test,
         "restart_web": lambda args: {"pid": restart_web()},
     }

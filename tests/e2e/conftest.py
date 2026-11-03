@@ -158,6 +158,8 @@ class FakeRecording:
         self.running = True
         self.live_coach: dict | None = None  # who talks and the nudge (#41), as the daemon says it
         self.transcribing: list[Path] = []  # Transcribe Again: the meetings the app was asked to transcribe
+        self.recorded: list[tuple[str, str | None]] = []  # Start Recording / Stop in the window (#11)
+        self.records_into: str | None = None  # the meeting a start records into: one the test has
 
     def question(self):
         return self.asked
@@ -172,6 +174,10 @@ class FakeRecording:
         self.transcribing.append(folder)
         process_state.clear(RecordingPaths(folder))  # as the daemon does: the page shows it transcribing
         return True
+
+    def record(self, action: str, meeting: str | None = None) -> dict:
+        self.recorded.append((action, meeting))
+        return {"meeting": self.records_into} if action == "start" else {"stopped": meeting}
 
     def answer(self, choice: str, meeting: str) -> bool:
         self.answers.append((choice, meeting))

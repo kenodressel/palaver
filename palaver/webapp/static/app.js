@@ -29,6 +29,7 @@ import { togglePalette, paletteOpen } from "./palette.js";
 import { reportMeeting, reportDraft, reportDoneText, actionCatalog } from "./logic.js";
 // Export and import of a meeting (#58).
 import { inferredText, importedLine, importedText, GLOBAL_COMMANDS } from "./logic.js";
+import { recordingNow, recordingCommand, RECORD_TEXT } from "./logic.js";
 import { openExport, pickImport, wireDrop, importFile, askVoices, decideVoices, dialog } from "./exchange.js";
 // Updates and uninstalling (#60).
 import { updateIndicator, updateView, SETTINGS_PANES, settingsPane, settingsEntries } from "./logic.js";
@@ -299,8 +300,9 @@ function renderList() {
     }
     return;
   }
+  list.append(recordCard("list"));
   if (!state.meetings.length) {
-    list.append(h("p", { class: "day" }, "No recordings yet. Meetings appear here when a Teams call ends."));
+    list.append(h("p", { class: "day" }, "No recordings yet. Meetings appear here when a Teams call or Slack huddle ends, or when you record one."));
     return;
   }
   if (state.upcoming.length && !state.filter) {
@@ -1098,6 +1100,66 @@ async function undoImport(answer) {
 }
 
 commands.register("importMeeting", { enabled: () => true, run: () => pickImport(runImport) });
+
+// --- recording by hand (#11) ---------------------------------------------------------
+
+// Start Recording, as the menu bar icon's: an on-site meeting, a conversation, a call Palaver does not see.
+async function startRecording(from) {
+  let meeting;
+  try {
+    ({ meeting } = await working(from, api("/api/recording/start", {})));
+  } catch (err) {
+    errorToast(`Not started: ${err.message}`);
+    return;
+  }
+  toast("Recording. Stop it here, or from the menu bar icon.", { short: true });
+  await loadList();
+  if (state.view === "today") await refreshToday();
+  else if (state.view === "meetings") openMeeting(meeting);
+}
+
+// Stop: whatever records, as the menu's Stop Recording; transcribed after.
+async function stopRecording(id, from) {
+  try {
+    await working(from, api("/api/recording/end", { meeting: id }));
+  } catch (err) {
+    errorToast(`Not stopped: ${err.message}`);
+    loadList();
+    return;
+  }
+  state.question = null;
+  toast("Recording stopped. It is transcribed now.", { short: true });
+  await loadList();
+  if (state.view === "today") await refreshToday();
+  else if (onPage(id)) openMeeting(id);
+}
+
+commands.register("startRecording", { enabled: () => !recordingNow(state.meetings), run: () => startRecording(),
+  shortcut: "⇧⌘R" });
+commands.register("stopRecording", { enabled: () => !!recordingNow(state.meetings),
+  run: () => stopRecording(recordingNow(state.meetings).id) });
+
+// The card to record by hand, or the recording that runs with its Stop: on Today ("today") and atop the list.
+function recordCard(where) {
+  const rec = recordingNow(state.meetings);
+  const cls = where === "today" ? "record-card" : "record-card compact";
+  if (where === "today" && rec && state.todayLive) return h("section", { class: cls, hidden: true });  // Live now has it
+  if (rec) {
+    const start = rec.start ? new Date(rec.start) : null;
+    return h("section", { class: `${cls} recording`, "aria-label": "Recording" },
+      h("div", { class: "record-text" },
+        h("span", { class: "pill live-badge" }, "Recording"),
+        h("span", { class: "meta" }, start ? `since ${timeFmt.format(start)}` : "")),
+      h("div", { class: "record-actions" },
+        where === "today" ? h("button", { type: "button", class: "tbtn", onclick: () => openMeeting(rec.id) }, "Open") : null,
+        h("button", { type: "button", class: "tbtn", onclick: (e) => stopRecording(rec.id, e.currentTarget) },
+          h("span", { class: "stop-mark", "aria-hidden": "true" }), "Stop")));
+  }
+  const button = h("button", { type: "button", class: "tbtn primary record-btn", title: "⇧⌘R",
+    onclick: (e) => startRecording(e.currentTarget) }, h("span", { class: "rec-dot", "aria-hidden": "true" }), "Start Recording");
+  return h("section", { class: cls, "aria-label": "New recording" },
+    h("div", { class: "record-text" }, h("h2", {}, "New recording"), h("p", {}, RECORD_TEXT)), button);
+}
 wireDrop(runImport);
 $("#import-btn")?.addEventListener("click", () => pickImport(runImport));
 
@@ -5569,14 +5631,16 @@ const todaySignatures = () => {
   const live = state.todayLive;
   const now = new Date();
   const next = state.upcoming.find((x) => new Date(x.end) > now);
+  const rec = recordingNow(state.meetings);
   return {
+    record: JSON.stringify(rec ? [rec.id, rec.start, !!live] : null),
     live: JSON.stringify(live ? [live.id, live.live?.until, live.transcript.slice(-4), live.speakers.map((x) => x.display)] : null),
     next: JSON.stringify(next ? [next, startsInText(next.start, next.end, now)] : null),
     recent: JSON.stringify([state.meetings.slice(0, 6), state.meetings.length > 6,
       state.meetings.slice(0, 6).map((m) => needsOf(m.id)), [...state.writing.keys()]]),
   };
 };
-const TODAY_BUILD = { live: () => liveNowCard(), next: () => nextMeetingCard(), recent: () => recentSection() };
+const TODAY_BUILD = { record: () => recordCard("today"), live: () => liveNowCard(), next: () => nextMeetingCard(), recent: () => recentSection() };
 
 // The call being recorded (its live text and speakers), then the parts of Today that changed.
 async function refreshToday() {
@@ -5609,7 +5673,7 @@ function renderToday() {
   $("#main").replaceChildren(h("article", { class: "today" },
     h("header", { class: "today-head" }, h("p", { class: "eyebrow" }, dayFmt.format(new Date())), h("h1", {}, "Today")),
     h("div", { class: "today-cols" },
-      h("div", { class: "today-main" }, updateCardSection(), liveNowCard(true), needsSection(true)),
+      h("div", { class: "today-main" }, updateCardSection(), recordCard("today"), liveNowCard(true), needsSection(true)),
       h("div", { class: "today-side" }, nextMeetingCard(), recentSection()))));
 }
 
@@ -5636,7 +5700,10 @@ function liveNowCard(first = false) {
       h("span", { class: "pill live-badge" }, "Live now"),
       h("span", { class: "meta" }, [start ? `since ${timeFmt.format(start)}` : null,
         m.live?.until ? `transcribed up to ${clock(m.live.until)}` : null].filter(Boolean).join(" · ")),
-      h("button", { type: "button", class: "tbtn", onclick: () => openMeeting(m.id) }, "Open")),
+      h("div", { class: "live-now-actions" },
+        h("button", { type: "button", class: "tbtn", onclick: () => openMeeting(m.id) }, "Open"),
+        h("button", { type: "button", class: "tbtn", onclick: (e) => stopRecording(m.id, e.currentTarget) },
+          h("span", { class: "stop-mark", "aria-hidden": "true" }), "Stop"))),
     h("h2", {}, titleOf(m)),
     h("div", { class: "live-speakers" }, m.speakers.map((s) => personToken(s.display || s.name || labelDisplay(s.label),
       color(s.label), { named: !!s.name }))),
@@ -6078,7 +6145,8 @@ function meetingEntry(x) {
 function paletteGroups(query) {
   const m = state.view === "meetings" ? state.meeting : null;
   const cmds = paletteCommands(m);
-  const pages = [...PAGES.map(([id, label]) => ({ kind: "page", id, label, detail: "Page" })), ...GLOBAL_COMMANDS];
+  const pages = [...PAGES.map(([id, label]) => ({ kind: "page", id, label, detail: "Page" })),
+    recordingCommand(recordingNow(state.meetings)), ...GLOBAL_COMMANDS];
   const meetings = state.meetings.map(meetingEntry);
   if (!query.trim()) {
     const projects = [...state.meetings.flatMap((x) => x.projects).map((p) => p.id),
@@ -6368,7 +6436,7 @@ usage.catalog("view", ["today", "meetings", "people", "projects", "glossary", "s
   "setup", "report"]);
 usage.catalog("tab", Object.keys(TAB_LABELS));
 usage.catalog("palette", ["open", "meeting", "person", "project", "page", "setting", "search", "command.reportProblem",
-  ...GLOBAL_COMMANDS.map((c) => `command.${c.id}`),
+  ...GLOBAL_COMMANDS.map((c) => `command.${c.id}`), "command.startRecording", "command.stopRecording",
   ...Object.keys(meetingCommands({})).map((name) => `command.${name}`)]);
 
 markTab(placeOf(location.hash).view);  // the page asked for, while its data comes

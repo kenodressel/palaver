@@ -115,3 +115,22 @@ test("heartbeat: a failed request shows the line at once", async () => {
   assert.deepEqual(shown, [true]);
   assert.deepEqual(clock.pending(), []);
 });
+
+// --- recording by hand from the window (#11) ---
+
+import { recordingNow, recordingCommand, paletteMatch } from "../../palaver/webapp/static/logic.js";
+
+test("recordingNow is the meeting being recorded, if any", () => {
+  const live = { id: ID, status: "recording" };
+  assert.equal(recordingNow([{ id: "a", status: "ready" }, live]), live);
+  assert.equal(recordingNow([{ id: "a", status: "processing" }]), null);
+  assert.equal(recordingNow(undefined), null);
+});
+
+test("the palette offers Start Recording, or Stop Recording while one runs", () => {
+  assert.equal(recordingCommand(null).label, "Start Recording");
+  assert.equal(recordingCommand({ id: ID }).id, "stopRecording");
+  for (const typed of ["record", "on site", "in person", "new"]) {
+    assert.deepEqual(paletteMatch(typed, [recordingCommand(null)]).map((e) => e.id), ["startRecording"], typed);
+  }
+});
