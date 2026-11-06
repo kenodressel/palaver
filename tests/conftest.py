@@ -67,6 +67,34 @@ def isolated_config_home(monkeypatch, tmp_path_factory) -> Path:
 
 
 @pytest.fixture(autouse=True)
+def isolated_engine_marker(monkeypatch, tmp_path_factory):
+    """A run through the engine writes a marker in Application Support: never the
+    real one. The engine's record of what it answered starts empty in each test."""
+    from palaver import engine, install_layout
+
+    marker = tmp_path_factory.mktemp("engine-marker") / "engine-transcribed"
+    monkeypatch.setattr(install_layout, "engine_proven_marker", lambda home=None: marker)
+    monkeypatch.setattr(engine, "SUCCEEDED", set())
+    return marker
+
+
+def _real_marker():
+    from palaver import install_layout
+
+    return install_layout.engine_proven_marker()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def real_engine_marker_untouched():
+    """Guard: the suite must not leave the real marker behind (it makes Storage
+    offer to delete the old models on this Mac)."""
+    real = _real_marker()
+    before = real.exists()
+    yield
+    assert real.exists() == before, f"a test wrote or removed {real}"
+
+
+@pytest.fixture(autouse=True)
 def no_folder_moves(monkeypatch):
     """Tests must never move the real ~/Library folders of the old name."""
     monkeypatch.setattr("palaver.migrate.move_old_folders", lambda: [])

@@ -1,0 +1,6 @@
+swap.sh.txt: the swap script template (`_SWAP`) of Palaver 0.3.14, the last Python app. Releases
+up to 0.3.14 write and run this text when they update to a newer version, so it can never change;
+native/Tests/PalaverDaemonTests/OldSwapTests.swift and tools/smoke_install.sh run it. Regenerate
+(it must come out identical):
+
+  git show 8956274:palaver/updater.py | python3 -c 'import ast, sys; t = ast.parse(sys.stdin.read()); sys.stdout.write(next(n.value.value for n in t.body if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "_SWAP"))' > tests/fixtures/updater_0.3.14/swap.sh.txt

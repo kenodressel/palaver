@@ -91,7 +91,7 @@ to the new folders at the first start.
 
 - macOS 15 or later on Apple Silicon (M1 or later)
 - About 3 GB of disk for the app and its runtime, plus the models you choose
-  in the setup assistant (Parakeet 2.3 GB; the notes model 8 GB or more)
+  in the setup assistant (speech and speaker models 0.5 GB; the notes model 8 GB or more)
 - For notes written on your Mac: enough memory for the notes model. It needs
   about 10 GB while it writes, up to 12 GB for a long meeting. The setup
   assistant says what your Mac can run and recommends the rest.
@@ -116,9 +116,9 @@ The installer writes only into your home folder and changes no shell or
 
 | What | Where | Size | Downloaded |
 |---|---|---|---|
-| The app: Palaver's code and its launcher | `~/Applications/Palaver.app` | 3 MB | every release |
+| The app: the native Mac app, Palaver's code and its speech engine | `~/Applications/Palaver.app` | 13 MB download, 28 MB on disk | every release |
 | Its runtime: Python and every library Palaver uses, prebuilt | `~/Library/Application Support/palaver/runtime/` | 530 MB download, 1.6 GB on disk | only when it changed |
-| The models, with your OK in the setup assistant | `~/Library/Application Support/palaver/models/` and `~/.cache/huggingface` | ~12 GB (Parakeet 2.5, Gemma 4 12B 9, search 0.5) | once, again when a model changes |
+| The models, with your OK in the setup assistant | `~/Library/Application Support/palaver/models/` and `~/.cache/huggingface` | ~10 GB (speech and speakers 0.5, Gemma 4 12B 9, search 0.5) | once, again when a model changes |
 
 ## First start
 

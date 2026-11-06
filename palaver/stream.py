@@ -27,6 +27,7 @@ from .live import SAMPLE_RATE, GrowingTrack, _write_atomic
 from .models import Segment, Word
 from .paths import RecordingPaths
 from .session_log import event
+from . import memory
 from .stream_engine import MAX_AGE, WINDOW_SECONDS, Engine
 
 STEP_SECONDS = 1.0  # how often the stream reads the tracks
@@ -37,7 +38,16 @@ ECHO_LOOKAHEAD = 0.5  # ... to have been fed this far past the sentence's end
 SPEAKING_DBFS = -45.0  # louder than this over the last SPEAKING_SECONDS is speech
 SPEAKING_SECONDS = 0.5
 MIN_FEED_SECONDS = 0.5  # the engine gets slices at least this long (R5)
-STREAM_MEMORY_LIMIT = 4 * 1024**3  # MLX bytes (active + cache) above which the stream ends
+# The stream ends itself when this process and the engine it started pass
+# this many bytes (memory.tree_footprint): twice the budget the daemon's
+# watchdog restarts it at, a backstop when the daemon does not act.
+STREAM_MEMORY_FACTOR = 2
+STREAM_MEMORY_LIMIT = int(STREAM_MEMORY_FACTOR * memory.DEFAULT_STREAM_GB * memory.GB)  # the default budget's
+
+
+def memory_limit_for(cfg) -> int:
+    """The cap for the budget the user configured ([memory] stream_gb)."""
+    return int(STREAM_MEMORY_FACTOR * (getattr(cfg, "memory", None) or {}).get("stream", memory.DEFAULT_STREAM_GB) * memory.GB)
 MEMORY_CHECK_STEPS = 10  # ... checked every this many steps
 
 _SENTENCE_END = (".", "?", "!")

@@ -10,9 +10,9 @@
   dependency, made relocatable
   and checked: no Mach-O file may load anything from /Users, Homebrew or
   /usr/local. Built once per runtime id; an existing archive is kept.
-- models: the pyannote pipeline Palaver hosts, from the Hugging Face cache
-  (or downloaded with HF_TOKEN), with its license and attribution.
-- app: Palaver.app with the wheel's code inside, zipped.
+- models: nothing; Palaver hosts no models (the engine downloads its own).
+- app: Palaver.app, zipped: the Swift app as its executable, the wheel's code
+  with its Python host (palaver-python), and the Swift engine.
 - manifest: manifest.json over the assets, and upload.txt: the assets this
   release must upload. An asset the previous release already published
   (same file, same sha256) keeps its URL there and is not uploaded again.
@@ -39,9 +39,6 @@ sys.path.insert(0, str(ROOT))
 from palaver import release  # noqa: E402
 
 ARCH = "arm64"
-PYANNOTE_REPO = "pyannote/speaker-diarization-community-1"
-PYANNOTE_REVISION = "3533c8cf8e369892e6b79ff1bf80f7b0286a54ee"
-PYANNOTE_NAME = "pyannote-community-1"
 FORBIDDEN_PREFIXES = ("/Users/", "/opt/homebrew", "/usr/local", "/private/", "/tmp/", "/install/")
 
 
@@ -134,8 +131,7 @@ def _load_commands(path: Path) -> tuple[str | None, list[str], list[str]]:
 def _scrub_links(root: Path) -> list[str]:
     """Make every Mach-O file independent of where it was built: an install
     name naming the build folder becomes @rpath/<name>, rpaths into
-    Homebrew or /usr/local (torchcodec's wheel looks for FFmpeg there) are
-    dropped, so the runtime behaves the same on every Mac. Changed files
+    Homebrew or /usr/local are dropped, so the runtime behaves the same on every Mac. Changed files
     are signed again (ad hoc, as arm64 requires). Returns what still
     points outside: libraries loaded from there."""
     bad = []
@@ -208,6 +204,14 @@ def _text_mentions(root: Path, needle: str) -> list[str]:
     return hits
 
 
+def check_no_apple_double(archive: Path) -> None:
+    """An archive Palaver's updaters unpack must hold no AppleDouble "._*" entries."""
+    with tarfile.open(archive) as tar:
+        bad = [m.name for m in tar.getmembers() if Path(m.name).name.startswith("._")]
+    if bad:
+        raise SystemExit(f"✗ {archive.name} holds AppleDouble files: " + ", ".join(bad[:5]))
+
+
 def build_runtime(dist: Path, python: str, compression: str) -> Path:
     rid = runtime_id(dist, python)
     archive = dist / f"palaver-runtime-{rid}.tar.{compression}"
@@ -237,11 +241,14 @@ def build_runtime(dist: Path, python: str, compression: str) -> Path:
     scripts = [h for h in _text_mentions(runtime / "bin", str(build)) if not h.endswith(".pyc")]
     if scripts:
         raise SystemExit("✗ scripts still name the build folder: " + ", ".join(scripts))
-    run(runtime / "bin" / "python3", "-I", "-c", "import torch, mlx.core, pyannote.audio, parakeet_mlx, rumps")
+    run(runtime / "bin" / "python3", "-I", "-c", "import mlx.core, rumps, mlx_lm")
     tmp = archive.with_name(archive.name + ".tmp")
     flag = {"gz": "-czf", "xz": "-cJf"}[compression]
-    env = {**os.environ, "XZ_OPT": "-T0 -6"}
-    run("tar", "--no-xattrs", "-C", stage, flag, tmp, rid, env=env)
+    # COPYFILE_DISABLE: macOS tar otherwise adds AppleDouble "._*" files, and an updater
+    # before 0.5 refuses a runtime archive with "._<id>" at its top.
+    env = {**os.environ, "XZ_OPT": "-T0 -6", "COPYFILE_DISABLE": "1"}
+    run("tar", "--no-xattrs", "--no-mac-metadata", "-C", stage, flag, tmp, rid, env=env)
+    check_no_apple_double(tmp)
     tmp.rename(archive)
     shutil.rmtree(stage)
     print(f"✓ {archive.name}: {archive.stat().st_size / 1e6:.0f} MB")
@@ -250,91 +257,32 @@ def build_runtime(dist: Path, python: str, compression: str) -> Path:
 
 # --- models --------------------------------------------------------------------------------------
 
-_PYANNOTE_LICENSE = """\
-# pyannote speaker-diarization-community-1
-
-Copied unchanged from https://huggingface.co/{repo} (revision {revision})
-so Palaver can download it without a Hugging Face account. It contains the
-pyannote segmentation model, the WeSpeaker speaker embedding model, the
-VBx PLDA parameters and the pipeline's configuration.
-
-License: Creative Commons Attribution 4.0 International (CC-BY-4.0),
-https://creativecommons.org/licenses/by/4.0/ — as declared by its authors
-on the model page. No changes were made.
-
-Authors: pyannote (Hervé Bredin, Alexis Plaquet and contributors,
-https://www.pyannote.ai); speaker embeddings trained with WeSpeaker
-(Wang et al., ICASSP 2023); clustering after VBx (Landini et al., 2022).
-Training and tuning made possible thanks to GENCI on the Jean Zay
-supercomputer. See README.md (the model card) for the citations.
-"""
-
-
-def _pyannote_source(build: Path) -> Path:
-    """The pinned revision of the pipeline: from the Hugging Face cache, or
-    downloaded with the maintainer's HF_TOKEN (the repo is gated)."""
-    from huggingface_hub import snapshot_download
-
-    try:
-        return Path(snapshot_download(PYANNOTE_REPO, revision=PYANNOTE_REVISION, local_files_only=True))
-    except Exception:
-        pass
-    token = os.environ.get("HF_TOKEN")
-    if not token:
-        raise SystemExit(f"{PYANNOTE_REPO} is not in the Hugging Face cache; set HF_TOKEN to download it")
-    return Path(snapshot_download(PYANNOTE_REPO, revision=PYANNOTE_REVISION, token=token))
-
-
-def _model_card(target: Path) -> None:
-    """The model card (README.md) is public on the gated repo."""
-    from huggingface_hub import hf_hub_download
-
-    for name in ("README.md", "embedding/README.md", "plda/README.md"):
-        if (target / name).exists():
-            continue
-        try:
-            got = hf_hub_download(PYANNOTE_REPO, name, revision=PYANNOTE_REVISION,
-                                  token=os.environ.get("HF_TOKEN"))
-        except Exception:
-            if name == "README.md":
-                raise SystemExit(f"could not get the model card of {PYANNOTE_REPO}")
-            continue  # the sub-cards are gated; the license above covers the whole repo
-        (target / name).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(got, target / name)
-
-
-def build_models(dist: Path) -> Path:
-    from palaver import model_store
-
-    version = PYANNOTE_REVISION[:7]
-    archive = dist / f"palaver-models-{PYANNOTE_NAME}-{version}.tar"
-    if archive.exists():
-        print(f"✓ {archive.name} exists: kept")
-        return archive
-    stage = Path(tempfile.mkdtemp(dir=dist))
-    try:
-        target = stage / PYANNOTE_NAME
-        shutil.copytree(_pyannote_source(stage), target, symlinks=False,
-                        ignore=shutil.ignore_patterns(".gitattributes", "*.gif"))
-        _model_card(target)
-        (target / "LICENSE.md").write_text(_PYANNOTE_LICENSE.format(repo=PYANNOTE_REPO, revision=PYANNOTE_REVISION))
-        model_store.write_marker(target, name=PYANNOTE_NAME, version=version, repo=PYANNOTE_REPO)
-        tmp = archive.with_name(archive.name + ".tmp")
-        with tarfile.open(tmp, "w", format=tarfile.PAX_FORMAT) as tar:
-            tar.add(target, arcname=PYANNOTE_NAME,
-                    filter=lambda ti: ti.replace(uid=0, gid=0, uname="", gname="", mtime=0, deep=False))
-        tmp.rename(archive)
-    finally:
-        shutil.rmtree(stage, ignore_errors=True)
-    print(f"✓ {archive.name}: {archive.stat().st_size / 1e6:.0f} MB")
-    return archive
+def build_models(dist: Path) -> None:
+    """Nothing: Palaver hosts no models any more. The speech models come from
+    Hugging Face through palaver-engine (no account, no token). The step stays
+    so scripts that call it keep working; it writes nothing."""
+    print("(no hosted models: the speech engine downloads its own)")
 
 
 # --- app -----------------------------------------------------------------------------------------
 
-def build_app(dist: Path, python: str, version: str | None = None) -> Path:
-    """``version``: another version than the code's (the smoke test's update)."""
+ENGINE_BIN = ROOT / "native" / ".build" / "release" / "palaver-engine"
+APP_BIN = ROOT / "native" / ".build" / "release" / "Palaver"  # the Swift app (phase 2): the bundle's executable
+
+
+def build_app(dist: Path, python: str, version: str | None = None, engine: Path | None = None,
+              app_binary: Path | None = None) -> Path:
+    """``version``: another version than the code's (the smoke test's update).
+    ``engine``: the built palaver-engine, ``app_binary`` the built Swift app
+    (default: both from native/.build/release)."""
     from palaver import __version__, app_bundle
+
+    engine = engine or ENGINE_BIN
+    if not engine.is_file():
+        raise SystemExit(f"✗ {engine} is missing: run `make engine` first (make app does)")
+    app_binary = app_binary or APP_BIN
+    if not app_binary.is_file():
+        raise SystemExit(f"✗ {app_binary} is missing: run `make app-swift` first (make app does)")
 
     rid = runtime_id(dist, python)
     wheels = sorted(dist.glob(f"palaver-{__version__}-*.whl"))
@@ -355,8 +303,8 @@ def build_app(dist: Path, python: str, version: str | None = None) -> Path:
     try:
         # Bytecode for the runtime's Python (same minor version as the build's).
         same = f"{sys.version_info.major}.{sys.version_info.minor}" == python.rsplit(".", 1)[0]
-        app = app_bundle.build_release_app(out, runtime_id=rid, code=code, version=__version__,
-                                           compile_with=sys.executable if same else None)
+        app = app_bundle.build_release_app(out, runtime_id=rid, code=code, app_binary=app_binary, version=__version__,
+                                           compile_with=sys.executable if same else None, engine=engine)
     finally:
         shutil.rmtree(code, ignore_errors=True)
     archive = dist / f"palaver-app-{__version__}.zip"
@@ -411,13 +359,9 @@ def build_manifest(dist: Path, python: str, previous: str | None, notes: str | N
             uploads.append(path.name)
         return a
 
-    models = []
-    for archive in sorted(dist.glob(f"palaver-models-{PYANNOTE_NAME}-*.tar")):
-        version = archive.stem.rsplit("-", 1)[1]
-        models.append(release.HostedModel(PYANNOTE_NAME, version, PYANNOTE_REPO, asset(archive), "CC-BY-4.0"))
     manifest = release.Manifest(
         version=__version__, app=asset(dist / f"palaver-app-{__version__}.zip"), runtime_id=rid,
-        runtime=asset(runtime), models=tuple(models), minimum_macos="15.0", arch=ARCH,
+        runtime=asset(runtime), models=(), minimum_macos="15.0", arch=ARCH,
         notes=Path(notes).read_text().strip() if notes and Path(notes).exists() else None)
     out = dist / "manifest.json"
     out.write_text(release.manifest_json(manifest))

@@ -40,6 +40,10 @@ SAME_VOICE = 0.75
 TRASH = ".trash"
 _DATA = ("mic_segments", "system_segments", "system_turns", "transcript_json")
 _LABEL = re.compile(r"SPEAKER_(\d+)$")
+# Silence before the first word or after the last worth offering to remove
+# (a call joined early, a recording left running), and what is kept of it.
+SILENCE_TRIM = 120.0
+SILENCE_PAD = 2.0
 
 
 def _read(path: Path, default: Any = None) -> Any:
@@ -549,6 +553,25 @@ def _longest_pause(turns: list[dict], mine: list[dict], lo: float, hi: float) ->
     if hi - cursor > best:
         at = (cursor + hi) / 2
     return at
+
+
+def suggest_trim(paths: RecordingPaths) -> list[dict[str, Any]]:
+    """Long silence before the first word or after the last: where to cut it
+    off ("start": everything before ``at`` goes; "end": everything after).
+    [] when there is none, or the user said no before."""
+    lines = _read(paths.transcript_json, [])
+    if paths.silence_dismissed.exists() or not lines:
+        return []
+    _, duration = span(paths)
+    first, last = min(d["start"] for d in lines), max(d["end"] for d in lines)
+    out = []
+    if first - SILENCE_PAD >= SILENCE_TRIM:
+        at = round(first - SILENCE_PAD, 2)
+        out.append({"edge": "start", "at": at, "seconds": at})
+    if duration - last - SILENCE_PAD >= SILENCE_TRIM:
+        at = round(last + SILENCE_PAD, 2)
+        out.append({"edge": "end", "at": at, "seconds": round(duration - at, 2)})
+    return out
 
 
 def suggest_cut(paths: RecordingPaths, events: list) -> dict[str, Any] | None:

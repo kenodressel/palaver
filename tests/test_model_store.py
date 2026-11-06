@@ -1,5 +1,6 @@
 """Tests for the models Palaver hosts itself, kept in Application Support (#60)."""
 
+import dataclasses
 import io
 import json
 import tarfile
@@ -9,19 +10,26 @@ import pytest
 
 from palaver import model_store
 
-REPO = "pyannote/speaker-diarization-community-1"
-NAME = "pyannote-community-1"
+REPO = "northwind/voices-small"
+NAME = "northwind-voices"
 
 
 
 @pytest.fixture(autouse=True)
 def local_release(monkeypatch, tmp_path):
-    """Assets here are file:// URLs, which the downloader takes only with a local manifest."""
+    """Assets here are file:// URLs, which the downloader takes only with a local manifest.
+    No release hosts a model now; the machinery is tested with one that does."""
     monkeypatch.setenv("PALAVER_MANIFEST_URL", (tmp_path / "manifest.json").as_uri())
+    monkeypatch.setitem(model_store.HOSTED, REPO, NAME)
+
+
+def test_no_release_hosts_a_model_any_more(monkeypatch):
+    monkeypatch.undo()
+    assert model_store.HOSTED == {}
 
 
 def fake_model(root: Path, name=NAME, version="3533c8c", repo=REPO) -> Path:
-    """A tiny pyannote-shaped model folder: what the release tool packs."""
+    """A tiny model folder: what the release tool packs."""
     folder = root / name
     (folder / "segmentation").mkdir(parents=True)
     (folder / "config.yaml").write_text("pipeline:\n  name: x\n")
@@ -55,49 +63,8 @@ def test_a_copy_with_a_file_missing_is_not_used(tmp_path):
 
 
 def test_a_copy_of_another_repo_is_not_used_for_this_one(tmp_path):
-    fake_model(model_store.models_dir(tmp_path), repo="pyannote/speaker-diarization-3.1")
+    fake_model(model_store.models_dir(tmp_path), repo="northwind/voices-large")
     assert model_store.resolve(REPO, home=tmp_path) == REPO
-
-
-def test_pyannote_loads_the_local_copy_without_a_token(tmp_path, monkeypatch):
-    """The diarizer hands pyannote the folder; no token is asked for."""
-    fake_model(model_store.models_dir(tmp_path))
-    monkeypatch.setattr(model_store.Path, "home", classmethod(lambda cls: tmp_path))
-    seen = {}
-
-    class FakePipeline:
-        @staticmethod
-        def from_pretrained(checkpoint, token=None):
-            seen.update(checkpoint=checkpoint, token=token)
-            return FakePipeline()
-
-        def to(self, device):
-            return self
-
-    import sys
-    import types
-
-    fake = types.ModuleType("pyannote.audio")
-    fake.Pipeline = FakePipeline
-    monkeypatch.setitem(sys.modules, "pyannote.audio", fake)
-    from palaver.diarizer import PyannoteDiarizer
-
-    PyannoteDiarizer(repo=REPO, hf_token=None)._ensure_pipeline()
-    assert seen == {"checkpoint": str(model_store.models_dir(tmp_path) / NAME), "token": None}
-
-
-def test_without_a_local_copy_or_token_the_diarizer_says_what_to_do(tmp_path, monkeypatch):
-    monkeypatch.setattr(model_store.Path, "home", classmethod(lambda cls: tmp_path))
-    import sys
-    import types
-
-    fake = types.ModuleType("pyannote.audio")
-    fake.Pipeline = object
-    monkeypatch.setitem(sys.modules, "pyannote.audio", fake)
-    from palaver.diarizer import PyannoteDiarizer
-
-    with pytest.raises(RuntimeError, match="setup assistant"):
-        PyannoteDiarizer(repo=REPO, hf_token=None)._ensure_pipeline()
 
 
 def test_an_archive_is_installed_whole_and_replaces_the_old_version(tmp_path):
@@ -159,7 +126,7 @@ def test_the_setup_downloads_the_hosted_copy_from_the_release(tmp_path, monkeypa
     archive = pack(fake_model(tmp_path / "build"), tmp_path / "m.tar")
     assert onboarding.fetch_hosted(REPO, _hosted_manifest(archive)) is True
     assert model_store.resolve(REPO) == str(model_store.models_dir(home) / NAME)
-    assert onboarding.model_here(onboarding.MODELS["pyannote"], REPO)
+    assert onboarding.model_here(dataclasses.replace(onboarding.RETIRED["pyannote"], hosted=True), REPO)
     assert [p.name for p in model_store.models_dir(home).iterdir()] == [NAME]  # no .part left
 
 

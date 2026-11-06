@@ -27,6 +27,23 @@ jobs:
       - name: Build the echo-cancellation library
         run: make aec
 
+      - name: Note the Swift toolchain
+        # Part of the cache key: a new Xcode on the runner must not restore a stale .build.
+        run: echo "SWIFT_TOOLCHAIN=$(swift --version 2>&1 | head -1 | tr -c 'A-Za-z0-9.' '-')" >> "$GITHUB_ENV"
+
+      - name: Cache the Swift engine's build
+        # Keyed on what decides the build: the Makefile (FluidAudio's tag),
+        # the package, and the scripts that fetch and patch FluidAudio.
+        uses: actions/cache@v4
+        with:
+          path: |
+            native/vendor
+            native/.build
+          key: engine-${{ runner.os }}-${{ runner.arch }}-${{ env.SWIFT_TOOLCHAIN }}-${{ hashFiles('Makefile', 'native/Package.swift', 'tools/fetch_nemo.sh', 'tools/patch_fluidaudio.py') }}
+
+      - name: Build the Swift engine
+        run: make engine
+
       - name: Install WebKit for the end-to-end tests
         run: uv run --extra dev python -m playwright install webkit
 

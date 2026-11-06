@@ -1,0 +1,43 @@
+#!/bin/sh
+# Palaver's update from {current} to {version}.
+target={target}
+staged={staged}
+keep={keep}
+ok={ok}
+status={status}
+reopen() {{ {open} "$target"; }}
+failed() {{ printf '%s\n' "$1" > "$status"; }}
+
+# The app quits first: wait as long as it takes, a recording is finished on the way.
+for pid in {pids}; do
+  while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done
+done
+# Anything else still running from this app (its window's server stopping): a little longer.
+n=0
+while pgrep -f "$target/Contents/MacOS/" >/dev/null 2>&1 && [ "$n" -lt 300 ]; do sleep 0.2; n=$((n + 1)); done
+
+rm -rf "$keep" && mkdir -p "$keep" || {{ failed '{not_replaced}'; reopen; exit 1; }}
+if ! mv "$target" "$keep/Palaver.app"; then
+  failed '{not_replaced}'; reopen; exit 1
+fi
+if ! mv "$staged" "$target"; then
+  mv "$keep/Palaver.app" "$target"; failed '{not_replaced}'; reopen; exit 1
+fi
+rm -f "$ok"
+reopen
+n=0
+while [ "$n" -lt {start_ticks} ]; do
+  if [ "$(cat "$ok" 2>/dev/null)" = {version_sh} ]; then
+    rm -rf "$keep"
+    exit 0
+  fi
+  sleep 0.2; n=$((n + 1))
+done
+# The new version did not start: the one before comes back.
+pkill -TERM -f "$target/Contents/MacOS/palaver-launcher" 2>/dev/null
+n=0
+while pgrep -f "$target/Contents/MacOS/" >/dev/null 2>&1 && [ "$n" -lt 150 ]; do sleep 0.2; n=$((n + 1)); done
+rm -rf "$keep/failed.app"
+mv "$target" "$keep/failed.app" && mv "$keep/Palaver.app" "$target" && rm -rf "$keep"
+failed '{did_not_start}'
+reopen

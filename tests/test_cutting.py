@@ -127,6 +127,36 @@ def test_discard_from_the_window(tmp_path):
     assert api.get_meeting(tmp_path, a.folder.name, user_name="Timo")["duration"] == 40
 
 
+def test_long_silence_before_the_first_word_and_after_the_last_is_offered_for_removal(tmp_path):
+    # A one-on-one recorded seven minutes early, and left running five minutes after.
+    a = _recording(tmp_path, T0, 1800, [("SPEAKER_00", 420, 900, ANNA), ("SPEAKER_01", 900, 1500, BEN)])
+    assert cutting.suggest_trim(a) == [{"edge": "start", "at": 418.0, "seconds": 418.0},
+                                       {"edge": "end", "at": 1502.0, "seconds": 298.0}]
+
+
+def test_a_short_quiet_start_or_end_is_left_alone(tmp_path):
+    a = _recording(tmp_path, T0, 600, [("SPEAKER_00", 60, 300, ANNA), ("SPEAKER_01", 300, 540, BEN)])
+    assert cutting.suggest_trim(a) == []
+
+
+def test_silence_said_no_to_is_not_offered_again_and_the_undo_offers_it_again(tmp_path):
+    a = _recording(tmp_path, T0, 1800, [("SPEAKER_00", 420, 1790, ANNA)])
+    api.dismiss_cut(tmp_path, a.folder.name, what="silence")
+    assert cutting.suggest_trim(a) == []
+    assert cutting.suggest_cut(a, []) is None  # the other suggestion is untouched by it
+    assert not a.cut_dismissed.exists()
+    api.dismiss_cut(tmp_path, a.folder.name, False, what="silence")
+    assert cutting.suggest_trim(a)[0]["edge"] == "start"
+
+
+def test_the_window_offers_the_silence_and_removing_it_keeps_the_meeting(tmp_path):
+    a = _recording(tmp_path, T0, 1800, [("SPEAKER_00", 420, 1790, ANNA)])
+    [s] = api.get_meeting(tmp_path, a.folder.name, user_name="Timo")["silence"]
+    api.split_meeting(tmp_path, a.folder.name, s["at"], discard="before", user_name="Timo")
+    m = api.get_meeting(tmp_path, a.folder.name, user_name="Timo")
+    assert m["duration"] == 1800 - 418 and m["silence"] == []
+
+
 def _events(*specs):
     from palaver import calendar_events as cal
 

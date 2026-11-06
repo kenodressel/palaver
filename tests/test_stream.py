@@ -414,7 +414,7 @@ def test_a_late_stream_reads_only_the_last_window(rec):
 
 
 def test_run_stream_stops_above_the_memory_cap(rec):
-    """Every MEMORY_CHECK_STEPS steps the stream reads its MLX memory; above
+    """Every MEMORY_CHECK_STEPS steps the stream reads its memory (this process and the engine); above
     the cap it logs and ends without finishing or touching the recording."""
     from palaver.session_log import session_log
     from palaver.stream import MEMORY_CHECK_STEPS, STREAM_MEMORY_LIMIT, run_stream
@@ -432,4 +432,17 @@ def test_run_stream_stops_above_the_memory_cap(rec):
     events = [json.loads(line) for line in rec.paths.session_log.read_text().splitlines()]
     capped = [e for e in events if e.get("event") == "stream_memory_cap"]
     assert len(capped) == 1 and capped[0]["mb"] == round((STREAM_MEMORY_LIMIT + 1) / 1024**2)
-    assert STREAM_MEMORY_LIMIT == 4 * 1024**3
+    from palaver import memory
+
+    # twice the stream's budget, measured as this process plus the engine
+    assert STREAM_MEMORY_LIMIT == 2 * memory.DEFAULT_STREAM_GB * memory.GB == 3 * 1024**3
+
+
+def test_the_stream_cap_follows_the_configured_budget():
+    from types import SimpleNamespace
+
+    from palaver import memory
+    from palaver.stream import memory_limit_for
+
+    assert memory_limit_for(SimpleNamespace(memory={"stream": 2.5})) == 5 * 1024**3
+    assert memory_limit_for(SimpleNamespace()) == 2 * memory.DEFAULT_STREAM_GB * memory.GB

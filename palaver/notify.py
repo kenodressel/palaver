@@ -1,6 +1,6 @@
 """macOS notifications on pipeline events (issue #10).
 
-Inside Palaver.app the launcher posts them as the app ($PALAVER_NOTIFY), so
+Inside Palaver.app the app posts them as itself ($PALAVER_NOTIFY), so
 a click opens the meeting in Palaver. Elsewhere (run from a terminal) they
 go through ``osascript`` — no app bundle or consent needed, but macOS shows
 them as Script Editor's. Title and message are passed as script arguments,

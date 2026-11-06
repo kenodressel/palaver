@@ -355,6 +355,21 @@ def exit_when_parent_gone(stream, exit: Callable[[int], None] = os._exit) -> thr
     return t
 
 
+def fetch_speech(app) -> None:
+    """The speech models download by themselves when they are missing (a
+    tester's calls waited for a download nobody started). Only in an
+    installed release: a checkout's server (development, tests) never
+    downloads on its own."""
+    from .. import install_layout, onboarding
+
+    if install_layout.bundle() is None:
+        return
+    try:
+        onboarding.fetch_missing_speech(app.probe)
+    except Exception:
+        LOGGER.warning("could not start downloading the speech models", exc_info=True)
+
+
 def warm_up(app) -> None:
     """What the window's first visits would otherwise wait for: the glossary's
     suggestions read every transcript (a second or more the first time)."""
@@ -399,6 +414,7 @@ def serve(cfg, cli_options: list[str], *, listen_fd: int | None = None, ready_fd
         os.close(ready_fd)
     threading.Thread(target=sweep_leftovers, args=(app,), name="sweep", daemon=True).start()  # after: never delays it
     threading.Thread(target=warm_up, args=(app,), name="warm-up", daemon=True).start()
+    threading.Thread(target=fetch_speech, args=(app,), name="speech-models", daemon=True).start()
     try:
         server.serve_forever()
     finally:

@@ -54,14 +54,14 @@ def test_the_page_has_the_checks_and_the_recommendations(app):
     assert page["permissions"]["calendar"]["state"] == "not_asked"
     recs = {r["id"]: r for r in page["recommendations"]}
     assert recs["language_model"]["value"] == f"local:{ob.GEMMA}"
-    assert recs["transcription"]["downloads"] == ["parakeet"]  # pyannote is already here
+    assert recs["transcription"]["downloads"] == ["speech"]
     assert page["offer"] == {"why": "first"}  # no meetings, never set up
 
 
 def test_the_page_lists_the_downloads_with_their_sizes(app):
     d = api.setup_page(app)["downloads"]
-    assert [m["id"] for m in d["needed"]] == ["parakeet", "gemma", "e5"]
-    assert d["total_gb"] == pytest.approx(2.3 + 8.3 + 0.47)
+    assert [m["id"] for m in d["needed"]] == ["speech", "gemma", "e5"]
+    assert d["total_gb"] == pytest.approx(0.5 + 8.3 + 0.47)
     assert d["free_disk_gb"] == 120
     assert d["status"] == {"running": False, "models": []}  # nothing starts by itself
 
@@ -106,7 +106,7 @@ def test_without_a_calendar_there_is_no_seed(tmp_path):
 def test_the_summary_is_the_doctor_in_the_window(app):
     by = {c["name"]: c for c in api.setup_page(app)["summary"]}
     assert by["Microphone"]["status"] == "ok"
-    assert by["Parakeet"]["status"] == "warn" and "2.3 GB" in by["Parakeet"]["fix"]
+    assert by["Speech models"]["status"] == "warn" and "0.5 GB" in by["Speech models"]["fix"]
     assert by["Claude Code access"]["status"] == "warn"
 
 
@@ -120,8 +120,13 @@ def test_storage_and_privacy_say_where_things_are(app):
 
 def test_an_existing_user_is_not_offered_the_assistant(app):
     (app.output_dir / "2026-10-27T09-00-00").mkdir()
+    app.probe._downloaded.add("speech")
     assert api.setup_offer(app) is None
-    assert app.probe.hardware_calls == 0  # nothing to look at: it would not be offered anyway
+
+
+def test_an_existing_user_whose_meetings_wait_for_the_speech_models_is_told(app):
+    (app.output_dir / "2026-10-27T09-00-00").mkdir()
+    assert api.setup_offer(app) == {"why": "missing", "models": ["speech"], "labels": {"speech": "Speech models"}}
 
 
 def test_recommendations_alone_for_the_settings_page(app):
@@ -236,7 +241,7 @@ def test_a_new_mac_offers_the_assistant_again(app):
 
 
 def test_a_missing_model_offers_the_downloads(app):
-    for m in ("parakeet", "gemma"):
+    for m in ("speech", "gemma"):
         app.probe._downloaded.add(m)
     api.finish_setup(app, {"how": "done"})
     assert api.setup_offer(app) is None
@@ -248,11 +253,11 @@ def test_a_missing_model_offers_the_downloads(app):
 
 def test_downloads_start_on_request_and_report_progress(app):
     app.probe.fetch_gate.clear()
-    status = api.start_downloads(app, {"models": ["parakeet", "gemma"]})
-    assert status["running"] and [m["id"] for m in status["models"]] == ["parakeet", "gemma"]
+    status = api.start_downloads(app, {"models": ["speech", "gemma"]})
+    assert status["running"] and [m["id"] for m in status["models"]] == ["speech", "gemma"]
     app.probe.fetch_gate.set()
     wait_for(lambda: not api.setup_downloads(app)["running"])
-    assert app.probe.fetched == ["parakeet", "gemma"]
+    assert app.probe.fetched == ["speech", "gemma"]
     assert {m["state"] for m in api.setup_downloads(app)["models"]} == {"done"}
     with pytest.raises(api.Refused):
         api.start_downloads(app, {"models": ["not-a-model"]})
@@ -310,7 +315,7 @@ def test_the_test_never_transcribes_with_a_download_or_the_cloud(app, fake_keych
     api.setup_test(app, {"action": "start"})
     api.setup_test(app, {"action": "stop"})
     wait_for(lambda: app.probe.recorder.modes)
-    assert app.probe.recorder.modes[-1] == {"transcribe": "local", "repo": ob.MODELS["parakeet"].repo}
+    assert app.probe.recorder.modes[-1] == {"transcribe": "local"}
     providers.set_key("soniox", "key")
     api.apply_setup(app, {"changes": {"transcription": "soniox"}})
     api.setup_test(app, {"action": "start"})
@@ -323,7 +328,7 @@ def test_transcription_stays_local_when_config_toml_sends_notes_to_claude(tmp_pa
     from types import SimpleNamespace
 
     cfg = SimpleNamespace(notes_engine="claude", claude_path=None, notes_model="sonnet", retention_days=14,
-                          notes_local_model=ob.GEMMA, parakeet_repo=ob.MODELS["parakeet"].repo, hf_token=None)
+                          notes_local_model=ob.GEMMA, hf_token=None)
     a = App(tmp_path, "Timo", probe=FakeProbe(), cfg=cfg)
     cloud = {c["feature"]: c["choice"] for c in api.setup_page(a)["storage"]["cloud"]}
     assert cloud == {"notes": "claude-cli", "projects": "claude-cli", "coach": "local", "transcription": "local"}
@@ -351,14 +356,9 @@ def test_gemma_chosen_on_16_gb_is_a_download_with_its_catch(app):
     assert gemma["disk_gb"] == 8.3 and gemma["note"] == "needs 14 GB free while writing; this Mac has 16 GB"
 
 
-def test_pyannote_needs_a_token_and_the_page_says_where_without_it(app):
-    app.probe._downloaded.discard("pyannote")
-    app.probe.hf_token = False
+def test_the_page_asks_for_no_hugging_face_token(app):
     d = api.setup_page(app)["downloads"]
-    assert d["hf_token"] == {"set": False, "needed": True, "where": "[hf].token in ~/.config/palaver/config.toml, or HF_TOKEN",
-                             "terms": "https://huggingface.co/pyannote/speaker-diarization-community-1"}
-    app.probe.hf_token = True
-    assert api.setup_page(app)["downloads"]["hf_token"]["set"] is True
+    assert "hf_token" not in d  # the speech models come without an account
 
 
 def test_a_deliberate_switch_is_chosen(app):
@@ -420,3 +420,51 @@ def test_http_setup_routes(server, app):
     assert _req(server, "/api/setup/downloads")[1] == {"running": False, "models": []}
     assert _req(server, "/api/setup/finish", {"how": "skipped"})[0] == 200
     assert _req(server, "/api/setup/offer")[1] == {"offer": None}
+
+
+# --- the speech models download by themselves --------------------------------------------------
+
+def test_missing_speech_models_download_by_themselves():
+    # Every meeting waits for them and there is nothing to choose: a tester who
+    # never found the download in Settings must not be left with untranscribed calls.
+    probe = FakeProbe()
+    assert ob.fetch_missing_speech(probe) is True
+    wait_for(lambda: "speech" in probe.fetched)
+
+
+def test_speech_models_already_here_are_not_fetched_again():
+    probe = FakeProbe(downloaded=frozenset({"speech"}))
+    assert ob.fetch_missing_speech(probe) is False
+    assert probe.fetched == []
+
+
+def test_a_mac_without_apple_silicon_downloads_nothing():
+    probe = FakeProbe(hardware=ob.Hardware("Intel Core i7", 16, 200))
+    assert ob.fetch_missing_speech(probe) is False
+    assert probe.fetched == []
+
+
+def test_transcribe_again_starts_the_missing_download(tmp_path: Path, monkeypatch):
+    from palaver import process_state
+
+    monkeypatch.setattr(process_state, "missing_models", lambda cfg, p: ["Speech models"])
+    monkeypatch.setattr(api, "_status", lambda paths: "waiting")
+    (tmp_path / "2026-10-27T09-00-00").mkdir()
+    probe = FakeProbe()
+    with pytest.raises(api.Refused, match="Palaver downloads it now"):
+        api.transcribe_again(tmp_path, "2026-10-27T09-00-00", object(), probe=probe)
+    wait_for(lambda: "speech" in probe.fetched)
+
+
+def test_the_installed_apps_server_fetches_them_at_start_a_checkouts_never(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from palaver.webapp import process
+
+    monkeypatch.delenv("PALAVER_APP", raising=False)
+    probe = FakeProbe()
+    process.fetch_speech(SimpleNamespace(probe=probe))
+    assert probe.fetched == []
+    monkeypatch.setenv("PALAVER_APP", str(tmp_path / "Palaver.app"))
+    process.fetch_speech(SimpleNamespace(probe=probe))
+    wait_for(lambda: "speech" in probe.fetched)

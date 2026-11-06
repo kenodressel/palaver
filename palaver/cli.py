@@ -86,13 +86,25 @@ def _cmd_app(args: argparse.Namespace) -> int:
     from . import app_bundle
     from .daemon import forwarded_cli_options
 
+    if args.action in ("housekeeping", "update", "uninstall-start"):
+        return _cmd_app_update(args)
+    if args.action == "query":
+        from . import app_query
+
+        # Only notion-auto-sync needs a token (it may be in the Keychain only); the rest never ask it.
+        return app_query.run(args.state, args.query_args,
+                             lambda: _load_cfg(args, secrets=args.state == "notion-auto-sync"))
     if args.action == "autostart":
+        if args.state not in (None, "on", "off"):
+            raise SystemExit("palaver app autostart: expected on or off")
         enabled = args.state != "off"
         app_bundle.set_autostart(enabled)
         print("Palaver starts at login." if enabled else "Autostart removed.")
         return 0
     if args.action == "restart-web":
         return _restart_web()
+    if args.action == "ping":
+        return _ping_app()
     if args.action == "uninstall":
         removed = app_bundle.uninstall()
         print("\n".join(f"Removed {p}" for p in removed) or "Nothing installed.")
@@ -112,6 +124,43 @@ def _cmd_app(args: argparse.Namespace) -> int:
         "Terminal checks the terminal's permissions, not the app's."
     )
     return 0
+
+
+def _ping_app() -> int:
+    """`palaver app ping`: whether the running app (the one recording) answers on app.sock."""
+    from . import appctl
+
+    try:
+        answer = appctl.call("ping")
+    except appctl.CallFailed as exc:
+        print(f"Palaver does not answer on {appctl.APP_SOCKET}: {exc}")
+        return 1
+    print(f"Palaver answers on {appctl.APP_SOCKET} (pid {answer.get('pid')}).")
+    return 0
+
+
+def _cmd_app_update(args: argparse.Namespace) -> int:
+    """The native app's Python-side commands: housekeeping, update check|download|status|prepare|commit,
+    uninstall-start (JSON on stdout, see app_update)."""
+    from . import app_update
+
+    if args.action == "housekeeping":
+        command, opts = "housekeeping", {"hourly": args.hourly}
+    elif args.action == "uninstall-start":
+        command, opts = "uninstall-start", {"models": args.models, "recordings": args.recordings,
+                                            "wait_for": args.wait_for}
+    else:
+        if args.state not in ("check", "download", "status", "prepare", "commit"):
+            raise SystemExit("palaver app update: expected check, download, status, prepare or commit")
+        command = f"update-{args.state}"
+        opts = {"download": {"version": args.version}, "prepare": {"wait_for": args.wait_for}}.get(args.state, {})
+    return app_update.run(command, opts, lambda: _load_cfg(args, secrets=False))  # none needs a token
+
+
+def _cmd_calendar(args: argparse.Namespace) -> int:
+    from . import app_update
+
+    return app_update.run("calendar-attach", {"since_hours": args.since}, lambda: _load_cfg(args, secrets=False))
 
 
 # The running server finishes its changes (process.DRAIN_SECONDS), the new
@@ -240,8 +289,11 @@ def _cmd_process(args: argparse.Namespace) -> int:
     missing = process_state.missing_models(cfg, paths)
     if missing:  # recorded before the setup's downloads finished: the app transcribes it once they did
         process_state.mark(paths, process_state.MODELS, missing=missing)
-        print(f"error: {', '.join(missing)} is not downloaded yet; {folder.name} is transcribed once it is.")
+        print(f"error: waiting for {' and '.join(missing)}, not downloaded yet; {folder.name} is transcribed once it is.")
         return process_state.EXIT_MODELS
+    from .engine import ModelsMissing
+    from .onboarding import MODELS as SETUP_MODELS
+
     started = time.monotonic()
     rc, error = 1, None
     try:
@@ -249,13 +301,19 @@ def _cmd_process(args: argparse.Namespace) -> int:
             event("process_start", dictionary=str(dictionary_path) if dictionary_path else None)
             rc = _process(cfg, folder, paths, dictionary_path, notes=not getattr(args, "no_notes", False))
             event("process_done", rc=rc)
+    except ModelsMissing as exc:  # the engine does not have its models (yet): wait for the download, as above
+        rc = process_state.EXIT_MODELS
+        print(f"error: {exc}; {folder.name} is transcribed once the speech models are downloaded.")
     except Exception as exc:
-        error = str(exc).strip().splitlines()[-1] if str(exc).strip() else type(exc).__name__
+        error = _failure_reason(exc)
         raise
     finally:
         usage.record("process", seconds=time.monotonic() - started, ok=rc == 0, transcriber=getattr(cfg, "transcriber", None))
+        _note_engine_run(rc)
         if rc == 0:
             process_state.clear(paths)
+        elif rc == process_state.EXIT_MODELS:
+            process_state.mark(paths, process_state.MODELS, missing=[SETUP_MODELS["speech"].label])
         else:
             process_state.mark(paths, process_state.ERROR, error=error)
     if rc == 0:
@@ -263,6 +321,37 @@ def _cmd_process(args: argparse.Namespace) -> int:
     if rc == 0 and getattr(args, "cmd", None) == "process":
         notify.notify("Transcript ready", folder.name, folder.name)
     return rc
+
+
+def _failure_reason(exc: BaseException) -> str:
+    """The short reason failed.json shows: an engine error's summary, else the last line of the message."""
+    reason = getattr(exc, "reason", None)
+    if reason:
+        return str(reason)
+    text = str(exc).strip()
+    return text.splitlines()[-1] if text else type(exc).__name__
+
+
+def _note_engine_run(rc: int) -> None:
+    """A run that went through the engine and ended well: the proof that the new
+    models work, after which Storage offers to delete the old ones."""
+    from . import engine, install_layout
+
+    if rc != 0 or not {"transcribe", "diarize"} <= engine.SUCCEEDED:  # both: the whole of "transcribed with the engine"
+        return
+    try:
+        marker = install_layout.engine_proven_marker()
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(datetime.now().astimezone().isoformat(timespec="seconds") + "\n")
+    except OSError:
+        pass
+
+
+def _close_engine(transcriber) -> None:
+    engine = getattr(transcriber, "_engine", None)
+    close = getattr(engine, "close", None)
+    if callable(close):
+        close()
 
 
 def _refresh_coach_baseline(cfg) -> None:
@@ -285,19 +374,19 @@ def _make_transcriber(cfg: Config, dictionary_path: Path | None):
         whisper_repo=cfg.whisper_repo,
         dictionary=load_dictionary(dictionary_path),
         language=cfg.language,
-        parakeet_repo=cfg.parakeet_repo,
     )
 
 
 def _cmd_live(args: argparse.Namespace) -> int:
     from . import live
-    from .diarizer import IncrementalDiarizer, PyannoteDiarizer
+    from .diarizer import LiveEngineDiarizer
 
     cfg = _load_cfg(args)
     folder = Path(args.folder)
     paths = RecordingPaths(folder)
     dictionary_path = Path(args.dictionary).expanduser() if args.dictionary else None
-    _limit_mlx_cache()  # runs next to the call for its whole length
+    if cfg.transcriber == "mlx-whisper":  # only Whisper uses MLX here; the engine path never imports it
+        _limit_mlx_cache()  # runs next to the call for its whole length
     pid_file = live.pid_path(folder)
     pid_file.write_text(str(os.getpid()))
     try:
@@ -306,7 +395,7 @@ def _cmd_live(args: argparse.Namespace) -> int:
             processor = live.LiveProcessor(
                 paths,
                 transcriber=_make_transcriber(cfg, dictionary_path),
-                diarizer=IncrementalDiarizer(PyannoteDiarizer(repo=cfg.diarizer_repo, hf_token=cfg.hf_token)),
+                diarizer=LiveEngineDiarizer(folder),
                 user_name=cfg.user_name,
                 language=cfg.language,
             )
@@ -316,6 +405,7 @@ def _cmd_live(args: argparse.Namespace) -> int:
                 processor.abort()
                 raise
             event("live_done", finished=finished)
+            _note_engine_run(0 if finished else 1)  # live transcribed and diarized through the engine: the later `run` skips both
     finally:
         pid_file.unlink(missing_ok=True)
     return 0 if finished else 1
@@ -348,16 +438,59 @@ def _cmd_stream(args: argparse.Namespace) -> int:
         with session_log(paths.session_log):
             event("stream_start")
             system_engine, mic_engine = stream_engine.load_engines(
-                cfg.parakeet_repo, load_dictionary(dictionary_path)
+                load_dictionary(dictionary_path)
             )
             processor = stream.RealtimeProcessor(
                 paths, system_engine=system_engine, mic_engine=mic_engine
             )
-            finished = stream.run_stream(processor, paths, memory=stream_engine.mlx_memory)
-            event("stream_done", finished=finished, peak_mb=stream_engine.mlx_peak_mb())
+            meter = stream_engine.MemoryMeter()  # this process and the engine child
+            finished = stream.run_stream(processor, paths, memory=meter,
+                                       memory_limit=stream.memory_limit_for(cfg))
+            event("stream_done", finished=finished, peak_mb=meter.peak_mb())
     finally:
         paths.stream_pid.unlink(missing_ok=True)
     return 0 if finished else 1
+
+
+def _cmd_coach(args: argparse.Namespace) -> int:
+    """The live coach of a call as a worker (the app starts this): coach.json every
+    second, until the recording ends or SIGTERM."""
+    import signal
+    import threading
+
+    from . import live_coach
+    from .daemon import _coach_context
+
+    cfg = _load_cfg(args)
+    folder = Path(args.folder)
+    stop = threading.Event()
+    previous = signal.signal(signal.SIGTERM, lambda signum, frame: stop.set())
+    try:
+        coach = live_coach.LiveCoach(folder, enabled=live_coach.settings_switches(),
+                                     context=lambda: _coach_context(cfg))
+        return live_coach.run_coach(folder, coach=coach, stop=stop)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def _cmd_onboarding(args: argparse.Namespace) -> int:
+    """`onboarding analyze <wav>`: what the test recording found, as JSON on stdout (the app
+    records the test; this looks at the audio): the mic track's level and words, the system
+    track's level; --checks adds the verdict the setup page shows."""
+    import json
+
+    from . import onboarding
+
+    mic = Path(args.wav) if args.wav != "-" else Path("/nonexistent/mic.wav")  # "-": none was written
+    system = Path(args.system) if args.system else None
+    mode = json.loads(args.mode) if args.mode else {}
+    result = onboarding._analyze(mic if mic.exists() else None, system if system and system.exists() else None, mode)
+    if args.checks:
+        from dataclasses import asdict
+
+        result = {**result, "checks": [asdict(c) for c in onboarding.test_verdict(result)]}
+    print(json.dumps(result))
+    return 0
 
 
 def _cmd_next_question(args: argparse.Namespace) -> int:
@@ -462,6 +595,7 @@ def _process(
     # A live worker stopped or killed during the call leaves its own,
     # unfinished mic.wav; the one above is final.
     Path(str(paths.mic_wav) + ".part").unlink(missing_ok=True)
+    (folder / ".live-diarize.wav").unlink(missing_ok=True)  # the live diarizer's scratch, if its worker was killed
 
     from .cleanup import (
         MIC_MIN_PEAK_DBFS,
@@ -470,13 +604,13 @@ def _process(
         drop_echo,
         drop_silent_segments,
     )
-    from .diarizer import PyannoteDiarizer
+    from .diarizer import EngineDiarizer
     from .merger import merge
     from .models import Segment, SpeakerTurn
     from .render import render_markdown
 
     transcriber = _make_transcriber(cfg, dictionary_path)
-    diarizer = PyannoteDiarizer(repo=cfg.diarizer_repo, hf_token=cfg.hf_token)
+    diarizer = EngineDiarizer()
 
     # System track first: with language="auto" its detected language is
     # reused for the mic. Whisper detects from the first 30 s, which on the
@@ -524,8 +658,10 @@ def _process(
     else:
         print("Skipping mic transcription (already done)")
 
+    _close_engine(transcriber)  # both tracks are done: one engine at a time lowers the peak
+
     # Embeddings feed voice recognition; recordings diarized before they were
-    # kept are diarized again (pyannote is deterministic: same turns).
+    # kept are diarized again (the engine's diarization is deterministic: same turns).
     if system_empty:
         paths.speaker_embeddings.write_text("{}")
         paths.system_turns.write_text("[]")
@@ -920,8 +1056,6 @@ def _cmd_bench_live(args: argparse.Namespace) -> int:
     """Replay recorded meetings through the live stream; numbers only (#42)."""
     from . import stream_bench
     from .daemon import forwarded_cli_options
-    from .dictionary import load_dictionary
-    from .transcriber import ParakeetMlxTranscriber
 
     cfg = _load_cfg(args)
     dictionary_path = Path(args.dictionary).expanduser() if args.dictionary else None
@@ -939,7 +1073,7 @@ def _cmd_bench_live(args: argparse.Namespace) -> int:
             speed=args.speed,
             user_name=cfg.user_name,
             cli_options=forwarded_cli_options(args),
-            transcriber=ParakeetMlxTranscriber(cfg.parakeet_repo, load_dictionary(dictionary_path)),
+            transcriber=_make_transcriber(cfg, dictionary_path),
         )
     finally:
         signal.signal(signal.SIGTERM, previous)
@@ -1283,9 +1417,9 @@ def _fold_audio_problems(paths: RecordingPaths) -> None:
     paths.audio_problems.unlink(missing_ok=True)
 
 
-def _load_cfg(args: argparse.Namespace) -> Config:
+def _load_cfg(args: argparse.Namespace, *, secrets: bool = True) -> Config:
     path = Path(args.config) if args.config else default_config_path()
-    return load_config(path)
+    return load_config(path, secrets=secrets)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1338,6 +1472,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_stream.add_argument("folder")
     p_stream.set_defaults(func=_cmd_stream)
+
+    p_coach = sub.add_parser(
+        "coach", help="The live coach of a call: coach.json every second (the app starts this)"
+    )
+    p_coach.add_argument("folder")
+    p_coach.set_defaults(func=_cmd_coach)
+
+    p_onboarding = sub.add_parser("onboarding", help="The setup assistant's checks (run by the app)")
+    p_onboarding.add_argument("action", choices=["analyze"], help="analyze: the levels (and words) of a test recording")
+    p_onboarding.add_argument("wav", help="the microphone track (- when none was recorded)")
+    p_onboarding.add_argument("--system", help="the system audio track")
+    p_onboarding.add_argument("--mode", help='JSON: {"transcribe": "local"|"cloud", "service": …}')
+    p_onboarding.add_argument("--checks", action="store_true", help="also give the verdict (checks) the page shows")
+    p_onboarding.set_defaults(func=_cmd_onboarding)
 
     p_notes = sub.add_parser(
         "notes", help="Write the meeting notes (summary, next steps, decisions) with Claude"
@@ -1429,22 +1577,36 @@ def build_parser() -> argparse.ArgumentParser:
     p_doctor.set_defaults(func=_cmd_doctor)
 
     p_app = sub.add_parser(
-        "app", help="Install Palaver.app (menu bar app) in ~/Applications; restart-web: restart only the window's server"
+        "app", help="Install Palaver.app (menu bar app) in ~/Applications; restart-web: restart only the window's server;"
+                    " ping: whether the running app answers"
     )
     p_app.add_argument(
         "action",
         nargs="?",
-        choices=["install", "uninstall", "autostart", "restart-web"],
+        choices=["install", "uninstall", "autostart", "restart-web", "ping", "query", "housekeeping", "update",
+                 "uninstall-start"],
         default="install",
     )
-    p_app.add_argument("state", nargs="?", choices=["on", "off"], help="for autostart")
+    p_app.add_argument("state", nargs="?", help="on|off for autostart; the question for query")
+    p_app.add_argument("query_args", nargs="*", help="for query: the question's argument (a folder, a time)")
+    p_app.add_argument("--json", action="store_true", help="for query: print JSON (always)")
     p_app.add_argument("--login", action="store_true", help="Start the app at login")
+    p_app.add_argument("--hourly", action="store_true", help="for housekeeping: the hourly part (audio older than Settings say)")
+    p_app.add_argument("--version", help="for update download: the release the check found")
+    p_app.add_argument("--wait-for", type=int, nargs="*", default=[], help="for update prepare, uninstall-start: pids that must quit first")
+    p_app.add_argument("--models", action="store_true", help="for uninstall-start: the models go too")
+    p_app.add_argument("--recordings", action="store_true", help="for uninstall-start: the recordings and Palaver's data go too")
     p_app.add_argument(
         "--store-tokens",
         action="store_true",
         help="Copy NOTION_TOKEN/HF_TOKEN from this shell into the login Keychain",
     )
     p_app.set_defaults(func=_cmd_app)
+
+    p_cal = sub.add_parser("calendar", help="Calendar events for recordings (run by the app)")
+    p_cal.add_argument("action", choices=["attach"], help="attach: give earlier recordings their events")
+    p_cal.add_argument("--since", type=float, help="only recordings started in the last HOURS hours")
+    p_cal.set_defaults(func=_cmd_calendar)
 
     p_menubar = sub.add_parser(
         "menubar", help="Menu bar app: auto-records Teams calls, shows status"
@@ -1540,13 +1702,13 @@ def main(argv: list[str] | None = None) -> int:
     usage.record("cli", args.cmd, by="user" if typed else "app", action=getattr(args, "action", None))
     migrate.move_old_folders()
     notify.set_enabled(not args.no_notify)
-    quiet_cmd = args.cmd in ("live", "stream", "list", "prune", "rename", "voices", "daemon", "menubar", "doctor", "app",
+    quiet_cmd = args.cmd in ("live", "stream", "coach", "onboarding", "list", "prune", "rename", "voices", "daemon", "menubar", "doctor", "app",
                          "webapp-serve", "export", "import")
     try:
         rc = args.func(args)
     except Exception as exc:
         if not quiet_cmd:
-            notify.notify(f"palaver {args.cmd} failed", str(exc) or type(exc).__name__)
+            notify.notify(f"palaver {args.cmd} failed", _failure_reason(exc))
         raise
     if rc != 0 and not quiet_cmd:
         notify.notify(f"palaver {args.cmd} failed", f"exit code {rc}; see terminal")

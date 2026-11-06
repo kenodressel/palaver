@@ -164,7 +164,6 @@ def test_synthesize_meta_from_audio_returns_false_on_unparseable_folder(tmp_path
 class _FakeCfg:
     user_name = "Timo"
     whisper_repo = "r"
-    diarizer_repo = "d"
     hf_token = "t"
     language = "auto"
     notion_token = "ntn_test"
@@ -172,7 +171,6 @@ class _FakeCfg:
     notion_mode = "page"
     notion_database_id = None
     transcriber = "mlx-whisper"
-    parakeet_repo = "p"
     notes_enabled = True
     notes_engine = "local"
     notes_local_model = "m"
@@ -196,7 +194,7 @@ def _recording_folder(tmp_path: Path, seconds: float = 1.0) -> RecordingPaths:
     return paths
 
 
-def _fake_models(monkeypatch, *, segments_for=None, turns=None, embeddings=None) -> dict:
+def _fake_models(monkeypatch, *, segments_for=None, turns=None, embeddings=None, fake_diarizer=True) -> dict:
     """Patch Whisper/pyannote with fakes; returns a dict recording their use."""
     from palaver import cli
     from palaver.models import Segment
@@ -224,7 +222,8 @@ def _fake_models(monkeypatch, *, segments_for=None, turns=None, embeddings=None)
             return list(turns or [])
 
     monkeypatch.setattr("palaver.transcriber.MlxWhisperTranscriber", _FakeTranscriber)
-    monkeypatch.setattr("palaver.diarizer.PyannoteDiarizer", _FakeDiarizer)
+    if fake_diarizer:
+        monkeypatch.setattr("palaver.diarizer.EngineDiarizer", _FakeDiarizer)
     monkeypatch.setattr(cli, "_load_cfg", lambda _args: _FakeCfg())
     return seen
 
@@ -278,7 +277,27 @@ def test_process_waits_for_models_not_downloaded_yet(tmp_path: Path, monkeypatch
     assert seen["calls"] == [] and not paths.transcript_json.exists()
     assert process_state.read(paths)["reason"] == process_state.MODELS
     assert process_state.read(paths)["missing"] == ["Parakeet"]
-    assert "Parakeet is not downloaded yet" in capsys.readouterr().out
+    assert "waiting for Parakeet, not downloaded yet" in capsys.readouterr().out
+
+
+def test_run_without_models_marks_models_reason(tmp_path: Path, monkeypatch, capsys):
+    """The engine says `models missing` although the pre-check let the run
+    start (a half-downloaded folder): the meeting waits for the download (reason
+    MODELS, exit EXIT_MODELS) and is retried, instead of failing for good."""
+    from palaver import cli, process_state
+
+    paths = _recording_folder(tmp_path)
+    _fake_models(monkeypatch, fake_diarizer=False)  # the real EngineDiarizer, talking to the fake engine
+    monkeypatch.setenv("PALAVER_ENGINE", str(Path(__file__).parent / "fake_engine.py"))
+    monkeypatch.setenv("FAKE_ENGINE_MODE", "models_missing")
+    monkeypatch.setattr(process_state, "missing_models", lambda cfg, p: [])
+    ns = _ns(tmp_path)
+    ns.cmd = "run"
+    assert cli._cmd_run(ns) == process_state.EXIT_MODELS
+    state = process_state.read(paths)
+    assert state["reason"] == process_state.MODELS and state["missing"] == ["Speech models"]
+    assert "speech models are downloaded" in capsys.readouterr().out
+    assert not paths.transcript_json.exists()
 
 
 def test_a_failed_process_is_marked_with_why_and_a_good_run_clears_it(tmp_path: Path, monkeypatch):
@@ -304,20 +323,20 @@ def test_missing_models_are_only_those_a_run_still_needs(tmp_path: Path, monkeyp
     from palaver.paths import RecordingPaths
 
     here = set()
-    monkeypatch.setattr(process_state, "_here", lambda cfg, m: m.id in here)
+    monkeypatch.setattr(process_state, "_here", lambda cfg, m: m.id in here)  # "speech": both models, one download
     paths = RecordingPaths(tmp_path)
 
     class Cfg:
         transcriber = "parakeet-mlx"
 
-    assert process_state.missing_models(Cfg(), paths) == ["Parakeet", "pyannote"]
-    here.add("parakeet")
-    assert process_state.missing_models(Cfg(), paths) == ["pyannote"]
-    for f in (paths.system_turns, paths.speaker_embeddings):
-        f.write_text("[]")
+    assert process_state.missing_models(Cfg(), paths) == ["Speech models"]
+    here.add("speech")
     assert process_state.missing_models(Cfg(), paths) == []
     here.clear()
-    for f in (paths.mic_segments, paths.system_segments):  # transcribed already: Parakeet is not needed
+    for f in (paths.mic_segments, paths.system_segments):  # transcribed, not yet diarized: the speakers need them
+        f.write_text("[]")
+    assert process_state.missing_models(Cfg(), paths) == ["Speech models"]
+    for f in (paths.system_turns, paths.speaker_embeddings):  # transcribed and diarized: nothing left to do
         f.write_text("[]")
     assert process_state.missing_models(Cfg(), paths) == []
     Cfg.transcriber = "mlx-whisper"  # Whisper is not one the setup downloads
@@ -367,11 +386,13 @@ def test_cli_has_stream_command(capsys):
 
 def test_bench_live_runs_the_replay_bench(tmp_path: Path, monkeypatch, capsys):
     from palaver import cli, stream_bench
-    from palaver.transcriber import ParakeetMlxTranscriber
+    from palaver.transcriber import EngineTranscriber
 
     class Cfg:
         user_name = "Me"
-        parakeet_repo = "repo/parakeet"
+        transcriber = "parakeet"
+        whisper_repo = "w"
+        language = "auto"
 
     got = {}
     monkeypatch.setattr(cli, "_load_cfg", lambda _args: Cfg())
@@ -390,27 +411,28 @@ def test_bench_live_runs_the_replay_bench(tmp_path: Path, monkeypatch, capsys):
     assert got["folders"] == [Path("/m/a"), Path("/m/b")]
     assert got["out"] == tmp_path
     assert got["speed"] == 2.0 and got["user_name"] == "Me" and got["cli_options"] == ["--no-notify"]
-    assert isinstance(got["transcriber"], ParakeetMlxTranscriber)
+    assert isinstance(got["transcriber"], EngineTranscriber)
     assert str(tmp_path / "report.md") in capsys.readouterr().out
     assert got["sigterm"] == "exits"
     assert signal.getsignal(signal.SIGTERM) == before
 
 
 class _StreamCfg:
-    parakeet_repo = "repo/parakeet"
+    pass
 
 
 def _fake_stream(monkeypatch, got: dict) -> None:
-    from palaver import cli, stream, stream_engine
+    from palaver import cli, memory, stream, stream_engine
 
     monkeypatch.setattr(cli, "_load_cfg", lambda _args: _StreamCfg())
-    monkeypatch.setattr(stream_engine, "load_engines", lambda repo, dictionary: got.setdefault("loaded", repo)
+    monkeypatch.setattr(stream_engine, "load_engines", lambda dictionary, engine=None: got.setdefault("loaded", True)
                         and (object(), object()))
-    monkeypatch.setattr(stream_engine, "mlx_peak_mb", lambda: 1234)
+    monkeypatch.setattr(memory, "tree_footprint", lambda pid: 1234 * 1024**2)
     monkeypatch.setattr(stream, "RealtimeProcessor", lambda paths, **kw: "processor")
 
     def run_stream(processor, paths, **kw):
         got["memory"] = kw.get("memory")
+        got["used"] = kw["memory"]()  # what the run reads: this process and the engine
         got["pid_during_run"] = paths.stream_pid.read_text()
         return True
 
@@ -429,8 +451,9 @@ def test_stream_runs_with_the_memory_cap(tmp_path: Path, monkeypatch):
     got: dict = {}
     _fake_stream(monkeypatch, got)
     assert cli._cmd_stream(_ns(tmp_path)) == 0
-    assert got["loaded"] == "repo/parakeet"
-    assert got["memory"] is stream_engine.mlx_memory
+    assert got["loaded"] is True
+    assert isinstance(got["memory"], stream_engine.MemoryMeter)
+    assert got["used"] == 1234 * 1024**2
     assert got["pid_during_run"] == str(os.getpid())
     paths = RecordingPaths(tmp_path)
     assert not paths.stream_pid.exists()
@@ -630,3 +653,147 @@ def test_notes_are_written_knowing_the_title_the_user_gave_the_meeting(tmp_path:
     start = datetime(2026, 10, 27, 12, 4).astimezone()
     assert cli._write_notes_now(SimpleNamespace(user_name="Timo"), paths, [Utterance("Timo", 0, 1, "Hallo.")], start)
     assert 'The user calls the meeting "Budget with Anna".' in seen["prompt"]
+
+
+def test_process_marks_failed_when_engine_dies(tmp_path: Path, monkeypatch):
+    """The engine exits while diarizing: `process` fails with reason ERROR, a
+    non-zero exit and no half-written transcript."""
+    import pytest
+
+    from palaver import cli, process_state
+    from palaver.engine import EngineError
+
+    paths = _recording_folder(tmp_path, seconds=1.0)
+    _fake_models(monkeypatch, fake_diarizer=False)
+    monkeypatch.setenv("PALAVER_ENGINE", str(Path(__file__).parent / "fake_engine.py"))
+    monkeypatch.setenv("FAKE_ENGINE_MODE", "diarize_crash")
+
+    with pytest.raises(EngineError):
+        cli._cmd_process(_ns(tmp_path))
+
+    state = process_state.read(paths)
+    assert state["reason"] == process_state.ERROR
+    assert state["error"] == "the speech engine stopped (exit 3)"  # a summary, not the child's last stderr line
+    assert not paths.transcript_json.exists()
+    assert not paths.system_turns.exists()
+
+
+def test_process_marks_failed_when_engine_hangs(tmp_path: Path, monkeypatch):
+    import pytest
+
+    from palaver import cli, engine, process_state
+    from palaver.engine import EngineError
+
+    paths = _recording_folder(tmp_path, seconds=1.0)
+    _fake_models(monkeypatch, fake_diarizer=False)
+    monkeypatch.setenv("PALAVER_ENGINE", str(Path(__file__).parent / "fake_engine.py"))
+    monkeypatch.setenv("FAKE_ENGINE_MODE", "silent")
+    monkeypatch.setattr(engine, "ENGINE_IDLE_TIMEOUT", 0.5)
+
+    with pytest.raises(EngineError):
+        cli._cmd_process(_ns(tmp_path))
+
+    assert process_state.read(paths)["error"] == "the speech engine stopped answering (0.5 s without a line)"
+
+
+def test_process_removes_the_live_diarizers_scratch_a_killed_worker_left(tmp_path: Path, monkeypatch):
+    from palaver import cli
+
+    paths = _recording_folder(tmp_path)
+    scratch = tmp_path / ".live-diarize.wav"
+    scratch.write_bytes(b"\0" * 1000)
+    _fake_models(monkeypatch)
+
+    assert cli._cmd_process(_ns(tmp_path)) == 0
+    assert not scratch.exists()
+
+
+def test_process_closes_the_transcribers_engine_before_diarizing(tmp_path: Path, monkeypatch):
+    from palaver import cli
+
+    _recording_folder(tmp_path)
+    seen = _fake_models(monkeypatch)
+    order = []
+
+    class _Engine:
+        def close(self):
+            order.append("closed")
+
+    class _T:
+        last_language = None
+        _engine = _Engine()
+
+        def transcribe(self, wav, language=None):
+            order.append("transcribe")
+            return []
+
+    class _D:
+        last_embeddings = {}
+
+        def diarize(self, wav):
+            order.append("diarize")
+            return []
+
+    monkeypatch.setattr(cli, "_make_transcriber", lambda cfg, d: _T())
+    monkeypatch.setattr("palaver.diarizer.EngineDiarizer", _D)
+    assert cli._cmd_process(_ns(tmp_path)) == 0
+    assert order == ["transcribe", "transcribe", "closed", "diarize"]
+
+
+@pytest.mark.parametrize("name,limits", [("parakeet", 0), ("mlx-whisper", 1)])
+def test_live_limits_the_mlx_cache_only_for_whisper(tmp_path: Path, monkeypatch, name, limits):
+    """The engine path never imports mlx.core."""
+    from palaver import cli, live
+
+    class Cfg:
+        transcriber = name
+        user_name = "Timo"
+        language = "auto"
+
+    calls = []
+    monkeypatch.setattr(cli, "_load_cfg", lambda _args: Cfg())
+    monkeypatch.setattr(cli, "_limit_mlx_cache", lambda: calls.append(1))
+    monkeypatch.setattr(cli, "_make_transcriber", lambda cfg, path: object())
+    monkeypatch.setattr(live, "LiveProcessor", lambda paths, **kw: object())
+    monkeypatch.setattr(live, "run_live", lambda processor, paths: True)
+    assert cli._cmd_live(_ns(tmp_path)) == 0
+    assert len(calls) == limits
+
+
+@pytest.mark.parametrize("finished,marked", [(True, True), (False, False)])
+def test_live_with_the_engine_sets_the_proof_marker_only_when_it_finished(tmp_path: Path, monkeypatch, finished, marked):
+    """With live processing, transcribing and diarizing happen in `palaver live`;
+    the later `run` skips both, so the live process notes the engine's success."""
+    from palaver import cli, engine, install_layout, live
+
+    class Cfg:
+        transcriber = "parakeet"
+        user_name = "Timo"
+        language = "auto"
+
+    monkeypatch.setattr(cli, "_load_cfg", lambda _args: Cfg())
+    monkeypatch.setattr(cli, "_make_transcriber", lambda cfg, path: object())
+    monkeypatch.setattr(live, "LiveProcessor", lambda paths, **kw: type("P", (), {"abort": lambda self: None})())
+
+    def run_live(processor, paths):
+        engine.SUCCEEDED.update({"transcribe", "diarize"})
+        return finished
+
+    monkeypatch.setattr(live, "run_live", run_live)
+    assert cli._cmd_live(_ns(tmp_path)) == (0 if finished else 1)
+    assert install_layout.engine_proven_marker().exists() is marked
+
+
+def test_a_failed_command_notifies_with_the_short_reason_not_the_whole_message(monkeypatch):
+    """R22: the notification shows an engine error's one-line reason."""
+    from palaver import cli, notify
+    from palaver.engine import EngineError
+
+    sent = []
+    monkeypatch.setattr(notify, "notify", lambda title, body="", *a: sent.append((title, body)))
+    monkeypatch.setattr(cli, "migrate", type("M", (), {"move_old_folders": staticmethod(lambda: None)}))
+    err = EngineError("the speech engine died (exit 3)\n" + "stderr line\n" * 20, reason="the speech engine died")
+    monkeypatch.setattr(cli, "_cmd_process", lambda args: (_ for _ in ()).throw(err))
+    with pytest.raises(EngineError):
+        cli.main(["--config", "/nonexistent/c.toml", "process", "/nowhere"])
+    assert sent == [("palaver process failed", "the speech engine died")]

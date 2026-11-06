@@ -48,8 +48,8 @@ def _watched(tmp_path, activity=lambda now: 10 <= now < 700, budgets=Budgets(), 
             return w
         return start
 
-    d._launch_live = starter("live", 3.0)
-    d._launch_stream = starter("stream", 1.5)
+    d._launch_live = starter("live", 1.2)
+    d._launch_stream = starter("stream", 1.0)
     d._realtime = lambda: True
     d._live_running = lambda folder: any(w.rc is None for w in workers["live"] if w.folder == folder)
     return d, sessions, launched, workers, used, starter
@@ -59,7 +59,7 @@ def test_a_live_worker_over_budget_is_restarted_and_the_recording_goes_on(tmp_pa
     d, sessions, _, workers, used, _ = _watched(tmp_path)
     d.run(until=lambda: d.now() > 30)
     [first] = workers["live"]
-    used[first.pid] = 7.0  # over its 6 GB
+    used[first.pid] = 3.0  # over its 2 GB
     d.run(until=lambda: d.now() > 30 + OVER_SECONDS + 10)
     assert first.terminated
     assert len(workers["live"]) == 2 and workers["live"][1].folder == sessions[0].folder
@@ -80,10 +80,10 @@ def test_a_stream_over_budget_is_restarted(tmp_path, sent_notifications):
 
 def test_a_worker_that_ignores_sigterm_is_killed_then_restarted(tmp_path):
     d, _, _, workers, used, starter = _watched(tmp_path)
-    d._launch_live = starter("live", 3.0, stubborn=True)
+    d._launch_live = starter("live", 1.2, stubborn=True)
     d.run(until=lambda: d.now() > 30)
     first = workers["live"][0]
-    used[first.pid] = 7.0
+    used[first.pid] = 3.0
     d.run(until=lambda: d.now() > 30 + OVER_SECONDS + 4)
     assert first.terminated and not first.killed and len(workers["live"]) == 1  # given time to exit
     d.run(until=lambda: d.now() > 30 + OVER_SECONDS + 30)
@@ -94,9 +94,9 @@ def test_a_worker_is_not_restarted_once_the_recording_stopped(tmp_path, sent_not
     """After the stop, `process` does what a live worker did not; nobody is
     told of a restart that did not happen."""
     d, sessions, _, workers, used, starter = _watched(tmp_path, activity=lambda now: 10 <= now < 40)
-    d._launch_live = starter("live", 3.0, stubborn=True)
+    d._launch_live = starter("live", 1.2, stubborn=True)
     d.run(until=lambda: d.now() > 30)
-    used[workers["live"][0].pid] = 7.0
+    used[workers["live"][0].pid] = 3.0
     d.run(until=lambda: d.now() > 120)
     assert sessions[0].stopped and workers["live"][0].killed
     assert len(workers["live"]) == 1
@@ -109,7 +109,7 @@ def test_workers_are_signalled_as_a_process_group(tmp_path):
     d, _, _, workers, used, _ = _watched(tmp_path, signal_worker=lambda p, sig: sent.append((p.pid, sig)))
     d.run(until=lambda: d.now() > 30)
     first = workers["live"][0]
-    used[first.pid] = 7.0
+    used[first.pid] = 3.0
     d.run(until=lambda: d.now() > 30 + OVER_SECONDS + 4)
     import signal
 
@@ -209,9 +209,9 @@ def test_status_shows_what_palaver_costs(tmp_path):
     d.run(until=lambda: d.now() > 30)
     status = d.status()
     mem = status["memory"]
-    assert mem["total"] == int(0.25 * GB) + int(3.0 * GB) + int(1.5 * GB)
+    assert mem["total"] == int(0.25 * GB) + int(1.2 * GB) + int(1.0 * GB)
     assert {w["kind"]: w["state"] for w in mem["workers"]} == {"live": "running", "stream": "running"}
-    assert status["why_text"].endswith(" · Palaver 4.8 GB")
+    assert status["why_text"].endswith(" · Palaver 2.4 GB")
 
 
 def test_without_a_watchdog_nothing_is_measured(tmp_path):

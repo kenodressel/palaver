@@ -31,8 +31,10 @@ def _app(root: Path, version: str) -> Path:
     (app / "Contents" / "MacOS").mkdir(parents=True)
     (app / "Contents" / "Resources" / "bin").mkdir(parents=True)
     (app / "Contents" / "Resources" / "runtime.json").write_text(json.dumps({"version": version, "runtime": RID}))
-    for name in ("Contents/MacOS/palaver-launcher", "Contents/MacOS/Palaver", "Contents/Resources/bin/palaver"):
-        # The launcher sleeps until SIGTERM, as the app does until it quit.
+    for name in ("Contents/MacOS/palaver-launcher", "Contents/MacOS/Palaver", "Contents/MacOS/palaver-python",
+                 "Contents/Resources/bin/palaver"):
+        # Up to 0.4 the launcher and the Python host "Palaver"; since 0.5 the Swift app "Palaver" and the
+        # host palaver-python. Each sleeps until SIGTERM, as the app does until it quit.
         (app / name).write_text('#!/bin/sh\ntrap "exit 0" TERM\nwhile :; do sleep 0.1; done\n')
         (app / name).chmod(0o755)
     return app
@@ -158,6 +160,39 @@ def test_an_update_waits_for_processing_quits_only_the_menu_bar_app_and_opens_it
         assert opened.read_text().split() == [str(app)]  # it ran before: it runs again
     finally:
         for p in (launcher, work):
+            if p.poll() is None:
+                p.send_signal(signal.SIGKILL)
+                p.wait()
+
+
+def test_an_update_waits_for_the_swift_apps_workers_and_quits_only_the_app(home, tmp_path):
+    """Since 0.5 the app is the Swift binary Contents/MacOS/Palaver (run without arguments); its
+    workers run as palaver-python. A worker processing a meeting is waited for and never killed."""
+    assert run_install(home, build_assets(tmp_path / "d1", "0.1.0")).returncode == 0
+    app = home / "Applications" / "Palaver.app"
+    swift_app = subprocess.Popen([str(app / "Contents" / "MacOS" / "Palaver")])
+    work = subprocess.Popen([str(app / "Contents" / "MacOS" / "palaver-python"), "-m", "palaver", "process", "/m/a"])
+    web = subprocess.Popen([str(app / "Contents" / "MacOS" / "palaver-python"), "-m", "palaver", "webapp-serve"])
+    state = home / "Library" / "Application Support" / "palaver" / "daemon.json"
+    state.write_text(json.dumps({"state": "idle", "pid": swift_app.pid}))
+    opened = tmp_path / "opened.txt"
+    try:
+        proc = run_install(home, build_assets(tmp_path / "d2", "0.2.0"), opened=opened, background=True)
+        time.sleep(2.0)
+        assert proc.poll() is None and installed_version(home) == "0.1.0"  # the worker processes a meeting
+        assert work.poll() is None and swift_app.poll() is None
+        work.terminate()
+        work.wait(5)
+        web.terminate()  # the window's server stops with the app
+        web.wait(5)
+        out, _ = proc.communicate(timeout=30)
+        assert proc.returncode == 0, out
+        assert "processing a meeting" in out
+        assert swift_app.wait(5) == 0  # quit with SIGTERM
+        assert installed_version(home) == "0.2.0"
+        assert opened.read_text().split() == [str(app)]  # it ran before: it runs again
+    finally:
+        for p in (swift_app, work, web):
             if p.poll() is None:
                 p.send_signal(signal.SIGKILL)
                 p.wait()

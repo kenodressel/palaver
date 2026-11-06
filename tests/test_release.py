@@ -20,9 +20,9 @@ def manifest(version="0.2.0", runtime_id="3.13.2-arm64-aaaaaaaaaaaa", models=Non
         "app": asset(f"palaver-app-{version}.zip", 5_000_000),
         "runtime": {"id": runtime_id, **asset(f"palaver-runtime-{runtime_id}.tar.gz", 900_000_000)},
         "models": models if models is not None else [
-            {"name": "pyannote-community-1", "version": "3533c8c",
-             "repo": "pyannote/speaker-diarization-community-1", "license": "CC-BY-4.0",
-             "asset": asset("palaver-models-pyannote-community-1-3533c8c.tar", 33_000_000)},
+            {"name": "northwind-voices", "version": "3533c8c",
+             "repo": "northwind/voices-small", "license": "CC-BY-4.0",
+             "asset": asset("palaver-models-northwind-voices-3533c8c.tar", 33_000_000)},
         ],
     }
     data.update(extra)
@@ -36,7 +36,7 @@ def test_a_manifest_is_read_with_every_layer():
     assert m.runtime_id == "3.13.2-arm64-aaaaaaaaaaaa"
     assert m.runtime.url.endswith(".tar.gz")
     assert [(x.name, x.version, x.repo) for x in m.models] == [
-        ("pyannote-community-1", "3533c8c", "pyannote/speaker-diarization-community-1")]
+        ("northwind-voices", "3533c8c", "northwind/voices-small")]
     assert m.minimum_macos == "15.0" and m.notes is None
 
 
@@ -97,7 +97,7 @@ def test_versions_compare_as_numbers(a, b, newer):
 
 def installed(version="0.1.0", runtime="3.13.2-arm64-aaaaaaaaaaaa", models=None):
     return release.Installed(version=version, runtime_id=runtime,
-                             models=models if models is not None else {"pyannote-community-1": "3533c8c"})
+                             models=models if models is not None else {"northwind-voices": "3533c8c"})
 
 
 def test_an_update_with_the_same_runtime_downloads_only_the_app():
@@ -116,12 +116,12 @@ def test_a_changed_lock_downloads_the_runtime_too():
 
 def test_a_changed_model_is_downloaded_again_but_one_never_installed_is_left_to_the_setup():
     models = [
-        {"name": "pyannote-community-1", "version": "4444444", "repo": "pyannote/speaker-diarization-community-1",
-         "asset": asset("palaver-models-pyannote-community-1-4444444.tar", 34_000_000)},
+        {"name": "northwind-voices", "version": "4444444", "repo": "northwind/voices-small",
+         "asset": asset("palaver-models-northwind-voices-4444444.tar", 34_000_000)},
         {"name": "other", "version": "1", "repo": "x/other", "asset": asset("palaver-models-other-1.tar", 1)},
     ]
     plan = release.plan_update(installed(), release.parse_manifest(manifest(models=models)))
-    assert [m.name for m in plan.models] == ["pyannote-community-1"]
+    assert [m.name for m in plan.models] == ["northwind-voices"]
 
 
 def test_no_update_when_the_release_is_not_newer():
@@ -149,3 +149,25 @@ def test_a_runtime_already_on_this_mac_is_not_downloaded_again():
                              runtimes=frozenset({"3.13.2-arm64-bbbbbbbbbbbb"}))
     plan = release.plan_update(here, release.parse_manifest(manifest(runtime_id="3.13.2-arm64-bbbbbbbbbbbb")))
     assert plan.runtime is None and plan.runtime_id == "3.13.2-arm64-bbbbbbbbbbbb"
+
+
+def test_a_runtime_archive_with_apple_double_files_is_refused(tmp_path):
+    import io
+    import tarfile
+
+    import pytest
+
+    from tools.build_release import check_no_apple_double
+
+    def archive(names):
+        path = tmp_path / f"r{len(names)}.tar.gz"
+        with tarfile.open(path, "w:gz") as tar:
+            for name in names:
+                info = tarfile.TarInfo(name)
+                info.size = 1
+                tar.addfile(info, io.BytesIO(b"x"))
+        return path
+
+    check_no_apple_double(archive(["rid/bin/python3"]))
+    with pytest.raises(SystemExit, match="AppleDouble"):
+        check_no_apple_double(archive(["._rid", "rid/bin/python3"]))

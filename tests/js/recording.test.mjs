@@ -120,6 +120,10 @@ test("heartbeat: a failed request shows the line at once", async () => {
 
 import { recordingNow, recordingCommand, paletteMatch } from "../../palaver/webapp/static/logic.js";
 
+test("a stopped recording that is still finishing is no longer the one being recorded", () => {
+  assert.equal(recordingNow([{ id: "a", status: "recording", finishing: true }]), null);
+});
+
 test("recordingNow is the meeting being recorded, if any", () => {
   const live = { id: ID, status: "recording" };
   assert.equal(recordingNow([{ id: "a", status: "ready" }, live]), live);

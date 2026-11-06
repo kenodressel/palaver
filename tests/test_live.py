@@ -1,15 +1,15 @@
 """Tests for processing a recording while it is being made (no models)."""
 
 import json
+import shutil
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import soundfile as sf
 
 from palaver.capture_recorder import _wav_header
-from palaver.diarizer import IncrementalDiarizer
+from palaver.diarizer import LiveEngineDiarizer
 from palaver.live import GrowingTrack, LiveProcessor, quietest_cut, run_live
 from palaver.models import Segment, SpeakerTurn, Word
 from palaver.paths import RecordingPaths
@@ -157,124 +157,26 @@ def test_live_gives_up_when_the_recorder_dies(tmp_path: Path):
     assert not paths.mic_wav.exists() and not Path(str(paths.mic_wav) + ".part").exists()
 
 
-class _FakePipeline:
-    """pyannote's chunking (Inference.slide): full windows every step, plus a
-    zero-padded last one when the audio does not end on the grid. Each
-    window's "segmentation" is its sum, so any misalignment shows."""
+def test_live_stops_quietly_when_the_recording_is_dropped(tmp_path: Path):
+    # A recording stopped after a few seconds is dropped as too short: its
+    # folder goes away while the worker is still in a step.
+    folder = tmp_path / "2026-11-04T09-24-38"
+    folder.mkdir()
+    paths = RecordingPaths(folder)
 
-    W, S = 10 * 100, 1 * 100  # 10 s windows, 1 s steps at 100 Hz
+    class _GoneMidStep:
+        def step(self):
+            shutil.rmtree(folder)
+            raise FileNotFoundError(folder / ".live-diarize.wav")
 
-    def __init__(self):
-        self._segmentation = SimpleNamespace(
-            duration=10.0, step=1.0, model=SimpleNamespace(specifications=SimpleNamespace(powerset=True))
-        )
-        self.embedding_exclude_overlap = True
-
-    def get_segmentations(self, file, hook=None):
-        x = file["waveform"][0].numpy()
-        if not len(x):  # as pyannote's validate_file
-            raise ValueError("'waveform' must be provided as a (channel, time) torch Tensor.")
-        chunks = [x[i : i + self.W] for i in range(0, len(x) - self.W + 1, self.S)] if len(x) >= self.W else []
-        if len(x) < self.W or (len(x) - self.W) % self.S:
-            last = x[len(chunks) * self.S :]
-            chunks.append(np.pad(last, (0, self.W - len(last))))
-        data = np.array([[[c.sum()]] for c in chunks])
-        return SimpleNamespace(data=data, sliding_window=SimpleNamespace(duration=10.0, step=1.0))
-
-    def get_embeddings(self, file, binarized, exclude_overlap=False, hook=None):
-        return binarized.data[:, :, :1] * 2
-
-    def __call__(self, file):
-        seg = self.get_segmentations(file)
-        return seg.data, self.get_embeddings(file, seg)
+    assert not run_live(_GoneMidStep(), paths, sleep=lambda s: None)
 
 
-def _incremental_diarizer(sample_rate: int = 100) -> IncrementalDiarizer:
-    diarizer = SimpleNamespace(_pipeline=_FakePipeline(), _ensure_pipeline=lambda: None, _turns=lambda out: out,
-                               last_embeddings={})
-    return IncrementalDiarizer(diarizer, sample_rate=sample_rate)
+class _NoEngine:
+    """An engine that must not be started: an empty track needs none."""
 
-
-def _incremental(samples: np.ndarray, steps: list[int]):
-    inc = _incremental_diarizer()
-    pipeline = inc._diarizer._pipeline
-    def read(a, b):  # zero-filled past the end, like GrowingTrack
-        out = np.zeros(b - a, dtype=np.float32)
-        chunk = samples[a:b]
-        out[: len(chunk)] = chunk
-        return out
-
-    for available in steps:
-        inc.advance(read, available)
-    return inc.finish(samples), pipeline(_file(samples))
-
-
-def _file(samples):
-    import torch
-
-    return {"waveform": torch.from_numpy(samples[None].copy())}
-
-
-@pytest.mark.parametrize("seconds", [5.0, 10.0, 25.0, 25.37, 61.0])
-@pytest.mark.parametrize("steps", [[], [1500], [1200, 1300, 2400, 9000]])
-def test_incremental_diarization_uses_the_same_windows_as_the_whole_file(seconds, steps):
-    samples = np.random.default_rng(1).standard_normal(int(seconds * 100)).astype(np.float32)
-    # Live, the track may have read longer (zero-filled) than it ended up.
-    (seg, emb), (full_seg, full_emb) = _incremental(samples, steps)
-    assert seg.shape == full_seg.shape
-    np.testing.assert_allclose(seg, full_seg, rtol=1e-5)
-    np.testing.assert_allclose(emb, full_emb, rtol=1e-5)
-
-
-def test_clustering_the_windows_so_far_reads_no_audio():
-    """A snapshot every few seconds copied the whole recording so far; macOS
-    kept the freed copies, and a meeting's live worker grew past its budget
-    in half an hour (#49). Clustering needs only the computed windows."""
-    samples = np.random.default_rng(1).standard_normal(3000).astype(np.float32)
-    clustered = []
-
-    class _Recording(_FakePipeline):
-        def __call__(self, file):
-            clustered.append(file["waveform"].shape[-1])
-            return super().__call__(file)
-
-    pipeline = _Recording()
-    diarizer = SimpleNamespace(_pipeline=pipeline, _ensure_pipeline=lambda: None, _turns=lambda out: out,
-                               last_embeddings={})
-    inc = IncrementalDiarizer(diarizer, sample_rate=100)
-    reads = []
-
-    def read(a, b):
-        reads.append((a, b))
-        return samples[a:b]
-
-    inc.advance(read, len(samples))
-    reads.clear()
-    seg, emb = inc.provisional()
-    assert reads == [] and clustered == [100]  # one second of silence stands in
-    assert seg.shape[0] == emb.shape[0] == inc.chunks_done
-
-
-def test_the_live_diarizer_computes_in_small_batches():
-    """pyannote's batches of 32 windows took 3–4 GB of GPU memory on top of
-    the models whenever the worker caught up (#49); batches of 8 take ~1."""
-    pipeline = _FakePipeline()
-    pipeline.embedding_batch_size = pipeline.segmentation_batch_size = 32
-    diarizer = SimpleNamespace(_pipeline=pipeline, _ensure_pipeline=lambda: None, _turns=lambda out: out,
-                               last_embeddings={})
-    inc = IncrementalDiarizer(diarizer, sample_rate=100)
-    inc.advance(lambda a, b: np.zeros(b - a, np.float32), 1500)
-    assert pipeline.embedding_batch_size == pipeline.segmentation_batch_size == 8
-
-
-def test_a_system_track_that_got_nothing_has_no_speakers():
-    """Live, the empty system track was read zero-filled up to the mic's
-    length; finished, it holds nothing, which pyannote refuses."""
-    inc = _incremental_diarizer()
-    inc._diarizer.last_embeddings = {"SPEAKER_00": [1.0]}  # clustered from the zero-filled windows
-    inc.advance(lambda a, b: np.zeros(b - a, dtype=np.float32), 3000)
-    assert inc.finish(np.zeros(0, dtype=np.float32)) == []
-    assert inc.last_embeddings == {}
+    def call(self, *args, **kwargs):
+        raise AssertionError("engine must not be started")
 
 
 def test_live_finishes_a_meeting_whose_system_track_got_nothing(tmp_path: Path):
@@ -282,7 +184,7 @@ def test_live_finishes_a_meeting_whose_system_track_got_nothing(tmp_path: Path):
     must still write the mic's transcript, with no remote speakers."""
     paths = RecordingPaths(tmp_path)
     transcriber = _FakeTranscriber()
-    proc = LiveProcessor(paths, transcriber=transcriber, diarizer=_incremental_diarizer(SR), user_name="Timo",
+    proc = LiveProcessor(paths, transcriber=transcriber, diarizer=LiveEngineDiarizer(tmp_path, engine=_NoEngine()), user_name="Timo",
                          aec_factory=_IdentityAec)
     mic = _speech(20)
     _append(Path(str(paths.mic_raw_wav) + ".part"), mic)

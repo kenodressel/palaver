@@ -1,3 +1,3 @@
 """Local Teams meeting transcription with speaker diarization."""
 
-__version__ = "0.3.14"
+__version__ = "0.5.0rc5"

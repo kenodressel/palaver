@@ -5,7 +5,7 @@ Voice embeddings are biometric data. They live only on this machine, in
 added only when you name a speaker in ``rename``, and are removed with
 ``palaver voices forget <name>``.
 
-Recognition compares each diarized speaker's pyannote embedding with every
+Recognition compares each diarized speaker's voice embedding (256 floats from the engine) with every
 stored sample (cosine similarity, best sample per person). Thresholds are
 conservative because a wrong name is worse than an unnamed speaker. Across
 eleven real meetings (2026-10), different speakers in one meeting scored

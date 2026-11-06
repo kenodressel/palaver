@@ -1,0 +1,390 @@
+// The daemon as the app runs it (daemon.py `build_daemon` and `launch_run`): the worker commands
+// with their QoS, the Python facts asked through `palaver app query`, the real capture, and the
+// app.sock actions over the daemon.
+import Darwin
+import Foundation
+import PalaverCapture
+import PalaverCore
+
+// MARK: - workers
+
+/// `taskpolicy -c <qos> <python> -m palaver [--config …] [--dictionary …] [--no-notify] <cmd> [folder] [extra…]`,
+/// in a session of its own, stdout and stderr appended to daemon.log.
+public struct WorkerLauncher {
+    /// The bundle's `palaver-python` (Task 14), or a venv's python in development.
+    public var python: String
+    /// The global options the app got: `--config <abs>`, `--dictionary <abs>`, `--no-notify`.
+    public var cliOptions: [String]
+    public var log: URL
+    /// PALAVER_APP, PALAVER_NOTIFY, PALAVER_NOTIFY_STATE (never PALAVER_WEB_KEY).
+    public var env: [String: String]
+    public var taskpolicy = "/usr/sbin/taskpolicy"
+    /// Runs the argv (after taskpolicy's options); tests record instead.
+    public var spawn: (_ args: [String], _ qos: QoS) throws -> WorkerProcess
+
+    public init(python: String, cliOptions: [String], log: URL, env: [String: String],
+                spawn: ((_ args: [String], _ qos: QoS) throws -> WorkerProcess)? = nil) {
+        self.python = python
+        self.cliOptions = cliOptions
+        self.log = log
+        self.env = env
+        let taskpolicy = self.taskpolicy
+        self.spawn = spawn ?? { args, qos in try spawnWorker(args, qos: qos, env: env, log: log, taskpolicy: taskpolicy) }
+    }
+
+    /// The command after taskpolicy's options (daemon.py `_command`).
+    public func argv(_ cmd: String, _ folder: URL?, extra: [String] = []) -> [String] {
+        [python, "-m", "palaver"] + cliOptions + [cmd] + (folder.map { [$0.path] } ?? []) + extra
+    }
+
+    public func launch(_ cmd: String, _ folder: URL?, qos: QoS = .utility, extra: [String] = []) throws -> WorkerProcess {
+        try spawn(argv(cmd, folder, extra: extra), qos)
+    }
+
+    /// `forwarded_cli_options`: the options to pass on, as absolute paths.
+    public static func forwardedOptions(config: String?, dictionary: String?, noNotify: Bool) -> [String] {
+        func abs(_ p: String) -> String {
+            URL(fileURLWithPath: NSString(string: p).expandingTildeInPath).resolvingSymlinksInPath().standardizedFileURL.path
+        }
+        var options: [String] = []
+        if let config { options += ["--config", abs(config)] }
+        if let dictionary { options += ["--dictionary", abs(dictionary)] }
+        if noNotify { options.append("--no-notify") }
+        return options
+    }
+}
+
+// MARK: - the Python facts
+
+/// What only the Python side knows, asked through `palaver app query … --json` on a queue of its
+/// own (a Python start costs a second or two, too long for the main thread's tick). Each answer is
+/// kept for `maxAge` seconds; while none is fresh, the getter starts one query (at most one per
+/// question at a time) and answers nil: "not known yet", which the daemon treats as "wait".
+public final class PythonFacts: @unchecked Sendable {
+    /// Blocks its (background) thread until Python answers.
+    public typealias Query = @Sendable ([String]) throws -> [String: Any]
+    private let query: Query
+    private let runner: @Sendable (@escaping @Sendable () -> Void) -> Void
+    private let clock: @Sendable () -> Double
+    private let log: @Sendable (String) -> Void
+    private let lock = NSLock()
+    private var answers: [String: (at: Double, value: [String: Any]?)] = [:]
+    private var asking: Set<String> = []
+    private var failing: Set<String> = []
+    /// Settings.search_meaning: off, no index is wanted (and nothing asked).
+    public var searchMeaning: @Sendable () -> Bool = { true }
+    /// [calendar].enabled: off, there is no event (and nothing asked).
+    public var calendarEnabled: @Sendable () -> Bool = { true }
+
+    /// `runner` runs a query off the main thread: a thread of its own by default, so a busy
+    /// dispatch pool never holds an answer back.
+    public init(query: @escaping Query, clock: @escaping @Sendable () -> Double = { ProcessInfo.processInfo.systemUptime },
+                log: @escaping @Sendable (String) -> Void = { _ in },
+                runner: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void = { work in
+                    let t = Thread(block: work)
+                    t.name = "palaver-app-query"
+                    t.qualityOfService = .utility
+                    t.start()
+                }) {
+        self.query = query
+        self.runner = runner
+        self.clock = clock
+        self.log = log
+    }
+
+    /// Through `pythonQuery` with the forwarded options.
+    public convenience init(python: String, cliOptions: [String], env: [String: String] = [:],
+                            log: @escaping @Sendable (String) -> Void = { _ in }) {
+        self.init(query: { what in try pythonQueryBlocking(what, python: python, extraArgs: cliOptions, env: env) }, log: log)
+    }
+
+    /// The fresh answer to `what`, or nil while it is being asked. A failed query answers nil in
+    /// `value` (the caller's fallback) and is asked again after `maxAge`.
+    /// `stale`: once answered, an expired answer keeps being served (a failed refresh keeps it too)
+    /// while the refresh runs; only a never-answered question is "not known yet".
+    private func ask(_ what: [String], maxAge: Double, stale: Bool = false) -> (value: [String: Any]?, known: Bool) {
+        let key = what.joined(separator: "\u{1f}")
+        let now = clock()
+        lock.lock()
+        let old = answers[key]
+        if let a = old, now - a.at < maxAge { lock.unlock(); return (a.value, true) }
+        let start = asking.insert(key).inserted
+        lock.unlock()
+        if start {
+            let query = self.query
+            runner { [self] in
+                var value: [String: Any]?
+                do {
+                    value = try query(what)
+                    record(key, recovered: true)
+                } catch {
+                    if record(key, recovered: false) { log("palaver app query \(what[0]) failed: \(error)") }
+                }
+                keep(key, value ?? (stale ? old?.value : nil))
+            }
+        }
+        if stale, let old { return (old.value, true) }
+        return (nil, false)
+    }
+
+    private func keep(_ key: String, _ value: [String: Any]?) {
+        lock.withLock {
+            answers[key] = (clock(), value)
+            asking.remove(key)
+        }
+    }
+
+    /// Keeps whether `key` fails; true when it just started failing (said once).
+    @discardableResult
+    private func record(_ key: String, recovered: Bool) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if recovered { failing.remove(key); return false }
+        return failing.insert(key).inserted
+    }
+
+    /// Whether `process` would find the models it needs for `folder` (`missing-models`). A failed
+    /// query says yes: `process` then exits 4 again if they are missing.
+    public func modelsReady(_ folder: URL) -> Bool? {
+        let (value, known) = ask(["missing-models", folder.path], maxAge: 25)
+        guard known else { return nil }
+        return ((value?["missing"] as? [Any]) ?? []).isEmpty
+    }
+
+    /// The free memory in GB the notes of `folder` need (`notes-memory`); unknown models need 20.
+    public func notesMemoryGB(_ folder: URL) -> Double? {
+        let (value, known) = ask(["notes-memory", folder.path], maxAge: 60, stale: true)
+        guard known else { return nil }
+        return (value?["gb"] as? NSNumber)?.doubleValue ?? 20
+    }
+
+    /// Whether a meeting has no search index yet (`index-stale`), and whether the index's model is
+    /// here (its first run downloads it).
+    public func indexWanted() -> Bool? {
+        guard searchMeaning() else { return false }
+        let (value, known) = ask(["index-stale"], maxAge: 30)
+        guard known else { return nil }
+        return !((value?["stale"] as? [Any]) ?? []).isEmpty
+    }
+
+    public func indexModelReady() -> Bool {
+        let (value, known) = ask(["index-stale"], maxAge: 30)
+        return !known || ((value?["model_ready"] as? Bool) ?? true)
+    }
+
+    /// The key of the calendar event on at `when` (`event-key`), never waiting: `.pending` while
+    /// Python is asked, then kept 10 minutes. A failed lookup is no event.
+    public func eventKey(at when: Date) -> EventLookup {
+        guard calendarEnabled() else { return .known(nil) }
+        let (value, known) = ask(["event-key", WallTime.iso(when, .current)], maxAge: 600)
+        return known ? .known(value?["key"] as? String) : .pending
+    }
+
+    /// `notion-auto-sync`: whether a recording is uploaded after the call (`run`, the token may be in
+    /// the Keychain, which only Python's Config reads), and whether notes are written.
+    public static func notionAutoSync(python: String, cliOptions: [String], env: [String: String] = [:])
+        async throws -> (autoSync: Bool, notes: Bool) {
+        let a = try await pythonQuery(["notion-auto-sync"], python: python, extraArgs: cliOptions, env: env)
+        return ((a["auto_sync"] as? Bool) ?? false, (a["notes"] as? Bool) ?? true)
+    }
+
+    /// The same, blocking (a worker thread); nil when Python did not answer.
+    public static func notionAutoSyncNow(python: String, cliOptions: [String], env: [String: String] = [:]) -> AutoSyncAnswer.Value? {
+        guard let a = try? pythonQueryBlocking(["notion-auto-sync"], python: python, extraArgs: cliOptions, env: env) else { return nil }
+        return .init(autoSync: (a["auto_sync"] as? Bool) ?? false, notes: (a["notes"] as? Bool) ?? true)
+    }
+}
+
+// MARK: - notion-auto-sync
+
+/// `notion-auto-sync`: whether a recording is uploaded after the call (`run`, which writes its notes
+/// itself) or processed with its notes written apart. Known at once: Python's last answer (kept in
+/// Application Support), else config.toml's view. Python is asked in the background (the token may be
+/// in the Keychain, which only it reads), again after a failure; the daemon reads the answer each time a
+/// worker starts, so a late answer counts from the next recording on.
+public final class AutoSyncAnswer: @unchecked Sendable {
+    public struct Value: Equatable, Sendable {
+        public var autoSync: Bool
+        public var notes: Bool
+        public init(autoSync: Bool, notes: Bool) { self.autoSync = autoSync; self.notes = notes }
+    }
+
+    private let lock = NSLock()
+    private var current: Value
+    private var gotAnswer = false
+    private let cache: URL?
+
+    /// A fixed answer (tests, a build without Python).
+    public init(autoSync: Bool, notes: Bool) {
+        current = Value(autoSync: autoSync, notes: notes)
+        cache = nil
+    }
+
+    /// The answer Python gave last time (`cache`), else `fallback` (config.toml's view).
+    public init(cache: URL, fallback: Value) {
+        self.cache = cache
+        if let data = try? Data(contentsOf: cache), let obj = JSONValue.parse(data),
+           case .bool(let a)? = obj["auto_sync"], case .bool(let n)? = obj["notes"] {
+            current = Value(autoSync: a, notes: n)
+        } else {
+            current = fallback
+        }
+    }
+
+    public var value: Value { lock.lock(); defer { lock.unlock() }; return current }
+    public var autoSync: Bool { value.autoSync }
+    public var notes: Bool { value.notes }
+    /// Python answered during this run.
+    public var answered: Bool { lock.lock(); defer { lock.unlock() }; return gotAnswer }
+
+    /// Python's answer: used from now on and kept for the next start.
+    public func set(_ value: Value) {
+        lock.lock()
+        current = value
+        gotAnswer = true
+        lock.unlock()
+        guard let cache else { return }
+        try? FileManager.default.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let text = JSONValue.object([("auto_sync", .bool(value.autoSync)), ("notes", .bool(value.notes))]).encoded(indent: nil)
+        try? text.write(to: cache, atomically: true, encoding: .utf8)
+    }
+
+    /// Asks (`ask`: blocking, nil when Python did not answer) until it answers, waiting 5 s, 10 s, …
+    /// up to `maxDelay` between tries. On a worker thread.
+    public func askUntilAnswered(ask: () -> Value?, sleep: (Double) -> Void = { Thread.sleep(forTimeInterval: $0) },
+                                 maxDelay: Double = 300, log: (String) -> Void = { _ in }) {
+        var delay = 5.0
+        while true {
+            if let v = ask() {
+                set(v)
+                return
+            }
+            log("palaver app query notion-auto-sync did not answer; asking again in \(Int(min(delay, maxDelay))) s")
+            sleep(min(delay, maxDelay))
+            delay = min(delay * 2, maxDelay)
+        }
+    }
+}
+
+// MARK: - build_daemon
+
+public enum DaemonFactory {
+    /// The daemon as the app runs it. `notion`: notion-auto-sync, read as each worker starts (Python's
+    /// answer may come late). `notify`: (title, message, meeting). `log`: (level, message) into
+    /// daemon.log. The capture sources are the real ones unless given.
+    public static func build(config: Config, settings: Settings, paths: Paths, launcher: WorkerLauncher,
+                             facts: PythonFacts, notion: AutoSyncAnswer,
+                             detector: CallDetector, version: String,
+                             notify: @escaping (String, String, String?) -> Void,
+                             log: @escaping (String, String) -> Void,
+                             sources: ((Daemon?) -> CaptureSources)? = nil,
+                             beforeRecord: @escaping (() throws -> URL) throws -> URL = { try $0() },
+                             testRecorder: TestRecorder? = nil) throws -> Daemon {
+        let levels = RecordingLevels()
+        let usage = UsageLog(url: paths.support.appendingPathComponent("usage.jsonl"))
+        let stamp: [(String, Any)] = [("version", version), ("pid", Int(getpid())),
+                                      ("argv", Array(CommandLine.arguments.dropFirst())), ("app", "native")]
+        weak var made: Daemon?
+        let captureSources: () -> CaptureSources = {
+            if let sources { return sources(made) }
+            return CaptureSources.live(excludedPIDs: { made?.excludedPIDs() ?? [getpid()] },
+                                       log: { log("INFO", $0) })
+        }
+        facts.searchMeaning = { settings.searchMeaning }
+        facts.calendarEnabled = { config.calendarEnabled }
+        var deps = DaemonDeps(
+            detect: { detector.detect() },
+            newSession: { trigger in
+                RecordingSession(outputDir: config.outputDir, trigger: trigger,
+                                 capture: { folder, sessionLog in LiveCapture(folder: folder, log: sessionLog, sources: captureSources()) },
+                                 stamp: stamp, usage: usage)
+            },
+            // Locally, notes are written apart, when no call is recorded; the Notion upload needs
+            // them at once, so `run` keeps writing them itself.
+            launchProcessing: { folder in
+                notion.autoSync
+                    ? try launcher.launch("run", folder, qos: .utility)
+                    : try launcher.launch("process", folder, qos: .utility, extra: ["--no-notes"])
+            },
+            statePath: paths.daemonJson,
+            trigger: Trigger(startAfter: DaemonTiming.startAfter, grace: Double(config.gracePeriodSeconds),
+                             maxSession: Double(config.maxSessionHours) * 3600),
+            clock: { ProcessInfo.processInfo.systemUptime })
+        deps.ignore = { detector.ignore(named: $0) }
+        deps.ignored = { detector.ignored.map(\.rawValue) }
+        deps.launchNotes = { try launcher.launch("notes", $0, qos: .utility) }
+        deps.notesWanted = { let v = notion.value; return !v.autoSync && v.notes }
+        deps.launchLive = { try launcher.launch("live", $0, qos: .background) }
+        deps.launchStream = { try launcher.launch("stream", $0, qos: .utility) }
+        deps.launchCoach = { try launcher.launch("coach", $0, qos: .background) }
+        deps.launchIndex = { try launcher.launch("index", nil, qos: .background) }
+        deps.memoryFreeGB = FreeMemory.availableGB
+        deps.notesMemoryGB = { facts.notesMemoryGB($0) }
+        deps.watchdog = Watchdog(
+            MemoryBudgets(config: config.memory),
+            budgetsNow: { MemoryBudgets(config: config.memory, notes: facts.notesMemoryGB(config.outputDir)) },
+            freeGB: FreeMemory.availableGB,
+            budgetFor: memoryBudgetHook(config: config.memory, notesInRun: { let v = notion.value; return v.autoSync && v.notes },
+                                        need: { facts.notesMemoryGB(URL(fileURLWithPath: $0, isDirectory: true)) }),
+            log: log)
+        deps.indexWanted = { facts.indexWanted() }
+        deps.indexModelReady = { facts.indexModelReady() }
+        deps.modelsReady = { facts.modelsReady($0) }
+        deps.realtime = { settings.realtime }
+        deps.live = { settings.liveProcessing }
+        // A meeting goes first: a running test recording is stopped before the meeting's capture starts.
+        deps.beforeRecord = testRecorder.map { test in { start in try test.meetingStarting { try beforeRecord(start) } } } ?? beforeRecord
+        deps.silence = { levels.quietFor }
+        deps.othersSilence = { levels.othersQuietFor }
+        deps.liveRunning = { LiveWorker.running($0) }
+        deps.stopLive = { LiveWorker.stop($0) }
+        deps.doneMarker = { notion.autoSync ? "notion.json" : "transcript.md" }
+        deps.outputDir = config.outputDir
+        deps.processes = Processes.palaverProcesses
+        deps.eventKeyAt = { facts.eventKey(at: $0) }
+        deps.notify = notify
+        deps.log = log
+        let daemon = try Daemon(deps)
+        daemon.levels = levels
+        made = daemon
+        return daemon
+    }
+}
+
+// MARK: - app.sock
+
+/// The daemon's side of app.sock's calls (`AppActions`). `refresh` redraws the menu; the window's
+/// helpers, the web server's restart and the test recording belong to later tasks and are injected.
+public final class DaemonActions: AppActions {
+    public let daemon: Daemon
+    private let onRefresh: () -> Void
+    private let helper: (String, String, [String]) throws -> Int32
+    private let restart: () -> Int32?
+    private let test: (String?, [String: Any], () -> Bool) throws -> Any?
+
+    public init(daemon: Daemon, refresh: @escaping () -> Void = {},
+                launchHelper: @escaping (String, String, [String]) throws -> Int32 = { kind, _, _ in
+                    throw CallRefused("no helper \(kind)")
+                },
+                restartWeb: @escaping () -> Int32? = { nil },
+                testRecording: @escaping (String?, [String: Any], () -> Bool) throws -> Any? = { _, _, _ in nil }) {
+        self.daemon = daemon
+        self.onRefresh = refresh
+        self.helper = launchHelper
+        self.restart = restartWeb
+        self.test = testRecording
+    }
+
+    public func answerStopQuestion(choice: String, meeting: String?) -> Bool { daemon.answerStopQuestion(choice, meeting: meeting) }
+    public func switchedOff(app: String) { daemon.switchedOff(app) }
+    public func transcribeAgain(folder: String) -> Bool { daemon.transcribeAgain(URL(fileURLWithPath: folder, isDirectory: true)) }
+    public func status() -> (state: String, folder: String?) { daemon.state }
+    public func stopManual() { daemon.stopManual() }
+    public func startManual() -> Bool { daemon.startManual() }
+    public func refresh() { onRefresh() }
+    public func watchHelper(folder: String, process: PidProcess) { daemon.watchHelper(folder: folder, process: process) }
+    public func launchHelper(kind: String, key: String, args: [String]) throws -> Int32 { try helper(kind, key, args) }
+    public func restartWeb() -> Int32? { restart() }
+    public func testRecording(action: String?, mode: [String: Any], busy: () -> Bool) throws -> Any? {
+        try test(action, mode, busy)
+    }
+}

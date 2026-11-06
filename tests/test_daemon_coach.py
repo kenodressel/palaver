@@ -119,7 +119,7 @@ def test_build_daemon_gives_each_recording_a_live_coach(monkeypatch, tmp_path: P
     monkeypatch.setattr(daemon, "_event_now", lambda cfg: None)  # never the real calendar
     cfg = Config(user_name="K", notion_token="t", notion_parent_page_id="p", hf_token=None,
                  output_dir=tmp_path, retention_days=14, max_session_hours=4, grace_period_seconds=10,
-                 transcriber="parakeet-mlx", whisper_repo="w", diarizer_repo="d", language="auto",
+                 transcriber="parakeet-mlx", whisper_repo="w", language="auto",
                  live_processing=False, record_slack=False)
     d = daemon.build_daemon(cfg)
     coach = d._new_coach(tmp_path / "rec")

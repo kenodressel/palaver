@@ -1,0 +1,71 @@
+{
+  "state": "recording",
+  "auto": true,
+  "manual": false,
+  "since": "2026-11-03T09:00:04+01:00",
+  "folder": "/tmp/palaver-fixture/Recordings/2026-11-03T09-00-14",
+  "queued": [
+    "/tmp/palaver-fixture/Recordings/2026-11-03T08-30-00"
+  ],
+  "transcribing": true,
+  "transcribing_folder": "/tmp/palaver-fixture/Recordings/2026-11-03T08-00-00",
+  "notes_queued": [
+    "/tmp/palaver-fixture/Recordings/2026-11-02T16-00-00"
+  ],
+  "writing_notes": null,
+  "indexing": false,
+  "index_downloading": false,
+  "system_source": "process-tap",
+  "mic_source": "avcapture",
+  "missing": [],
+  "teams_active": true,
+  "stop_question": null,
+  "ignored": [
+    "slack"
+  ],
+  "why": {
+    "trigger": "teams",
+    "since": "2026-11-03T09:00:04+01:00",
+    "restarts": 0,
+    "mic": {
+      "device": "AirPods Pro",
+      "rate": 24000.0,
+      "source": "avcapture"
+    },
+    "system": {
+      "device": "AirPods Pro",
+      "rate": 48000.0,
+      "source": "process-tap"
+    },
+    "problems": [
+      {
+        "kind": "speed",
+        "track": "system",
+        "start": 6.0
+      }
+    ],
+    "hints": [
+      {
+        "kind": "silent",
+        "track": "mic"
+      }
+    ]
+  },
+  "why_text": "Recording \u00b7 Teams call since 09:00 \u00b7 mic AirPods Pro (24 kHz) \u00b7 output AirPods Pro (48 kHz)",
+  "warnings": [
+    "System audio is playing at the wrong speed; Palaver is correcting it"
+  ],
+  "hints": [
+    "Your mic sends nothing \u2014 muted?"
+  ],
+  "memory": null,
+  "talk": null,
+  "talk_text": null,
+  "nudge": null,
+  "quiet": [],
+  "last_stop": null,
+  "continues": [],
+  "cut": null,
+  "pid": 4242,
+  "updated": "2026-11-03T09:06:40+01:00"
+}

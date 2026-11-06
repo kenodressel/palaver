@@ -12,3 +12,7 @@ build/
 # Vendored WebRTC AEC build output — rebuilt on install
 /palaver/_vendored/webrtc_aec/build/
 /palaver/_vendored/webrtc_aec/libraven_aec.dylib
+
+# Swift engine
+/native/.build/
+/native/vendor/

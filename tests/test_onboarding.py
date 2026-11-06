@@ -182,7 +182,7 @@ def test_low_disk_recommends_the_cloud_and_says_how_much_is_needed():
     assert lm.value == "pending"
     assert "8.3 GB" in lm.reason and "10 GB free" in lm.reason
     assert "gemma" not in got["transcription"].downloads or True
-    assert got["transcription"].value == "local"  # Parakeet still fits: 2.3 GB
+    assert got["transcription"].value == "local"  # Parakeet still fits: 0.5 GB
 
 
 def test_low_disk_is_fine_when_the_model_is_already_here():
@@ -199,11 +199,11 @@ def test_very_low_disk_says_what_to_free():
 
 
 def test_downloads_list_what_is_not_here_yet():
-    got = recs("Apple M4 Pro", 48, downloaded=frozenset({"pyannote"}))
-    assert got["transcription"].downloads == ("parakeet",)
+    got = recs("Apple M4 Pro", 48, downloaded=frozenset())
+    assert got["transcription"].downloads == ("speech",)
     assert got["language_model"].downloads == ("gemma",)
     assert got["search_meaning"].downloads == ("e5",)
-    assert ob.download_size(["parakeet", "gemma", "e5"]) == pytest.approx(2.3 + 8.3 + 0.47)
+    assert ob.download_size(["speech", "gemma", "e5"]) == pytest.approx(0.5 + 8.3 + 0.47)
 
 
 # --- during calls ---------------------------------------------------------------------------
@@ -315,9 +315,9 @@ def test_skipped_is_not_offered_again():
 
 
 def test_missing_models_are_those_the_choices_need():
-    c = current(downloaded=frozenset({"pyannote", "e5"}))
-    assert ob.missing_models(c, ob.Hardware("Apple M4 Pro", 48, 200)) == ["parakeet", "gemma"]
-    c = current(downloaded=frozenset({"pyannote", "e5", "parakeet"}), choices={"notes": "anthropic"},
+    c = current(downloaded=frozenset({"e5"}))
+    assert ob.missing_models(c, ob.Hardware("Apple M4 Pro", 48, 200)) == ["speech", "gemma"]
+    c = current(downloaded=frozenset({"speech", "e5"}), choices={"notes": "anthropic"},
                 registry=lm_registry(ready=("anthropic",)))
     assert ob.missing_models(c, ob.Hardware("Apple M4 Pro", 48, 200)) == []
 
@@ -367,19 +367,19 @@ def test_summary_says_what_is_set_up_and_what_to_fix():
                    "system_audio": {"state": "unverified", "detail": "not verified yet"},
                    "calendar": {"state": "not_asked", "detail": "not connected"},
                    "notifications": {"state": "unknown", "detail": "macOS asks the first time"}}
-    c = current(downloaded=frozenset({"pyannote"}), choices={"notes": "anthropic", "projects": "anthropic"})
+    c = current(downloaded=frozenset(), choices={"notes": "anthropic", "projects": "anthropic"})
     checks = ob.summary(hw, permissions, ob.Installed(), c)
     by = {x.name: x for x in checks}
     assert by["This Mac"].status == "ok" and "M2 Pro" in by["This Mac"].detail
     assert by["Microphone"].status == "ok"
     assert by["Calendar"].status == "warn" and by["Calendar"].fix
-    assert by["Parakeet"].status == "warn" and "2.3 GB" in by["Parakeet"].fix
+    assert by["Speech models"].status == "warn" and "0.5 GB" in by["Speech models"].fix
     assert by["Notes and projects"].status == "fail" and "Add the API key" in by["Notes and projects"].detail
     assert by["Disk space"].status == "ok"
 
 
 def test_summary_local_notes_name_the_model_and_its_download():
-    c = current(downloaded=frozenset({"pyannote", "parakeet", "e5"}))
+    c = current(downloaded=frozenset({"speech", "e5"}))
     by = {x.name: x for x in ob.summary(ob.Hardware("Apple M4 Pro", 48, 200), {}, ob.Installed(), c)}
     assert by["Notes and projects"].status == "warn" and "Gemma 4 12B" in by["Notes and projects"].detail
     assert "8.3 GB" in by["Notes and projects"].fix
@@ -428,7 +428,7 @@ def test_summary_says_notes_wait_for_a_cloud_model():
 
 
 def test_missing_models_never_include_gemma_while_notes_wait():
-    c = current(downloaded=frozenset({"pyannote", "parakeet"}), choices={"notes": "pending"})
+    c = current(downloaded=frozenset({"speech"}), choices={"notes": "pending"})
     assert ob.missing_models(c, ob.Hardware("Apple M2 Pro", 16, 200)) == []
 
 
@@ -436,7 +436,7 @@ def test_the_catch_of_a_local_model_on_a_small_mac():
     assert ob.download_note("gemma", ob.Hardware("Apple M2 Pro", 16, 200)) == \
         "needs 14 GB free while writing; this Mac has 16 GB"
     assert ob.download_note("gemma", ob.Hardware("Apple M4 Pro", 48, 200)) == ""
-    assert ob.download_note("parakeet", ob.Hardware("Apple M2 Pro", 16, 200)) == ""
+    assert ob.download_note("speech", ob.Hardware("Apple M2 Pro", 16, 200)) == ""
 
 
 def test_a_screencapturekit_fallback_works_with_a_fallback():
@@ -450,7 +450,7 @@ def test_test_verdict_says_why_there_are_no_words():
     base = {"system": {"recorded": True, "level_db": -80.0}}
     missing = ob.test_verdict({**base, "mic": {"recorded": True, "level_db": -20.0, "text": None,
                                                 "transcript": "not_downloaded"}})
-    assert missing[0].status == "ok" and "Parakeet is not downloaded" in missing[0].detail
+    assert missing[0].status == "ok" and "speech models are not downloaded" in missing[0].detail
     assert "Downloads" in missing[0].fix
     cloud = ob.test_verdict({**base, "mic": {"recorded": True, "level_db": -20.0, "text": None,
                                               "transcript": "cloud", "service": "Soniox"}})
@@ -544,31 +544,28 @@ def test_analyze_never_downloads(tmp_path, monkeypatch):
     sf.write(mic, (0.3 * np.sin(np.arange(16000) / 3)).astype("float32"), 16000)
     sf.write(system, np.zeros(16000, dtype="float32"), 16000)
     calls = []
-    monkeypatch.setattr(ob, "_transcribe", lambda wav, repo: calls.append((wav, repo)) or "hello")
-    monkeypatch.setattr(ob, "complete", lambda repo, probe="config.json": False)
-    out = ob._analyze(mic, system, {"transcribe": "local", "repo": "org/parakeet"})
+    monkeypatch.setattr(ob, "_transcribe", lambda wav: calls.append(wav) or "hello")
+    monkeypatch.setattr(ob, "speech_here", lambda: False)
+    out = ob._analyze(mic, system, {"transcribe": "local"})
     assert out["mic"]["transcript"] == "not_downloaded" and calls == []
-    monkeypatch.setattr(ob, "complete", lambda repo, probe="config.json": True)
-    out = ob._analyze(mic, system, {"transcribe": "local", "repo": "org/parakeet"})
-    assert out["mic"]["text"] == "hello" and calls == [(mic, "org/parakeet")]
+    monkeypatch.setattr(ob, "speech_here", lambda: True)
+    out = ob._analyze(mic, system, {"transcribe": "local"})
+    assert out["mic"]["text"] == "hello" and calls == [mic]
     out = ob._analyze(mic, system, {"transcribe": "cloud", "service": "Soniox"})
     assert out["mic"]["transcript"] == "cloud" and len(calls) == 1  # levels only
 
 
-def test_the_transcribe_helper_runs_offline(monkeypatch):
-    seen = {}
+def test_the_test_recording_is_transcribed_by_the_engine(tmp_path, monkeypatch):
+    import wave
 
-    class Proc:
-        returncode, stdout = 0, "hello there\n"
-
-    def run(argv, **kw):
-        seen.update(argv=argv, env=kw["env"])
-        return Proc()
-
-    monkeypatch.setattr(ob.subprocess, "run", run)
-    assert ob._transcribe(Path("/tmp/x.wav"), "org/parakeet") == "hello there"
-    assert seen["env"]["HF_HUB_OFFLINE"] == "1"
-    assert seen["argv"][-2:] == ["/tmp/x.wav", "org/parakeet"]
+    monkeypatch.setenv("PALAVER_ENGINE", str(Path(__file__).parent / "fake_engine.py"))
+    wav = tmp_path / "mic.wav"
+    with wave.open(str(wav), "wb") as w:
+        w.setnchannels(1), w.setsampwidth(2), w.setframerate(16000)
+        w.writeframes(b"\x10\x20" * 16000)
+    assert ob._transcribe(wav) == "The cloud is up. Yes."
+    monkeypatch.setenv("FAKE_ENGINE_MODE", "crash")
+    assert ob._transcribe(wav) is None  # the test goes on without words
 
 
 # --- downloads: complete only when every file is there ------------------------------------------
@@ -617,12 +614,12 @@ def test_a_failed_download_can_be_tried_again():
             raise RuntimeError("connection reset")
 
     d = ob.Downloads(fetch=fetch, progress=lambda m: 0, done=lambda m: True)
-    d.start(["parakeet"])
+    d.start(["speech"])
     _wait(lambda: d.status()["models"][0]["state"] == "failed")
     assert d.status()["models"][0]["error"] == "connection reset"
-    d.start(["parakeet"])
+    d.start(["speech"])
     _wait(lambda: d.status()["models"][0]["state"] == "done")
-    assert tries == ["parakeet", "parakeet"]
+    assert tries == ["speech", "speech"]
 
 
 def test_a_download_that_left_files_missing_is_failed():
@@ -635,10 +632,10 @@ def test_a_download_that_left_files_missing_is_failed():
 def test_download_progress_reads_the_configured_repo():
     seen = []
     d = ob.Downloads(fetch=lambda m: None, progress=lambda repo: seen.append(repo) or 0, done=lambda m: True,
-                     repo_of=lambda m: "my/parakeet" if m.id == "parakeet" else m.repo)
-    d._jobs["parakeet"] = {"state": "downloading", "error": None}
+                     repo_of=lambda m: "my/gemma" if m.id == "gemma" else m.repo)
+    d._jobs["gemma"] = {"state": "downloading", "error": None}
     d.status()
-    assert seen == ["my/parakeet"]
+    assert seen == ["my/gemma"]
 
 
 
@@ -652,10 +649,170 @@ def test_running_downloads_say_so_on_disk_for_the_updater(tmp_path):
     release = threading.Event()
     d = ob.Downloads(fetch=lambda m: release.wait(5), progress=lambda r: 0, done=lambda m: True, marker=marker)
     assert not ob.downloads_running(marker)
-    d.start(["parakeet"])
+    d.start(["speech"])
     _wait(lambda: marker.exists())
     assert marker.read_text().strip() == str(os.getpid()) and ob.downloads_running(marker)
     release.set()
     _wait(lambda: not marker.exists())
     marker.write_text("999999")  # a server that died while downloading
     assert not ob.downloads_running(marker)
+
+
+# --- the speech models: one download, the engine's ----------------------------------------------------
+
+FAKE_ENGINE = str(Path(__file__).parent / "fake_engine.py")
+
+
+def test_speech_model_offered_and_old_ones_retired():
+    assert "speech" in ob.MODELS and "parakeet" not in ob.MODELS and "pyannote" not in ob.MODELS
+    assert "parakeet" in ob.RETIRED and "pyannote" in ob.RETIRED
+    speech = ob.MODELS["speech"]
+    assert (speech.label, speech.disk_gb, speech.memory) == ("Speech models", 0.5, "under 1 GB while transcribing")
+    assert speech.local_folder == "fluidaudio" and speech.probe.startswith("speaker-diarization/")
+    assert all(ob.RETIRED[m].manual for m in ("parakeet", "pyannote"))  # listed in Storage, never dropped by themselves
+
+
+def test_speech_download_runs_prepare_with_progress(monkeypatch):
+    """The engine sends progress per model; the assistant's download state shows one
+    combined fraction (asr 95 %, the diarizer 5 %), never going back."""
+    from palaver.engine import Engine
+
+    monkeypatch.setenv("FAKE_ENGINE_MODE", "progress")  # 0.5 then 1.0, phase "asr", then ok
+    calls = []
+
+    class Spy(Engine):
+        def call(self, cmd, /, progress=None, **args):
+            calls.append((cmd, args["models"]))
+            return super().call(cmd, progress=progress, **args)
+
+    seen = []
+    d = ob.Downloads(done=lambda m: True, engine=lambda: Spy(path=Path(FAKE_ENGINE)), marker=None)
+    real = d._set_fraction
+    d._set_fraction = lambda mid, f: (seen.append(round(f, 3)), real(mid, f))[1]
+    d.start(["speech"])
+    _wait(lambda: d.status()["models"][0]["state"] == "done")
+    assert calls == [("prepare", ["asr"]), ("prepare", ["diarizer"])]
+    assert seen == sorted(seen) and seen[-1] == 1.0 and 0.95 in seen
+    assert 0 < seen[0] < 0.95
+    assert d.status()["models"][0]["done_gb"] == 0.5
+
+
+def test_speech_download_shows_its_progress_while_it_runs(monkeypatch):
+    d = ob.Downloads(fetch=lambda m: None, done=lambda m: True)
+    d._jobs["speech"] = {"state": "downloading", "error": None}
+    d._set_fraction("speech", 0.4)
+    d._set_fraction("speech", 0.2)  # a late, lower number does not move it back
+    assert d.status()["models"][0]["done_gb"] == 0.2  # 0.4 of 0.5 GB
+
+
+def test_speech_download_that_the_engine_refuses_fails_with_its_message(monkeypatch):
+    monkeypatch.setenv("FAKE_ENGINE_MODE", "error")
+    from palaver.engine import Engine
+
+    d = ob.Downloads(done=lambda m: True, engine=lambda: Engine(path=Path(FAKE_ENGINE)))
+    d.start(["speech"])
+    _wait(lambda: d.status()["models"][0]["state"] == "failed")
+    assert d.status()["models"][0]["error"] == "no such wav"
+
+
+def test_speech_models_here_ask_the_engine_when_the_files_are_there(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setenv("PALAVER_ENGINE", FAKE_ENGINE)
+    ob.speech_here.cache_clear()
+    assert not ob.speech_here()  # no files: no engine needed
+    from palaver import install_layout
+
+    root = install_layout.models_dir() / "fluidaudio"
+    for rel in ob.SPEECH_FILES:
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text("x")
+    assert ob.speech_files_here()
+    monkeypatch.setenv("PALAVER_ENGINE", str(tmp_path / "no-engine"))  # not built: the files decide
+    ob.speech_here.cache_clear()
+    assert ob.speech_here() and ob.model_here(ob.MODELS["speech"], "fluidaudio")
+    # an engine that answers: its ModelStore has the last word (the fake's hello has no models: not ready)
+    monkeypatch.setenv("PALAVER_ENGINE", FAKE_ENGINE)
+    ob.speech_here.cache_clear()
+    assert not ob.speech_here()
+
+
+def test_speech_here_is_cached_for_a_while(tmp_path, monkeypatch):
+    from palaver import install_layout
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    root = install_layout.models_dir() / "fluidaudio"
+    for rel in ob.SPEECH_FILES:
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text("x")
+    monkeypatch.setenv("PALAVER_ENGINE", FAKE_ENGINE)
+    hellos = []
+    from palaver import engine
+
+    real = engine.Engine.call
+    monkeypatch.setattr(engine.Engine, "call", lambda self, cmd, **kw: hellos.append(cmd) or real(self, cmd, **kw))
+    ob.speech_here.cache_clear()
+    now = [1000.0]
+    monkeypatch.setattr(ob.time, "monotonic", lambda: now[0])
+    ob.speech_here(), ob.speech_here()
+    assert hellos == ["hello"]  # one engine for two asks
+    now[0] += 31
+    ob.speech_here()
+    assert hellos == ["hello", "hello"]
+
+
+def test_an_engine_that_crashes_on_hello_means_not_ready(tmp_path, monkeypatch):
+    from palaver import install_layout
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    root = install_layout.models_dir() / "fluidaudio"
+    for rel in ob.SPEECH_FILES:
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text("x")
+    ob.speech_here.cache_clear()
+    monkeypatch.setenv("PALAVER_ENGINE", FAKE_ENGINE)
+    monkeypatch.setenv("FAKE_ENGINE_MODE", "crash")
+    assert not ob.speech_here()
+    ob.speech_here.cache_clear()
+    monkeypatch.setenv("PALAVER_ENGINE", str(tmp_path / "no-engine"))  # not found: the files decide
+    assert ob.speech_here()
+
+
+def test_a_user_without_setup_state_but_with_meetings_is_offered_the_speech_models():
+    assert ob.offer(None, "fp", has_meetings=True, missing=["speech", "gemma"]) == {"why": "missing", "models": ["speech"]}
+    assert ob.offer(None, "fp", has_meetings=True, missing=["gemma"]) is None
+    assert ob.offer(None, "fp", has_meetings=True, missing=[]) is None
+    assert ob.offer(None, "fp", has_meetings=False, missing=["speech"]) == {"why": "first"}
+
+
+def test_analyze_reports_levels(tmp_path, monkeypatch, capsys):
+    """`palaver onboarding analyze <wav>`: JSON of exactly what _analyze returns."""
+    import json
+
+    import numpy as np
+    import soundfile as sf
+
+    from palaver import cli
+
+    mic, system = tmp_path / "mic.wav", tmp_path / "system.wav"
+    sf.write(mic, (0.3 * np.sin(np.arange(16000) / 3)).astype("float32"), 16000)
+    sf.write(system, np.zeros(16000, dtype="float32"), 16000)
+    monkeypatch.setattr(ob, "speech_here", lambda: True)
+    monkeypatch.setattr(ob, "_transcribe", lambda wav: "hello")
+    assert cli.main(["onboarding", "analyze", str(mic), "--system", str(system)]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out == ob._analyze(mic, system, {})
+    assert out["mic"]["recorded"] and out["mic"]["level_db"] > ob.SPEECH_DB and out["mic"]["text"] == "hello"
+    assert out["system"] == {"recorded": True, "level_db": None or out["system"]["level_db"]}
+    assert out["system"]["level_db"] < ob.QUIET_DB
+    # a track that is not there is "not recorded"; cloud mode never transcribes
+    assert cli.main(["onboarding", "analyze", str(mic), "--mode", '{"transcribe": "cloud", "service": "Soniox"}']) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["mic"]["transcript"] == "cloud" and out["system"] == {"recorded": False, "level_db": None}
+    assert cli.main(["onboarding", "analyze", "-", "--checks"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["mic"] == {"recorded": False, "level_db": None, "text": None}
+    assert out["checks"][0]["status"] == "fail"
+    # --checks adds what the window shows
+    assert cli.main(["onboarding", "analyze", str(mic), "--system", str(system), "--checks"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert [c["name"] for c in out["checks"]] == ["Microphone", "System audio"]

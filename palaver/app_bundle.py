@@ -1,15 +1,22 @@
 """Build and install ``Palaver.app`` — the menu bar app as a real macOS app
 that can start at login.
 
-The bundle holds no Python: a tiny compiled launcher spawns this venv's
-``python -m palaver menubar`` as a *child* process. macOS
-attributes a child's microphone / system-audio access to the app
-that launched it, so permissions are asked for — and remembered — under
-"Palaver" with the usage texts below. (``exec`` would make the
-process the Python binary itself and lose that.) Rebuild after moving the
-venv; ad-hoc signing means macOS may ask for permissions again after a
-rebuild. The app was called "Meeting Transcribe" before; the bundle id stays,
-so macOS keeps what was allowed.
+A release (``build_release_app``, #60) is the native app: its executable
+``Palaver`` is the Swift app (native/, phase 2), which records, runs the
+daemon and the window, and starts Palaver's Python workers through the
+bundle's Python host ``palaver-python`` (this app's code on its runtime).
+macOS asks for the microphone and system audio under "Palaver" with the
+usage texts below. ``PALAVER_LEGACY_APP=1`` (or the ``legacy-app`` marker in
+Application Support) makes the Swift app start the Python menu bar app
+(``palaver-python -m palaver menubar``) instead, for one release.
+
+``install`` (``palaver app install`` from a checkout) still builds the
+development bundle of before: a tiny compiled launcher spawns this venv's
+``python -m palaver menubar`` as a *child* process, so macOS attributes its
+microphone / system-audio access to the app. Rebuild after moving the venv;
+ad-hoc signing means macOS may ask for permissions again after a rebuild.
+The app was called "Meeting Transcribe" before; the bundle id stays, so
+macOS keeps what was allowed.
 """
 
 from __future__ import annotations
@@ -28,7 +35,9 @@ APP_NAME = "Palaver"
 OLD_APP_NAMES = ["Meeting Transcribe"]
 ICON = Path(__file__).parent / "assets" / "Palaver.icns"
 BUNDLE_ID = "com.kenodressel.meeting-transcribe"
-EXECUTABLE = "palaver-launcher"
+EXECUTABLE = "Palaver"  # a release's executable: the Swift app (native/.build/release/Palaver)
+LAUNCHER = "palaver-launcher"  # the development bundle's executable (``install``): the ObjC launcher below
+MENUBAR_ICON = Path(__file__).parent / "assets" / "menubar.png"  # the Swift app's menu bar icon, in Contents/Resources
 APPS_DIR = Path.home() / "Applications"
 LAUNCH_AGENT = Path.home() / "Library" / "LaunchAgents" / f"{BUNDLE_ID}.plist"
 APP_LOG = LOG_PATH.with_name("app.log")
@@ -46,13 +55,13 @@ def release_python(runtime_id: str) -> str:
     return f"{RELEASE_RUNTIMES}/{runtime_id}/bin/python3"
 
 
-def info_plist(runtime_id: str | None = None) -> dict:
+def info_plist(runtime_id: str | None = None, executable: str = EXECUTABLE) -> dict:
     extra = {"PalaverRuntimeID": runtime_id} if runtime_id else {}
     return {**extra,
         "CFBundleIdentifier": BUNDLE_ID,
         "CFBundleName": APP_NAME,
         "CFBundleDisplayName": APP_NAME,
-        "CFBundleExecutable": EXECUTABLE,
+        "CFBundleExecutable": executable,
         "CFBundleIconFile": ICON.name,
         "CFBundlePackageType": "APPL",
         "CFBundleShortVersionString": __version__,
@@ -243,7 +252,6 @@ int main(void) {
     @autoreleasepool {
         char *args[] = { %(args)s, NULL };
         char *log_path = %(log)s;
-%(prelude)s
         make_parents(log_path);
         posix_spawn_file_actions_t actions;
         posix_spawn_file_actions_init(&actions);
@@ -309,30 +317,14 @@ def _c_path(value: str) -> str:
     return f"strdup({_c_string(value)})"
 
 
-# A release's launcher (#60) starts the bundle's own Python host (HOST,
-# below) instead of the runtime's python3, so the menu bar app's process is
-# Palaver.app's: the Dock, the menu bar and Activity Monitor say "Palaver"
-# with its icon. ``args[0]`` (the runtime's python3) is only checked: without
-# that runtime the launcher says how to get it back instead of failing silently.
-_RELEASE_PRELUDE = r"""
-        if (access(args[0], X_OK) != 0) {
-            [NSApplication sharedApplication];
-            [NSApp activateIgnoringOtherApps:YES];
-            NSAlert *alert = [NSAlert new];
-            alert.messageText = @"Palaver can't start";
-            alert.informativeText = [NSString stringWithFormat:@"Its runtime is missing (%%s). Run the installer again:\n\n%(install)s", args[0]];
-            [alert runModal];
-            return 78;
-        }
-        args[0] = strdup([NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:@"Contents/MacOS/%(host)s"].fileSystemRepresentation);
-"""
-
-HOST = "Palaver"  # in Contents/MacOS: the Python that runs the app, as Palaver.app
+ENGINE = "palaver-engine"  # in Contents/MacOS: the Swift speech engine (engine.py finds it there)
+HOST = "palaver-python"  # in Contents/MacOS: the Python the Swift app runs its workers with, as Palaver.app
 
 # The host: the runtime's libpython, loaded from the user's home at runtime
 # (it is not known at build time), running this bundle's code. A program in
 # Contents/MacOS has the bundle as its main bundle; the runtime's python3
 # would have none. Children started with sys.executable are the host too.
+# The Swift app starts every worker with it (and the legacy menu bar app).
 _HOST_C = r"""
 #include <dlfcn.h>
 #include <limits.h>
@@ -345,7 +337,7 @@ int main(int argc, char **argv) {
     char exe[PATH_MAX], app[PATH_MAX], runtime[PATH_MAX], code[PATH_MAX], lib[PATH_MAX];
     uint32_t size = sizeof exe;
     if (_NSGetExecutablePath(exe, &size) != 0 || realpath(exe, app) == NULL) return 70;
-    for (int i = 0; i < 3; i++) {  /* .../Palaver.app/Contents/MacOS/Palaver -> .../Palaver.app */
+    for (int i = 0; i < 3; i++) {  /* .../Palaver.app/Contents/MacOS/palaver-python -> .../Palaver.app */
         char *slash = strrchr(app, '/');
         if (slash) *slash = 0;
     }
@@ -397,14 +389,12 @@ def compile_launcher(
     python: Path | str,
     cli_options: list[str],
     log_path: Path | str = APP_LOG,
-    release: bool = False,
 ) -> None:
+    """The development bundle's launcher (``install``); a release has the Swift app instead."""
     argv = [str(python), "-m", "palaver", *cli_options, "menubar"]
-    prelude = _RELEASE_PRELUDE % {"host": HOST, "install": INSTALL_COMMAND} if release else ""
     source = _LAUNCHER_C % {
         "args": ", ".join([_c_path(argv[0])] + [f"strdup({_c_string(a)})" for a in argv[1:]]),
         "log": _c_path(str(log_path)),
-        "prelude": prelude,
     }
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "launcher.m"
@@ -413,30 +403,37 @@ def compile_launcher(
                         "-framework", "UserNotifications", "-o", str(path), str(src)], check=True)
 
 
+def _sign(app: Path) -> None:
+    """Nested code first (everything in Contents/MacOS but the executable), then the bundle."""
+    executable = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())["CFBundleExecutable"]
+    for nested in sorted((app / "Contents" / "MacOS").iterdir()):
+        if nested.name != executable:
+            subprocess.run(["codesign", "--force", "--sign", sign_identity(), str(nested)], check=True,
+                           capture_output=True)
+    subprocess.run(["codesign", "--force", "--sign", sign_identity(), str(app)], check=True, capture_output=True)
+
+
+def _bundle(dest_dir: Path, *, executable: str, runtime_id: str | None = None) -> Path:
+    app = dest_dir / f"{APP_NAME}.app"
+    macos = app / "Contents" / "MacOS"
+    macos.mkdir(parents=True, exist_ok=True)
+    (app / "Contents" / "Resources").mkdir(exist_ok=True)
+    shutil.copyfile(ICON, app / "Contents" / "Resources" / ICON.name)
+    (app / "Contents" / "Info.plist").write_bytes(plistlib.dumps(info_plist(runtime_id, executable)))
+    return app
+
+
 def build_app(
     dest_dir: Path,
     *,
     python: Path | str,
     cli_options: list[str],
     log_path: Path | str = APP_LOG,
-    release: bool = False,
-    runtime_id: str | None = None,
-    before_signing=None,
 ) -> Path:
-    app = dest_dir / f"{APP_NAME}.app"
-    macos = app / "Contents" / "MacOS"
-    macos.mkdir(parents=True, exist_ok=True)
-    (app / "Contents" / "Resources").mkdir(exist_ok=True)
-    shutil.copyfile(ICON, app / "Contents" / "Resources" / ICON.name)
-    (app / "Contents" / "Info.plist").write_bytes(plistlib.dumps(info_plist(runtime_id)))
-    compile_launcher(macos / EXECUTABLE, python=python, cli_options=cli_options, log_path=log_path, release=release)
-    if before_signing is not None:
-        before_signing(app)
-    for nested in sorted(macos.iterdir()):  # nested code first, then the bundle
-        if nested.name != EXECUTABLE:
-            subprocess.run(["codesign", "--force", "--sign", sign_identity(), str(nested)], check=True,
-                           capture_output=True)
-    subprocess.run(["codesign", "--force", "--sign", sign_identity(), str(app)], check=True, capture_output=True)
+    """The development bundle (``install``): the launcher starting ``python -m palaver menubar``."""
+    app = _bundle(dest_dir, executable=LAUNCHER)
+    compile_launcher(app / "Contents" / "MacOS" / LAUNCHER, python=python, cli_options=cli_options, log_path=log_path)
+    _sign(app)
     return app
 
 
@@ -473,15 +470,27 @@ def _install_code(app: Path, code: Path, runtime_id: str, version: str, compile_
         (bin_dir / name).chmod(0o755)
 
 
-def build_release_app(dest_dir: Path, *, runtime_id: str, code: Path, version: str = __version__,
-                      compile_with: str | None = None, python_version: str | None = None) -> Path:
-    """The app a release publishes (#60): the launcher, the host that runs
-    Palaver's code as Palaver.app, the code, and the command; it runs on
-    runtime ``runtime_id`` in Application Support."""
-    return build_app(dest_dir, python=release_python(runtime_id), cli_options=[], log_path=RELEASE_LOG,
-                     release=True, runtime_id=runtime_id,
-                     before_signing=lambda app: _install_code(app, code, runtime_id, version, compile_with,
-                                                              python_version))
+def build_release_app(dest_dir: Path, *, runtime_id: str, code: Path, app_binary: Path,
+                      version: str = __version__, compile_with: str | None = None,
+                      python_version: str | None = None, engine: Path | None = None) -> Path:
+    """The app a release publishes (#60): the Swift app (``app_binary``, the
+    built ``Palaver``) as the executable, the host that runs Palaver's code
+    as Palaver.app (``palaver-python``), the code, the command and the menu
+    bar icon; the code runs on runtime ``runtime_id`` in Application Support.
+    ``engine``: the built ``palaver-engine``. Every program sits in
+    Contents/MacOS and is signed with the rest (nested code before the
+    bundle)."""
+    app = _bundle(dest_dir, executable=EXECUTABLE, runtime_id=runtime_id)
+    macos = app / "Contents" / "MacOS"
+    shutil.copyfile(app_binary, macos / EXECUTABLE)
+    (macos / EXECUTABLE).chmod(0o755)
+    shutil.copyfile(MENUBAR_ICON, app / "Contents" / "Resources" / MENUBAR_ICON.name)
+    _install_code(app, code, runtime_id, version, compile_with, python_version)
+    if engine is not None:
+        shutil.copyfile(engine, macos / ENGINE)
+        (macos / ENGINE).chmod(0o755)
+    _sign(app)
+    return app
 
 
 def install(*, python: Path, cli_options: list[str], login: bool) -> Path:

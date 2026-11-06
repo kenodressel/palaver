@@ -334,7 +334,9 @@ def unpack_runtime(archive: Path, runtime_id: str, home: Path | None = None) -> 
     staging = Path(tempfile.mkdtemp(prefix=f".{runtime_id}.", dir=root))
     try:
         with tarfile.open(archive) as tar:
-            for member in tar.getmembers():
+            # AppleDouble "._*" files from macOS tar carry no runtime content: never unpacked.
+            members = [m for m in tar.getmembers() if not Path(m.name).name.startswith("._")]
+            for member in members:
                 parts = Path(member.name).parts
                 if not parts or parts[0] != runtime_id or ".." in parts or member.name.startswith("/"):
                     raise release.ManifestError(f"unexpected path in the runtime archive: {member.name}")
@@ -343,7 +345,7 @@ def unpack_runtime(archive: Path, runtime_id: str, home: Path | None = None) -> 
                     points_to = os.path.normpath(os.path.join(base, member.linkname))
                     if member.linkname.startswith("/") or Path(points_to).parts[:1] != (runtime_id,):
                         raise release.ManifestError(f"a link out of the runtime in its archive: {member.name}")
-            tar.extractall(staging, filter="data")  # its own symlinks (python3 -> python3.13) are kept
+            tar.extractall(staging, members=members, filter="data")  # its own symlinks (python3 -> python3.13) are kept
         if not (staging / runtime_id / "bin" / "python3").exists():
             raise release.ManifestError("the runtime archive has no bin/python3")
         shutil.rmtree(target, ignore_errors=True)  # a broken one from before
@@ -436,8 +438,9 @@ while [ "$n" -lt {start_ticks} ]; do
   fi
   sleep 0.2; n=$((n + 1))
 done
-# The new version did not start: the one before comes back.
-pkill -TERM -f "$target/Contents/MacOS/palaver-launcher" 2>/dev/null
+# The new version did not start: the one before comes back. The app itself is ended (the Swift app,
+# or the launcher of a version before 0.5), never a worker: they stop with it.
+pkill -TERM -f "$target/Contents/MacOS/(palaver-launcher|Palaver)\\$" 2>/dev/null
 n=0
 while pgrep -f "$target/Contents/MacOS/" >/dev/null 2>&1 && [ "$n" -lt 150 ]; do sleep 0.2; n=$((n + 1)); done
 rm -rf "$keep/failed.app"
@@ -512,6 +515,17 @@ class Installer:
         once the processes in ``wait_for`` (this app) have quit. Raises
         NotIdle when ``still_busy()``, asked last, says Palaver got busy:
         then no swap starts."""
+        script = self.prepare(staged, wait_for=wait_for, still_busy=still_busy)
+        reason = still_busy()  # asked last: a call that began meanwhile is recorded, not quit
+        if reason:
+            raise NotIdle(reason)
+        self.commit(staged)
+        self.launch(script)
+
+    def prepare(self, staged: Staged, *, wait_for: list[int] = (),
+                still_busy: Callable[[], str | None] = lambda: None) -> Path:
+        """The first half of ``apply``: the models in, the swap script written (its path).
+        The native app asks the idle gate between this and ``commit``."""
         reason = still_busy()
         if reason:
             raise NotIdle(reason)
@@ -536,9 +550,13 @@ class Installer:
             did_not_start=failure(f"Palaver {plan.version} did not start; {old} is back."))
         path = self.updates_dir / "swap.sh"
         path.write_text(script)
-        reason = still_busy()  # asked last: a call that began meanwhile is recorded, not quit
-        if reason:
-            raise NotIdle(reason)
+        return path
+
+    def commit(self, staged: Staged) -> None:
+        """The swap is certain now: the permissions are asked again at the restart, the runtime
+        in use is remembered for going back."""
+        current = install_layout.bundle_info()
+        plan = staged.plan
         # A new build is a new signature to macOS: the restarted app asks for
         # its permissions at once, while idle, not in the middle of the next call.
         install_layout.permissions_marker(self.home).unlink(missing_ok=True)
@@ -546,4 +564,6 @@ class Installer:
             root = install_layout.runtimes_dir(self.home)
             root.mkdir(parents=True, exist_ok=True)
             (root / ".previous").write_text(current["runtime"] + "\n")
-        self._spawn(["/bin/sh", str(path)])
+
+    def launch(self, script: Path) -> None:
+        self._spawn(["/bin/sh", str(script)])

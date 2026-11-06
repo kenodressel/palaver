@@ -119,6 +119,11 @@ class RecordingPaths:
         return self.folder / "cut_dismissed.json"
 
     @property
+    def silence_dismissed(self) -> Path:
+        """The user said no to removing the silence at the start or end."""
+        return self.folder / "silence_dismissed.json"
+
+    @property
     def local_only(self) -> Path:
         """The user keeps this meeting on this Mac: no cloud model, not shown through MCP (#53)."""
         return self.folder / "local_only.json"

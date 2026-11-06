@@ -1,11 +1,11 @@
 """Models Palaver hosts itself (#60), kept in Application Support/palaver/models.
 
-pyannote's diarization models are gated on Hugging Face: downloading them
-there needs an account, accepted terms and a token. Their licenses (CC-BY-4.0)
-allow passing them on, so each release carries a copy, and the code looks
-here first: ``resolve(repo)`` is the local folder when a complete copy of
+Nothing is hosted now (``HOSTED`` is empty): the speech engine's models come
+from Hugging Face without a token. The machinery stays for a model that is
+gated there: its license may allow passing it on, so a release carries a
+copy, and the code looks here first: ``resolve(repo)`` is the local folder when a complete copy of
 ``repo`` is here, else the repo, downloaded into the Hugging Face cache as
-before. Parakeet and the notes models are not gated and still come from there.
+before. The notes models are not gated and come from there.
 
 Each copy is one folder with ``palaver-model.json``: its name, version, the
 repo it copies and every file with its size, so a copy missing a file is
@@ -24,8 +24,10 @@ from pathlib import Path
 from .install_layout import models_dir
 
 MARKER = "palaver-model.json"
-# Hugging Face repo -> the name of the copy a release hosts.
-HOSTED = {"pyannote/speaker-diarization-community-1": "pyannote-community-1"}
+# Hugging Face repo -> the name of the copy a release hosts. Empty since the
+# speech engine (its models come from Hugging Face without a token); the
+# machinery stays for a model that needs a copy again.
+HOSTED: dict[str, str] = {}
 
 
 class ModelError(RuntimeError):

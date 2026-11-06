@@ -1,7 +1,7 @@
 """Where an installed Palaver keeps its three layers (#60).
 
-- the app, ``~/Applications/Palaver.app``: Palaver's own code and the
-  launcher, replaced on every release;
+- the app, ``~/Applications/Palaver.app``: the Swift app, Palaver's own
+  code and its Python host, replaced on every release;
 - the runtime, ``runtime/<id>/`` in Application Support: a standalone
   Python with every locked dependency, replaced only when the lock changes;
 - the models, ``models/<name>/`` in Application Support: downloaded once,
@@ -62,6 +62,12 @@ def permissions_marker(home: Path | None = None) -> Path:
     return support_dir(home) / "permissions-requested"
 
 
+def engine_proven_marker(home: Path | None = None) -> Path:
+    """Set once a meeting was transcribed through the speech engine: from then
+    on Settings → Storage offers to delete the models it replaced."""
+    return support_dir(home) / "engine-transcribed"
+
+
 def downloads_marker(home: Path | None = None) -> Path:
     """Holds the window server's pid while it downloads models (an update waits)."""
     return support_dir(home) / "downloading-models"
@@ -86,7 +92,7 @@ def update_state_path(home: Path | None = None) -> Path:
 
 def bundle() -> Path | None:
     """The Palaver.app this process runs from, when it is an installed
-    release (the launcher and the command set $PALAVER_APP); None when run
+    release (the app, its Python host and the command set $PALAVER_APP); None when run
     from a checkout."""
     value = os.environ.get("PALAVER_APP")
     return Path(value) if value else None

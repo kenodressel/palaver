@@ -138,14 +138,14 @@ def test_memory_check_lists_the_budgets_and_what_palaver_uses():
 
     c = doctor.check_memory(Budgets(), ram_gb=48, running={"total": int(5.4 * GB), "workers": []})
     assert c.status == "ok" and c.name == "Memory budgets"
-    assert c.detail == "live 6 GB, realtime 3.5 GB, transcription 8 GB, notes 14 GB, search index 1 GB; Palaver uses 5.4 GB now"
+    assert c.detail == "live 2 GB, realtime 1.5 GB, transcription 4 GB, notes 14 GB, search index 1 GB; Palaver uses 5.4 GB now"
     assert doctor.check_memory(Budgets(), ram_gb=48, running=None).detail.endswith("search index 1 GB")
 
 
 def test_memory_check_warns_when_a_call_would_take_half_the_mac():
     from palaver.memory import Budgets
 
-    c = doctor.check_memory(Budgets(), ram_gb=16, running=None)
+    c = doctor.check_memory(Budgets(live=6, stream=3.5), ram_gb=16, running=None)
     assert c.status == "warn" and "9.5 GB during a call" in c.detail and "16 GB" in c.detail
     assert "[memory]" in c.fix
 
@@ -175,3 +175,72 @@ def test_system_audio_check_skips_a_broken_log_line(tmp_path):
     (folder / "session.log").write_text('{"event": "record_st\n'
                                          '{"event": "record_start", "system_source": "process-tap"}\n')
     assert check_system_audio(tmp_path).status == "ok"
+
+
+def test_doctor_reports_speech_models(monkeypatch, tmp_path):
+    """One "Speech models" check, from the engine's hello (not the Hugging Face cache)."""
+    from palaver import doctor, engine
+
+    class Engine:
+        reply = {"models": {"asr": True, "diarizer": True}}
+
+        def __init__(self, **kw):
+            pass
+
+        def call(self, cmd, **kw):
+            assert cmd == "hello"
+            if isinstance(self.reply, Exception):
+                raise self.reply
+            return self.reply
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(engine, "Engine", Engine)
+    ok = doctor.check_speech_models()
+    assert (ok.name, ok.status, ok.detail) == ("Speech models", "ok", "downloaded")
+    Engine.reply = {"models": {"asr": True, "diarizer": False}}
+    missing = doctor.check_speech_models()
+    assert missing.status == "warn" and "speakers" in missing.detail and "setup assistant" in missing.fix
+    Engine.reply = {"models": {"asr": False, "diarizer": False}}
+    assert "transcription and speakers" in doctor.check_speech_models().detail
+    from palaver import onboarding
+
+    monkeypatch.setattr(engine, "engine_path", lambda: (_ for _ in ()).throw(engine.EngineError("the speech engine is missing: run `make engine`")))
+    monkeypatch.setattr(onboarding, "speech_files_here", lambda: False)
+    unbuilt = doctor.check_speech_models()
+    assert unbuilt.status == "warn" and "engine is missing" in unbuilt.detail
+    monkeypatch.setattr(onboarding, "speech_files_here", lambda: True)
+    assert doctor.check_speech_models().status == "ok"  # not built, files there
+    monkeypatch.setattr(engine, "engine_path", lambda: Path("/bin/sh"))
+    Engine.reply = engine.EngineError("the speech engine died (exit 3)")  # built, but crashes
+    crashed = doctor.check_speech_models()
+    assert crashed.status == "fail" and "died" in crashed.detail
+
+
+def test_the_doctor_has_no_parakeet_pyannote_or_token_checks(monkeypatch, tmp_path):
+    from palaver import doctor
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text('[user]\nname = "Timo"\n')
+    monkeypatch.setattr(doctor, "check_speech_models", lambda: Check("Speech models", "ok", "downloaded"))
+    for name in ("check_aec", "check_microphone", "check_system_audio", "check_audio_devices", "check_recent_audio",
+                 "check_teams_detection", "check_disk", "check_memory"):
+        monkeypatch.setattr(doctor, name, lambda *a, **k: Check(name, "ok", "x"))
+    names = [c.name for c in doctor.run_checks(config_path=cfg_path, offline=True)]
+    assert "Speech models" in names
+    assert not {"Parakeet model", "Diarization model", "Hugging Face token"} & set(names)
+
+
+def test_a_missing_engine_says_reinstall_in_the_bundle_and_make_engine_in_a_checkout(monkeypatch, tmp_path):
+    from palaver import doctor, engine, install_layout, onboarding
+
+    monkeypatch.setattr(onboarding, "speech_files_here", lambda: False)
+    monkeypatch.delenv("PALAVER_ENGINE", raising=False)
+    monkeypatch.setattr(engine, "REPO", tmp_path)  # no checkout build
+    monkeypatch.setattr(install_layout, "bundle", lambda: tmp_path / "Palaver.app")
+    inside = doctor.check_speech_models()
+    assert "reinstall Palaver" in inside.detail and "reinstall Palaver" in inside.fix and "make engine" not in inside.fix
+    monkeypatch.setattr(install_layout, "bundle", lambda: None)
+    outside = doctor.check_speech_models()
+    assert "make engine" in outside.detail and "make engine" in outside.fix

@@ -1282,6 +1282,7 @@ button.variant.drop:hover .x, button.variant.drop:focus-visible .x { color: var(
 .respell-label { color: var(--ink-2); font-size: 13px; font-weight: 600; }
 .respell-form { display: flex; align-items: center; gap: 8px; }
 .respell-form .name-input { border-color: var(--rule); background: var(--paper); }
+.respell-undo { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 8px; border-top: 1px solid var(--rule); }
 .respell .meta { margin: 0; font-size: 12px; }
 
 /* Review */
@@ -1599,8 +1600,6 @@ button.variant.drop:hover .x, button.variant.drop:focus-visible .x { color: var(
 .setup-renamed { color: var(--coral-ink); }
 .setup-renamed[hidden] { display: none; }
 .setup-check .setup-retry { flex: none; margin-left: auto; }
-.setup-token p { margin: 0; }
-.setup-token code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .meta code { font: 0.95em ui-monospace, SFMono-Regular, Menlo, monospace; }
 .setup-hint.ok { color: color-mix(in srgb, var(--v1) 80%, var(--ink)); }
 .setup-entry { margin-top: 16px; }
@@ -1647,7 +1646,10 @@ button.variant.drop:hover .x, button.variant.drop:focus-visible .x { color: var(
 .record-card.compact .tbtn { padding: 4px 12px; font-size: 13px; }
 .record-card.compact .record-text { flex-basis: 100%; }
 .record-card.compact.recording { flex-wrap: nowrap; }
-.record-card.compact.recording .record-text { flex: 1 1 auto; gap: 8px; white-space: nowrap; }
+.record-card.compact.recording .record-text { flex: 1 1 auto; gap: 8px; white-space: nowrap; overflow: hidden; }
+.record-card.compact.recording .record-text .pill,
+.record-card.compact.recording .record-actions { flex: none; }  /* only the time gives way, never under the Stop button */
+.record-card.compact.recording .record-text .meta { overflow: hidden; text-overflow: ellipsis; }
 
 /* Live now: large, only while a call is recorded. */
 .live-now { padding: 20px 24px 16px; border-radius: var(--card); background: var(--surface);

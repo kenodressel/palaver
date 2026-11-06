@@ -54,6 +54,18 @@ def test_the_running_recording_shows_with_its_stop(page, app_server):
     assert app_server.recording.recorded == [("stop", LIVE)]
 
 
+@pytest.mark.parametrize("width", [320, 260, 220])
+def test_the_running_recordings_time_never_runs_under_its_stop(page, app_server, width):
+    # Fonts and the list's width vary by Mac: the card is made narrow on purpose.
+    goto(page, app_server, f"#/{A}")
+    card = page.locator("#list .record-card")
+    expect(card).to_contain_text("since")
+    page.add_style_tag(content=f"#list .record-card {{ width: {width}px; box-sizing: border-box; }}")
+    since = card.locator(".record-text .meta").bounding_box()
+    actions = card.locator(".record-actions").bounding_box()
+    assert since["x"] + since["width"] <= actions["x"]  # the time ends before the Stop button starts
+
+
 def test_the_palette_starts_and_stops(page, app_server):
     goto(page, app_server, f"#/{A}")
     cmd(page, "k")

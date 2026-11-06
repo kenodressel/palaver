@@ -1,0 +1,83 @@
+{
+  "state": "recording",
+  "auto": true,
+  "manual": true,
+  "since": "2026-11-04T09:00:00+01:00",
+  "folder": "/Users/timo/Meetings/Recordings/2026-11-04T09-00-00",
+  "queued": [],
+  "transcribing": true,
+  "transcribing_folder": "/Users/timo/Meetings/Recordings/2026-11-04T08-00-00",
+  "notes_queued": [],
+  "writing_notes": null,
+  "indexing": false,
+  "index_downloading": false,
+  "system_source": "process-tap",
+  "mic_source": "avcapture",
+  "missing": [],
+  "teams_active": false,
+  "stop_question": {
+    "meeting": "2026-11-04T09-00-00",
+    "reason": "silence",
+    "minutes": 10,
+    "message": "You started this recording yourself, and it has been silent for 10 minutes. Stop recording?"
+  },
+  "ignored": [],
+  "why": {
+    "trigger": "manual",
+    "since": "2026-11-04T09:00:00+01:00",
+    "restarts": 0,
+    "mic": {
+      "device": "MacBook Pro Microphone",
+      "rate": 48000.0,
+      "source": "avcapture"
+    },
+    "system": {
+      "device": "MacBook Pro Speakers",
+      "rate": 48000.0,
+      "source": "process-tap"
+    },
+    "problems": [
+      {
+        "kind": "stalled",
+        "track": "system",
+        "start": 300.0
+      }
+    ]
+  },
+  "why_text": "Recording \u00b7 started by you at 09:00 \u00b7 mic MacBook Pro Microphone (48 kHz) \u00b7 output MacBook Pro Speakers (48 kHz) \u00b7 Palaver 1.5 GB",
+  "warnings": [
+    "No system audio is arriving"
+  ],
+  "hints": [],
+  "memory": {
+    "total": 1610612736,
+    "app": 268435456,
+    "workers": [
+      {
+        "kind": "process",
+        "label": "Transcription",
+        "meeting": "2026-11-04T08-00-00",
+        "pid": 4343,
+        "used": 1342177280,
+        "budget": 8.0,
+        "state": "running"
+      }
+    ],
+    "budgets": {
+      "live": 6.0,
+      "stream": 3.5,
+      "process": 8.0,
+      "notes": 14.0,
+      "index": 1.0
+    }
+  },
+  "talk": null,
+  "talk_text": null,
+  "nudge": null,
+  "quiet": [],
+  "last_stop": null,
+  "continues": [],
+  "cut": null,
+  "pid": 4242,
+  "updated": "2026-11-04T09:10:20+01:00"
+}

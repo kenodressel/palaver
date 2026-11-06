@@ -217,7 +217,7 @@ class Served:
     live_worker: subprocess.Popen | None = None  # the running process live.pid names
     # This Mac as the setup assistant sees it (#55): given, never looked at;
     # its downloads and test recording are fakes (no network, no microphone).
-    probe: FakeProbe = field(default_factory=FakeProbe)
+    probe: FakeProbe = field(default_factory=lambda: FakeProbe(downloaded=frozenset({"speech"})))
     model: FakeModel = field(default_factory=FakeModel)
     free_gb: float = 64.0  # free memory, as the app sees it
 

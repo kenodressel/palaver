@@ -1,6 +1,7 @@
 """Tests for updating from inside the app (#60): the state machine with an
 idle gate, and the download, unpacking and swap on disk."""
 
+import io
 import json
 import subprocess
 import tarfile
@@ -379,6 +380,34 @@ def test_a_new_version_that_does_not_start_is_replaced_by_the_one_before(tmp_pat
     assert status["available"]["version"] == "0.2.0"
 
 
+def test_a_swap_that_puts_the_old_version_back_ends_the_new_app_never_its_workers(tmp_path):
+    """The app quits: the Swift app (or the launcher of a version before 0.5) gets SIGTERM;
+    palaver-python's workers, and the old host's ("Palaver -m palaver ..."), stop on their own."""
+    target = tmp_path / "Palaver.app"
+    macos = target / "Contents" / "MacOS"
+    macos.mkdir(parents=True)
+    for name in ("Palaver", "palaver-launcher", "palaver-python"):  # all written first: macOS guards a bundle once run
+        (macos / name).write_text("#!/bin/sh\nwhile :; do sleep 0.1; done\n")
+        (macos / name).chmod(0o755)
+    line = next(x for x in updater._SWAP.splitlines() if x.startswith("pkill"))
+    procs = {"app": [macos / "Palaver"], "launcher": [macos / "palaver-launcher"],
+             "worker": [macos / "palaver-python", "-m", "palaver", "process", "/m/a"],
+             "old worker": [macos / "Palaver", "-m", "palaver", "process", "/m/a"]}
+    running = {k: subprocess.Popen([str(a) for a in argv]) for k, argv in procs.items()}
+    try:
+        time.sleep(0.3)
+        subprocess.run(["/bin/sh", "-c", f"target={updater._sh(target)}\n{line}"], check=False, timeout=10)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not all(running[k].poll() is not None for k in ("app", "launcher")):
+            time.sleep(0.05)
+        assert {k for k, p in running.items() if p.poll() is not None} == {"app", "launcher"}
+    finally:
+        for p in running.values():
+            if p.poll() is None:
+                p.kill()
+            p.wait()
+
+
 def test_a_failed_swap_is_still_said_after_the_app_reopened():
     previous = {"state": "failed", "from_swap": True, "error": "Palaver 0.2.0 did not start; 0.1.0 is back.",
                 "available": {"version": "0.2.0"}}
@@ -463,6 +492,23 @@ def test_links_inside_the_runtime_are_kept(tmp_path):
     assert (runtime / "bin" / "python3").resolve() == (runtime / "bin" / "python3.13").resolve()
 
 
+def test_apple_double_files_in_a_runtime_archive_are_skipped(tmp_path):
+    # macOS tar adds "._<id>" at the top and "._<name>" beside files; 0.3.x refused such an archive.
+    root = tmp_path / "rt-build" / "rt-5" / "bin"
+    root.mkdir(parents=True)
+    (root / "python3").write_text("#!/bin/sh\n")
+    archive = tmp_path / "rt.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        for name in ("._rt-5", "rt-5/bin/._python3"):
+            info = tarfile.TarInfo(name)
+            info.size = 1
+            tar.addfile(info, io.BytesIO(b"x"))
+        tar.add(tmp_path / "rt-build" / "rt-5", arcname="rt-5")
+    runtime = updater.unpack_runtime(archive, "rt-5", tmp_path / "home")
+    assert (runtime / "bin" / "python3").exists()
+    assert not (runtime / "bin" / "._python3").exists()
+
+
 def test_the_installed_release_lists_the_runtimes_on_this_mac(tmp_path, monkeypatch):
     home = tmp_path / "home"
     app = tmp_path / "Palaver.app"
@@ -483,12 +529,12 @@ def test_unpackings_that_never_finished_are_swept_after_an_hour(tmp_path):
     home = tmp_path / "home"
     root = install_layout.runtimes_dir(home)
     stale, fresh = root / ".rt-3.abcd", root / ".rt-4.efgh"
-    model = install_layout.models_dir(home) / ".pyannote-community-1.xyz"
+    model = install_layout.models_dir(home) / ".northwind-voices.xyz"
     for d in (stale, fresh, model):
         d.mkdir(parents=True)
     (root / ".previous").write_text("rt-1\n")
     old = time.time() - 7200
     for d in (stale, model):
         os.utime(d, (old, old))
-    assert sorted(p.name for p in updater.sweep_staging(home)) == [".pyannote-community-1.xyz", ".rt-3.abcd"]
+    assert sorted(p.name for p in updater.sweep_staging(home)) == [".northwind-voices.xyz", ".rt-3.abcd"]
     assert fresh.exists() and (root / ".previous").exists()

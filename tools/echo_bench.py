@@ -141,14 +141,10 @@ def residual(raw: np.ndarray, out: np.ndarray, far: np.ndarray, t0: float = 0.0)
 
 
 def _transcriber():
-    import mlx.core as mx
-
     from palaver.dictionary import Dictionary
-    from palaver.live import MLX_CACHE_LIMIT
     from palaver.transcriber import make_transcriber
 
-    mx.set_cache_limit(MLX_CACHE_LIMIT)
-    return make_transcriber("parakeet-mlx", whisper_repo="", dictionary=Dictionary(), language="auto")
+    return make_transcriber("parakeet", whisper_repo="", dictionary=Dictionary(), language="auto")
 
 
 class Cache:

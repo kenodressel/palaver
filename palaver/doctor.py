@@ -87,6 +87,39 @@ def check_model(name: str, repo: str, probe_file: str, size: str) -> Check:
     return Check(name, "warn", "not downloaded yet", f"downloads on first `process` (~{size})")
 
 
+def check_speech_models() -> Check:
+    """Parakeet and the diarizer, palaver-engine's: asked of the engine itself
+    (``hello``), which knows when its models are complete. Without the engine
+    built, the files say."""
+    from . import install_layout, onboarding
+    from .engine import Engine, EngineError, engine_path
+
+    try:
+        if not engine_path().exists():
+            raise EngineError("the speech engine is missing: reinstall Palaver" if install_layout.bundle() is not None
+                              else "the speech engine is missing: run `make engine`")
+    except EngineError as exc:  # not built: the files say
+        if onboarding.speech_files_here():
+            return Check("Speech models", "ok", "downloaded (the engine is not built, files checked)")
+        return Check("Speech models", "warn", f"not downloaded yet ({exc})",
+                     "download them in the setup assistant (about 0.5 GB), or "
+                     + ("reinstall Palaver" if install_layout.bundle() is not None else "run `make engine` first"))
+    engine = Engine(idle_timeout=30)
+    try:
+        models = engine.call("hello").get("models") or {}
+    except EngineError as exc:  # built, but it does not run
+        first = str(exc).strip().splitlines()[0] if str(exc).strip() else "no answer"
+        return Check("Speech models", "fail", f"the speech engine does not run ({first})",
+                     "run `palaver doctor` again after `make engine`, or reinstall Palaver")
+    finally:
+        engine.close()
+    missing = [{"asr": "transcription", "diarizer": "speakers"}.get(n, n) for n, ready in models.items() if not ready]
+    if not models or missing:
+        return Check("Speech models", "warn", f"not downloaded yet ({' and '.join(missing) or 'unknown'})",
+                     "download them in the setup assistant (about 0.5 GB); meetings recorded before wait for them")
+    return Check("Speech models", "ok", "downloaded")
+
+
 def check_aec() -> Check:
     from . import aec
 
@@ -323,20 +356,8 @@ def run_checks(*, config_path: Path, offline: bool = False) -> list[Check]:
         if not offline and cfg.notion_token:
             checks.append(check_notion(cfg.notion_token, cfg.notion_mode,
                                        cfg.notion_parent_page_id, cfg.notion_database_id))
-        from . import model_store
-
-        if model_store.local_path(cfg.diarizer_repo) is not None:  # a release's copy: no token (#60)
-            checks.append(Check("Diarization model", "ok", "downloaded (Palaver's copy)"))
-        else:
-            if not cfg.hf_token:
-                checks.append(Check("Hugging Face token", "warn", "missing",
-                                    "download the speaker model in the setup assistant, or set HF_TOKEN"))
-            else:
-                checks.append(Check("Hugging Face token", "ok", "set"))
-            checks.append(check_model("Diarization model", cfg.diarizer_repo, "config.yaml", "30 MB"))
-        if cfg.transcriber == "parakeet-mlx":
-            checks.append(check_model("Parakeet model", cfg.parakeet_repo, "config.json", "1.2 GB"))
-        else:
+        checks.append(check_speech_models())
+        if cfg.transcriber not in ("parakeet", "parakeet-mlx"):
             checks.append(check_model("Whisper model", cfg.whisper_repo, "config.json", "1.6 GB"))
         from .memory import budgets_for
 

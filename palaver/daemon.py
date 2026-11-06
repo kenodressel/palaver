@@ -289,8 +289,10 @@ class DaemonRunning(RuntimeError):
 
 
 def palaver_alive(pid) -> bool:
-    """Whether ``pid`` is a running Palaver (the menu bar app or `palaver
-    daemon`); a pid the system gave to another program since is not."""
+    """Whether ``pid`` is a running Palaver that owns a recording: the
+    Swift app (``Palaver.app/Contents/MacOS/Palaver``, or a development
+    build in ``.build/…/Palaver``), the Python menu bar app or `palaver
+    daemon`; a pid the system gave to another program since is not."""
     try:
         pid = int(pid)
         os.kill(pid, 0)
@@ -304,8 +306,17 @@ def palaver_alive(pid) -> bool:
     except (OSError, subprocess.SubprocessError):
         return True  # alive, and nothing says it is not Palaver
     # Only the app or `palaver daemon` own a recording: a reused pid can land
-    # on `palaver mcp` or `palaver process`, which must not block a start.
-    return re.search(r"\bpalaver\s+(menubar|daemon)\b", command.lower()) is not None
+    # on `palaver mcp` or `palaver process` (or the bundle's palaver-python
+    # running one), which must not block a start.
+    return _OWNS_RECORDING.search(command.lower()) is not None
+
+
+# The command lines of a Palaver that records (lowercased); Processes.palaverAlive in Swift matches the same.
+# Up to 0.3.14 Contents/MacOS/Palaver was the Python host: `…/MacOS/Palaver -m palaver process …` is a
+# worker of that release, not the app (its menu bar app still matches by `palaver menubar`).
+_OWNS_RECORDING = re.compile(r"\bpalaver\s+(menubar|daemon)\b"
+                             r"|/contents/macos/palaver(?!\S)(?!.*\s-m\s+palaver\b)"
+                             r"|/\.build/(\S+/)?(debug|release)/palaver(?!\S)(?!.*\s-m\s+palaver\b)")
 
 
 def palaver_processes() -> list[str]:

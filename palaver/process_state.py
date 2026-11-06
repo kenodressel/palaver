@@ -47,17 +47,17 @@ def clear(paths: RecordingPaths) -> None:
 
 def missing_models(cfg, paths: RecordingPaths) -> list[str]:
     """The labels of the models `process` still needs for ``paths`` that are
-    not on this Mac: Parakeet for a track not transcribed yet (the
-    microphone's always runs here), pyannote's to tell the speakers apart."""
+    not on this Mac: the speech models (palaver-engine's: Parakeet for a track
+    not transcribed yet, the microphone's always runs here, and the diarizer
+    to tell the speakers apart; one download)."""
     from .onboarding import MODELS as ALL
 
-    need = []
     transcribed = paths.mic_segments.exists() and paths.system_segments.exists()
-    if getattr(cfg, "transcriber", "parakeet-mlx") == "parakeet-mlx" and not transcribed:
-        need.append(ALL["parakeet"])
-    if not (paths.system_turns.exists() and paths.speaker_embeddings.exists()):
-        need.append(ALL["pyannote"])
-    return [m.label for m in need if not _here(cfg, m)]
+    needs_asr = getattr(cfg, "transcriber", "parakeet") in ("parakeet", "parakeet-mlx") and not transcribed
+    needs_speakers = not (paths.system_turns.exists() and paths.speaker_embeddings.exists())
+    if not (needs_asr or needs_speakers) or _here(cfg, ALL["speech"]):
+        return []
+    return [ALL["speech"].label]
 
 
 def _here(cfg, m) -> bool:

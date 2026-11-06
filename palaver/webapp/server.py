@@ -375,7 +375,8 @@ def _handler(app: App, port: int, key: str | None = None) -> type[BaseHTTPReques
                                                       calendar=app.calendar))
                 m = re.fullmatch(r"/api/meetings/([^/]+)/cut-suggestion", self.path)
                 if m:
-                    api.dismiss_cut(app.output_dir, m.group(1), bool(body.get("dismiss", True)))
+                    api.dismiss_cut(app.output_dir, m.group(1), bool(body.get("dismiss", True)),
+                                    what=str(body.get("what", "cut")))
                     return self._json(api.get_meeting(app.output_dir, m.group(1), user_name=app.user_name,
                                                       calendar=app.calendar))
                 m = re.fullmatch(r"/api/meetings/([^/]+)/line", self.path)
@@ -392,7 +393,7 @@ def _handler(app: App, port: int, key: str | None = None) -> type[BaseHTTPReques
                                                          calendar=app.calendar), "undo": token})
                 m = re.fullmatch(r"/api/meetings/([^/]+)/transcribe", self.path)
                 if m:
-                    api.transcribe_again(app.output_dir, m.group(1), app.recording, app.cfg)
+                    api.transcribe_again(app.output_dir, m.group(1), app.recording, app.cfg, probe=app.probe)
                     return self._json(api.get_meeting(app.output_dir, m.group(1), user_name=app.user_name,
                                                       calendar=app.calendar))
                 m = re.fullmatch(r"/api/meetings/([^/]+)/delete-audio", self.path)
@@ -421,7 +422,8 @@ def _handler(app: App, port: int, key: str | None = None) -> type[BaseHTTPReques
                 if self.path in ("/api/recording/start", "/api/recording/end"):
                     action = "start" if self.path.endswith("start") else "stop"
                     meeting = body.get("meeting") if isinstance(body, dict) else None
-                    return self._json(api.record(app.recording, action, None if meeting is None else str(meeting)))
+                    return self._json(api.record(app.recording, action, None if meeting is None else str(meeting),
+                                                          output_dir=app.output_dir))
                 m = re.fullmatch(r"/api/recording/(stop|keep)", self.path)
                 if m:
                     return self._json(api.answer_recording_question(app.recording, m.group(1), str(body["meeting"])))
@@ -658,6 +660,8 @@ def _handler(app: App, port: int, key: str | None = None) -> type[BaseHTTPReques
             changed, token = None, None
             if self.path == "/api/glossary/respell":  # from a meeting: no glossary page needed
                 return self._json(api.respell(app.output_dir, heard=str(body["heard"]), term=str(body["term"])))
+            if self.path == "/api/glossary/unrespell":  # from a meeting: a wrong respelling goes
+                return self._json(api.unrespell(app.output_dir, heard=str(body["heard"])))
             if self.path == "/api/glossary/accept":
                 changed = api.accept_suggestion(app.output_dir, term=str(body["term"]),
                                                 variants=[str(v) for v in body.get("variants", [])],

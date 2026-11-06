@@ -61,7 +61,7 @@ class FakeCalendar(ob.Calendar):
 
 class FakeProbe:
     def __init__(self, hardware: ob.Hardware | None = None, installed: ob.Installed | None = None,
-                 downloaded: frozenset[str] = frozenset({"pyannote"}), permissions: dict | None = None,
+                 downloaded: frozenset[str] = frozenset(), permissions: dict | None = None,
                  full_name: str = "Timo Strauss"):
         self._hardware = hardware or ob.Hardware("Apple M4 Pro", 48, 120)
         self._installed = installed or ob.Installed(teams=True, slack=False, claude_code=True)
@@ -83,7 +83,6 @@ class FakeProbe:
         self.test = ob.TestRecording(capture=self.recorder.capture, analyze=self.recorder.analyze)
         self.calendar = FakeCalendar(self._permissions)
         self.hardware_calls = 0
-        self.hf_token = True
         self.cfg = None
 
     def _fetch(self, model: ob.Model) -> None:
@@ -109,12 +108,6 @@ class FakeProbe:
 
     def full_name(self) -> str:
         return self._name
-
-    def hf_token_set(self) -> bool:
-        return self.hf_token
-
-    def hf_token_needed(self) -> bool:
-        return True  # a checkout: pyannote from Hugging Face
 
     def repo_of(self, m: ob.Model) -> str:
         return m.repo

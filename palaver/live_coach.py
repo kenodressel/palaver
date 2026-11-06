@@ -330,3 +330,106 @@ class LiveCoach:
         with self._lock:
             nudge = self._nudge
         return {"talk": talk, "talk_text": talk_text(talk), "nudge": nudge, "quiet": list(self._quiet)}
+
+
+# --- the coach as a worker of its own (`palaver coach <folder>`) ----------------------------
+
+COACH_FILE = "coach.json"
+WRITE_EVERY = 1.0  # the status is written this often
+SETTINGS_CHECK_SECONDS = 5.0  # the nudge switches are read again this often
+
+
+def coach_path(folder: Path) -> Path:
+    return Path(folder) / COACH_FILE
+
+
+def settings_switches(ttl: float = SETTINGS_CHECK_SECONDS, clock: Callable[[], float] = time.monotonic
+                      ) -> Callable[[], dict[str, bool]]:
+    """The nudge kinds switched on in settings.json, read again every ``ttl`` seconds
+    (the monitor asks on every poll)."""
+    from . import settings
+
+    state: dict[str, Any] = {"at": -1e9, "value": {}}
+
+    def switches() -> dict[str, bool]:
+        now = clock()
+        if now - state["at"] >= ttl:
+            state["at"] = now
+            try:
+                state["value"] = enabled_kinds(settings.load())
+            except Exception:
+                LOGGER.debug("could not read the nudge switches", exc_info=True)
+        return state["value"]
+
+    return switches
+
+
+def write_status(folder: Path, status: dict[str, Any]) -> None:
+    """coach.json, atomically: the daemon reads it every tick."""
+    path = coach_path(folder)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps({k: status.get(k) for k in ("talk", "talk_text", "nudge")}
+                              | {"quiet": list(status.get("quiet") or [])}))
+    tmp.replace(path)
+
+
+def run_coach(folder: Path, *, coach: "LiveCoach", stop: threading.Event, every: float = WRITE_EVERY,
+              context_after: float = CONTEXT_AFTER,
+              finished: Callable[[Any], bool] | None = None, stall: float | None = None,
+              clock: Callable[[], float] = time.monotonic,
+              parent_alive: Callable[[], bool] | None = None) -> int:
+    """Run ``coach`` over the recording in ``folder``, writing coach.json every ``every``
+    seconds, until the recording is finished (meta.json, no .part: live.recording_finished)
+    or ``stop`` is set (SIGTERM). Also when nothing is left to follow, as the live worker's
+    run_live: the tracks stopped growing for ``stall`` (live.STALL_SECONDS) without finishing,
+    the app that started this is gone (the parent changed: an orphan is adopted by launchd) or
+    the folder is. The file is removed on the way out: no file, no coach."""
+    import os
+
+    from .live import STALL_SECONDS, recording_finished
+
+    stall = STALL_SECONDS if stall is None else stall
+    if parent_alive is None:
+        parent = os.getppid()
+        parent_alive = lambda: os.getppid() == parent and parent != 1  # noqa: E731
+
+    finished = finished or recording_finished
+    folder = Path(folder)
+    paths = coach.monitor.paths
+
+    def size() -> int:
+        total = 0
+        for p in (paths.mic_raw_wav, paths.system_wav):
+            for f in (p, Path(str(p) + ".part")):
+                try:
+                    total += f.stat().st_size
+                except OSError:
+                    pass
+        return total
+
+    last_size, last_growth = -1, clock()
+    coach.start(context_after)
+    try:
+        while True:
+            try:
+                write_status(folder, coach.status())
+            except Exception:
+                LOGGER.debug("could not write the coach's status", exc_info=True)
+            if stop.wait(every) or finished(paths):
+                break
+            if not parent_alive():
+                LOGGER.warning("the app that started the coach is gone; ending")
+                break
+            if not folder.exists():
+                break
+            now = size()
+            if now != last_size:
+                last_size, last_growth = now, clock()
+            elif clock() - last_growth > stall:
+                LOGGER.warning("recording stopped growing without finishing; ending the coach")
+                break
+    finally:
+        coach.stop()
+        coach.stopped.wait(STOP_WAIT + 1)
+        coach_path(folder).unlink(missing_ok=True)
+    return 0

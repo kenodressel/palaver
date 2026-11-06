@@ -60,7 +60,7 @@ def _cfg(memory_table=None, *, sync=False, engine="local", model="mlx-community/
 
 def test_budgets_from_config_with_defaults_and_overrides():
     b = memory.budgets_for(_cfg({"live": 4.0, "process": 9.0}, model="some/unknown-model"))
-    assert (b.live, b.stream, b.process) == (4.0, 3.5, 9.0)
+    assert (b.live, b.stream, b.process) == (4.0, 1.5, 9.0)
     assert b.notes == 20.0  # an unknown notes model gets the most, as the free-memory gate does
     assert memory.budgets_for(_cfg()).notes == 14.0
     assert memory.budgets_for(_cfg(engine="claude")).notes == 2.0  # the model runs elsewhere
@@ -99,7 +99,7 @@ def test_run_with_notes_gets_the_notes_models_need(monkeypatch):
     hook = memory.budget_hook(_cfg(sync=True))
     assert hook("process", Path("/r/a")) == 14.0
     monkeypatch.setattr(llm, "notes_memory_gb", lambda cfg, folder=None: 0.0)
-    assert hook("process", Path("/r/a")) == 8.0
+    assert hook("process", Path("/r/a")) == memory.DEFAULT_PROCESS_GB
 
 
 def test_budgets_refuse_nonsense():
@@ -144,11 +144,10 @@ class _Watch:
         return out
 
 
-def test_the_live_budget_leaves_room_above_a_whole_meetings_peak():
-    """Replaying a 60-min call, the live worker stays at 2.4–3.7 GB with
-    peaks up to 4.8 GB (#49); a restart loses its work, so the default sits
-    a GB above that."""
-    assert Budgets().live == 6.0
+def test_the_speech_budgets_are_the_engines():
+    """Speech runs in the Swift engine, a child of the worker (the tree is
+    measured): the budgets are 2 GB live, 1.5 GB realtime, 4 GB `process` (a 73-min meeting peaked at 2.5 GB)."""
+    assert (Budgets().live, Budgets().stream, Budgets().process) == (2.0, 1.5, 4.0)
 
 
 def test_a_worker_under_budget_is_left_alone_and_shown():
@@ -159,7 +158,7 @@ def test_a_worker_under_budget_is_left_alone_and_shown():
     assert status["total"] == int(0.3 * GB) + int(3.6 * GB)
     assert status["workers"] == [{"kind": "live", "label": "Live transcription", "meeting": "m1", "pid": 11,
                                   "used": int(3.6 * GB), "budget": 5.0, "state": "running"}]
-    assert status["budgets"] == {"live": 5.0, "stream": 3.5, "process": 8.0, "notes": 14.0, "index": 1.0}
+    assert status["budgets"] == {"live": 5.0, "stream": 1.5, "process": 4.0, "notes": 14.0, "index": 1.0}
 
 
 def test_live_over_budget_for_a_while_is_restarted_once_notified_once(caplog):
@@ -263,7 +262,7 @@ def test_free_memory_is_only_asked_when_a_worker_is_over_budget():
     asked = []
     w = _Watch()
     w.dog._free_gb = lambda: asked.append(1) or 30.0
-    w.used[62] = 3.0
+    w.used[62] = 1.5
     w.sustain(("process", Path("/r/m1"), _Proc(62)))
     assert asked == []
 

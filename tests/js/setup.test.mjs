@@ -119,6 +119,8 @@ test("what the window says when it offers the assistant again", () => {
     "Gemma 4 12B is not downloaded yet.");
   assert.equal(setupOfferText({ why: "missing", models: ["parakeet", "gemma"] }, { gemma: "Gemma 4 12B", parakeet: "Parakeet" }),
     "Parakeet and Gemma 4 12B are not downloaded yet.");
+  assert.equal(setupOfferText({ why: "missing", models: ["speech"] }, { speech: "Speech models" }),
+    "Speech models are not downloaded yet.");
   assert.equal(setupOfferText(null), null);
 });
 

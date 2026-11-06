@@ -17,8 +17,9 @@ reason for each.
 Measured on 2026-10-29: Gemma 4 12B 4-bit is an 8.3 GB download and uses
 about 10 GB while writing, up to 12 GB (notes wait for 14 GB free);
 Qwen3-30B-A3B needs 18-22 GB (20 GB free); the live worker about 3.6 GB,
-the realtime stream 1.9-2.5 GB; Parakeet 2.3 GB on disk and about 2.5 GB
-of memory; pyannote about 1 GB; multilingual-e5-small 470 MB.
+the realtime stream 1.9-2.5 GB; the speech models (Parakeet v3 and the
+diarizer, CoreML, through palaver-engine) 0.5 GB on disk and under 1 GB of
+memory; multilingual-e5-small 470 MB.
 """
 
 from __future__ import annotations
@@ -70,14 +71,27 @@ class Model:
     probe: str  # a file of the repo that is there once it is downloaded
     disk_gb: float
     memory: str  # what it uses, said plainly
-    hosted: bool = False  # a release carries a copy (model_store): no Hugging Face token needed
+    hosted: bool = False  # a release carries a copy (model_store)
+    local_folder: str = ""  # a folder of Application Support/palaver/models that holds it (or an old copy of it)
+    manual: bool = False  # retired, but never dropped at start: Settings → Storage offers to delete it
 
 
+# The speech models are one download: palaver-engine's own (Parakeet v3 and the
+# diarizer, CoreML, from Hugging Face without a token), in models/fluidaudio.
+# ``probe`` is the diarizer's last file, the cheap check; see ``speech_here``.
+SPEECH_FOLDER = "fluidaudio"
+SPEECH_FILES = (
+    "parakeet-tdt-0.6b-v3/Preprocessor.mlmodelc", "parakeet-tdt-0.6b-v3/Encoder.mlmodelc",
+    "parakeet-tdt-0.6b-v3/Decoder.mlmodelc", "parakeet-tdt-0.6b-v3/JointDecisionv3.mlmodelc",
+    "parakeet-tdt-0.6b-v3/parakeet_v3_vocab.json",
+    "speaker-diarization/Segmentation.mlmodelc", "speaker-diarization/Embedding.mlmodelc",
+    "speaker-diarization/FBank.mlmodelc", "speaker-diarization/PldaRho.mlmodelc",
+    "speaker-diarization/plda-parameters.json",
+)
 MODELS: dict[str, Model] = {m.id: m for m in (
-    Model("parakeet", "Parakeet", "transcription", "mlx-community/parakeet-tdt-0.6b-v3", "config.json", 2.3,
-          "about 2.5 GB of memory while transcribing"),
-    Model("pyannote", "pyannote", "telling the speakers apart", "pyannote/speaker-diarization-community-1",
-          "config.yaml", 0.03, "about 1 GB of memory while it runs", hosted=True),
+    Model("speech", "Speech models", "transcription and telling the speakers apart", "fluidaudio",
+          "speaker-diarization/plda-parameters.json", 0.5, "under 1 GB while transcribing",
+          local_folder=SPEECH_FOLDER),
     Model("gemma", "Gemma 4 12B", "notes and projects", GEMMA, "config.json", 8.3,
           "about 10 GB of memory while writing, up to 12 GB"),
     Model("e5", "multilingual-e5-small", "search by meaning", "intfloat/multilingual-e5-small", "config.json", 0.47,
@@ -90,6 +104,14 @@ NOTES_MODELS = {GEMMA: "gemma"}  # local notes model (repo) -> its download
 RETIRED: dict[str, Model] = {m.id: m for m in (
     Model("qwen", "Qwen3 30B A3B", "notes and projects (no longer offered)", QWEN, "config.json", 16.0,
           "18–22 GB of memory while writing"),
+    # Replaced by the speech models (palaver-engine): the Parakeet MLX copy in the
+    # Hugging Face cache and the pyannote copy. Never deleted by themselves.
+    Model("parakeet", "Parakeet (MLX)", "transcription (replaced by the speech models)",
+          "mlx-community/parakeet-tdt-0.6b-v3", "config.json", 2.3, "about 2.5 GB of memory while transcribing",
+          manual=True),
+    Model("pyannote", "pyannote", "telling the speakers apart (replaced by the speech models)",
+          "pyannote/speaker-diarization-community-1", "config.yaml", 0.03, "about 1 GB of memory while it runs",
+          local_folder="pyannote-community-1", manual=True),
 )}
 
 
@@ -248,18 +270,18 @@ def _transcription(hw: Hardware, cur: Current) -> Recommendation:
     reg = cur.registry
     features = reg.features_of(TRANSCRIPTION)
     now = cur.choices.get(features[0], LOCAL) if features else LOCAL
-    parakeet = MODELS["parakeet"]
+    speech = MODELS["speech"]
     local = Option(LOCAL, "Parakeet on this Mac",
-                   f"Nothing leaves the Mac. A {_gb(parakeet.disk_gb)} download." if hw.apple_silicon
+                   f"Nothing leaves the Mac. A {_gb(speech.disk_gb)} download." if hw.apple_silicon
                    else "Needs Apple Silicon.", hw.apple_silicon)
     options = (local, *_provider_options(reg, TRANSCRIPTION))
-    needed = tuple(m for m in ("parakeet", "pyannote") if m not in cur.downloaded) if hw.apple_silicon else ()
+    needed = tuple(m for m in ("speech",) if m not in cur.downloaded) if hw.apple_silicon else ()
     if hw.apple_silicon:
         return Recommendation(
             "transcription", "models", "Transcription", LOCAL, local.label,
             "Parakeet runs on any Apple Silicon Mac (about a minute per hour of audio for each track on an "
-            "M4 Pro), with about 2.5 GB of memory while it runs, plus about 1 GB for pyannote, which tells the "
-            "speakers apart. Nothing leaves the Mac.",
+            "M4 Pro), with under 1 GB of memory while it runs. The same download tells the speakers apart. "
+            "Nothing leaves the Mac.",
             now, options, downloads=needed, features=features)
     return Recommendation("transcription", "models", "Transcription", now, UNSUPPORTED,
                           INTEL.format(short=hw.short), now, options, features=features)
@@ -477,7 +499,12 @@ def offer(state: dict | None, fingerprint: str, *, has_meetings: bool, missing: 
     another Mac than the one it was set up on, or when a model the choices
     need is missing. ``state``: settings.json's "setup"."""
     if not state:
-        return None if has_meetings else {"why": "first"}
+        if not has_meetings:
+            return {"why": "first"}
+        # An existing user who never ran the assistant is not asked to; but their meetings
+        # wait for the speech models, which they must be told about (the others stay as they were).
+        speech = [m for m in missing if m == "speech"]
+        return {"why": "missing", "models": speech} if speech else None
     if state.get("hardware") and state["hardware"] != fingerprint:
         return {"why": "changed", "was": state["hardware"], "now": fingerprint}
     if state.get("done") and missing:
@@ -485,15 +512,24 @@ def offer(state: dict | None, fingerprint: str, *, has_meetings: bool, missing: 
     return None
 
 
+def fetch_missing_speech(probe) -> bool:
+    """Start downloading the speech models if they are not here. Every
+    meeting waits for them and there is nothing to choose (0.5 GB), so a
+    copy that is missing (an update from pyannote, a deleted folder) is
+    fetched at once instead of waiting for someone to find it in Settings.
+    True when a download was started."""
+    if not probe.hardware().apple_silicon or "speech" in probe.downloaded():
+        return False
+    probe.downloads.start(["speech"])
+    return True
+
+
 def missing_models(cur: Current, hw: Hardware) -> list[str]:
     """The models the current choices need that are not downloaded (the
     search model downloads by itself)."""
     if not hw.apple_silicon:
         return []
-    need = ["pyannote"]
-    tr = cur.registry.features_of(TRANSCRIPTION)
-    if not tr or cur.choices.get(tr[0], LOCAL) == LOCAL:
-        need.insert(0, "parakeet")
+    need = ["speech"]  # transcription and the speakers: with a cloud service, the speakers still
     lm = cur.registry.features_of(LANGUAGE_MODEL) or ("notes",)
     if cur.choices.get(lm[0], LOCAL) == LOCAL and cur.local_model in NOTES_MODELS:
         need.append(NOTES_MODELS[cur.local_model])
@@ -615,11 +651,9 @@ def summary(hw: Hardware, permissions: dict[str, dict], installed: Installed, cu
     if hw.apple_silicon:
         tr = cur.registry.features_of(TRANSCRIPTION)
         chosen = cur.choices.get(tr[0], LOCAL) if tr else LOCAL
-        if chosen == LOCAL:
-            out.append(_model_check(MODELS["parakeet"], "parakeet" in cur.downloaded))
-        else:
+        if chosen != LOCAL:
             out.append(_provider_check("Transcription", cur, chosen))
-        out.append(_model_check(MODELS["pyannote"], "pyannote" in cur.downloaded))
+        out.append(_model_check(MODELS["speech"], "speech" in cur.downloaded))
     lm = cur.registry.features_of(LANGUAGE_MODEL) or ("notes",)
     chosen = cur.choices.get(lm[0], LOCAL)
     if chosen == LOCAL:
@@ -659,8 +693,8 @@ def _heard(mic: dict) -> Check:
     if text:
         return Check("Microphone", "ok", f"heard you: “{text}”")
     if how == "not_downloaded":
-        return Check("Microphone", "ok", "heard you (levels only: Parakeet is not downloaded yet, so no words)",
-                     "download Parakeet in the Downloads step to see the words next time")
+        return Check("Microphone", "ok", "heard you (levels only: the speech models are not downloaded yet, so no words)",
+                     "download the speech models in the Downloads step to see the words next time")
     if how == "cloud":
         return Check("Microphone", "ok", f"heard you (levels only: {mic.get('service') or 'your transcription service'} "
                                          "transcribes your calls, and transcription is skipped in the test)")
@@ -863,25 +897,29 @@ def _analyze(mic: Path | None, system: Path | None, mode: dict) -> dict:
         if mode.get("transcribe") == "cloud":
             out_mic.update(transcript="cloud", service=mode.get("service"))
         else:
-            repo = mode.get("repo") or MODELS["parakeet"].repo
-            if not complete(repo):
+            if not speech_here():
                 out_mic["transcript"] = "not_downloaded"
             else:
-                out_mic["text"] = _transcribe(mic, repo)
+                out_mic["text"] = _transcribe(mic)
                 out_mic["transcript"] = "done" if out_mic["text"] else "failed"
     return {"mic": out_mic, "system": {"recorded": system is not None, "level_db": level_db(system)}}
 
 
-def _transcribe(wav: Path, repo: str) -> str | None:
-    """The mic track's words, in a helper process so Parakeet's memory is
-    freed after, offline: a model not on this Mac is never downloaded."""
-    env = {**os.environ, "HF_HUB_OFFLINE": "1"}
+def _transcribe(wav: Path) -> str | None:
+    """The mic track's words, through the speech engine (its own process, ended
+    after): the models are there (``speech_here``), nothing is downloaded."""
+    from .dictionary import Dictionary
+    from .engine import Engine, EngineError
+    from .transcriber import EngineTranscriber
+
+    engine = Engine(idle_timeout=120)
     try:
-        proc = subprocess.run([sys.executable, "-m", "palaver.onboarding", "transcribe", str(wav), repo],
-                              capture_output=True, text=True, timeout=120, env=env)
-    except (OSError, subprocess.TimeoutExpired):
+        segments = EngineTranscriber(Dictionary(), engine=engine).transcribe(wav)
+    except (EngineError, OSError):
         return None
-    return (proc.stdout.strip() or None) if proc.returncode == 0 else None
+    finally:
+        engine.close()
+    return " ".join(x.text.strip() for x in segments).strip() or None
 
 
 # --- downloads ---------------------------------------------------------------------------------------
@@ -930,12 +968,65 @@ def complete(repo: str, probe: str = "config.json") -> bool:
     return False
 
 
+def speech_files_here() -> bool:
+    """Every file of the speech models is on this Mac: the cheap check, a
+    fallback for when the engine is not built."""
+    from . import install_layout
+
+    root = install_layout.models_dir() / SPEECH_FOLDER
+    return all((root / f).exists() for f in SPEECH_FILES)
+
+
+SPEECH_CACHE_SECONDS = 30.0
+_speech_cache: dict[str, Any] = {}
+
+
+def speech_here() -> bool:
+    """Whether the speech models are ready. The files say no for certain; when
+    they are all there, the engine (``hello``, its own ModelStore rule) has the
+    last word. Without an engine binary the files decide; an engine that
+    crashes on ``hello`` means not ready. Remembered for 30 s so the pages and
+    the daemon's poll don't start an engine each (``speech_here.cache_clear()``)."""
+    from . import install_layout
+
+    key = str(install_layout.models_dir())
+    now = time.monotonic()
+    hit = _speech_cache.get(key)
+    if hit is not None and now - hit[0] < SPEECH_CACHE_SECONDS:
+        return hit[1]
+    ready = _speech_ready()
+    _speech_cache[key] = (now, ready)
+    return ready
+
+
+speech_here.cache_clear = _speech_cache.clear  # type: ignore[attr-defined]
+
+
+def _speech_ready() -> bool:
+    if not speech_files_here():
+        return False
+    from .engine import Engine, EngineError, engine_path
+
+    try:
+        built = engine_path().exists()
+    except EngineError:
+        built = False
+    if not built:  # no engine binary: the files decide
+        return True
+    engine = Engine(idle_timeout=30)
+    try:
+        models = engine.call("hello").get("models")
+    except EngineError:
+        return False
+    finally:
+        engine.close()
+    return isinstance(models, dict) and bool(models) and all(models.values())
+
+
 def repo_for(cfg, m: Model) -> str:
-    """The model's repo, as config.toml may override it."""
-    if m.id == "parakeet":
-        return getattr(cfg, "parakeet_repo", m.repo)
-    if m.id == "pyannote":
-        return getattr(cfg, "diarizer_repo", m.repo)
+    """The model's repo. config.toml no longer overrides it (the old
+    parakeet_repo and diarizer_repo are ignored); "speech" is not a Hugging
+    Face repo, the engine knows where."""
     return m.repo
 
 
@@ -944,6 +1035,8 @@ def model_here(model: Model, repo: str) -> bool:
     hosts (model_store), or the Hugging Face cache."""
     from . import model_store
 
+    if model.id == "speech":
+        return speech_here()
     if model.hosted and model_store.local_path(repo) is not None:
         return True
     return complete(repo, model.probe)
@@ -971,6 +1064,12 @@ def downloads_running(marker: Path) -> bool:
     return True
 
 
+# The speech models' download as one progress: each model's share of it, and
+# where each phase of a model's own progress falls in that model's share.
+SPEECH_SHARE = (("asr", 0.95), ("diarizer", 0.05))
+SPEECH_PHASES = {"downloading": (0.0, 0.8), "compiling": (0.8, 0.95), "loading": (0.95, 1.0)}
+
+
 class Downloads:
     """Model downloads the user agreed to, one after the other, in the
     background. ``fetch(model)`` downloads one (raises on failure);
@@ -982,15 +1081,55 @@ class Downloads:
     def __init__(self, fetch: Callable[[Model], None] | None = None,
                  progress: Callable[[str], int] | None = None,
                  done: Callable[[Model], bool] | None = None,
-                 repo_of: Callable[[Model], str] | None = None, marker: Path | None = None):
+                 repo_of: Callable[[Model], str] | None = None, marker: Path | None = None,
+                 engine: Callable[[], Any] | None = None):
         self._repo_of = repo_of or (lambda m: m.repo)
+        self._engine = engine  # makes the speech engine (an Engine); None: the real one
         self._marker = marker  # while downloading: this process's pid, for the updater (#60)
-        self._fetch = fetch or (lambda m: _fetch(m, self._repo_of(m)))
+        self._fetch = fetch or self._fetch_model
         self._progress = progress or download_progress
         self._done = done or (lambda m: model_here(m, self._repo_of(m)))
         self._lock = threading.Lock()
         self._jobs: dict[str, dict[str, Any]] = {}
         self._thread: threading.Thread | None = None
+
+    def _fetch_model(self, model: Model) -> None:
+        if model.id == "speech":
+            self._fetch_speech(model)
+        else:
+            _fetch(model, self._repo_of(model))
+
+    def _fetch_speech(self, model: Model) -> None:
+        """The engine's ``prepare``, one model after the other so each one's
+        progress is known: the speech model is nearly all of the bytes, the
+        diarizer's few MB the rest. Within a model, downloading is most of the
+        time, then compiling, then loading. What the page shows can't go back."""
+        from .engine import Engine
+
+        engine = self._engine() if self._engine else Engine()
+        done = 0.0
+
+        def report(weight: float, offset: float):
+            def on_progress(fraction: float, phase: str) -> None:
+                lo, hi = SPEECH_PHASES.get(phase, (0.0, 1.0))
+                inside = lo + (hi - lo) * min(1.0, max(0.0, fraction))
+                self._set_fraction(model.id, offset + weight * inside)
+            return on_progress
+
+        try:
+            for name, weight in SPEECH_SHARE:
+                engine.call("prepare", models=[name], progress=report(weight, done))
+                done += weight
+                self._set_fraction(model.id, done)
+        finally:
+            engine.close()
+            speech_here.cache_clear()
+
+    def _set_fraction(self, mid: str, fraction: float) -> None:
+        with self._lock:
+            job = self._jobs.get(mid)
+            if job is not None:
+                job["fraction"] = max(job.get("fraction", 0.0), min(1.0, fraction))
 
     def start(self, ids: Iterable[str]) -> dict:
         with self._lock:
@@ -998,7 +1137,7 @@ class Downloads:
                 if mid not in MODELS:
                     raise ValueError(f"no model {mid!r}")
                 if self._jobs.get(mid, {}).get("state") not in ("queued", "downloading", "done"):
-                    self._jobs[mid] = {"state": "queued", "error": None}
+                    self._jobs[mid] = {"state": "queued", "error": None, "fraction": 0.0}
             if self._thread is None or not self._thread.is_alive():
                 self._thread = threading.Thread(target=self._run, name="model-downloads", daemon=True)
                 self._thread.start()
@@ -1038,7 +1177,12 @@ class Downloads:
         out = []
         for mid, job in jobs.items():
             m = MODELS[mid]
-            got = m.disk_gb if job["state"] == "done" else min(m.disk_gb, self._progress(self._repo_of(m)) / 1e9)
+            if job["state"] == "done":
+                got = m.disk_gb
+            elif m.id == "speech":  # not a repo in the cache: what prepare reported
+                got = m.disk_gb * job.get("fraction", 0.0)
+            else:
+                got = min(m.disk_gb, self._progress(self._repo_of(m)) / 1e9)
             out.append({"id": mid, "label": m.label, "disk_gb": m.disk_gb, "state": job["state"],
                         "done_gb": round(got, 2), "error": job["error"]})
         return {"running": any(j["state"] in ("queued", "downloading") for j in jobs.values()), "models": out}
@@ -1173,17 +1317,6 @@ class Probe:
                 out.add(m.id)
         return frozenset(out)
 
-    def hf_token_set(self) -> bool:
-        """Whether a Hugging Face token is set (pyannote's model is gated); never the token."""
-        return bool(getattr(self.cfg, "hf_token", None) or os.environ.get("HF_TOKEN"))
-
-    def hf_token_needed(self) -> bool:
-        """An installed release downloads pyannote's copy from its own
-        release (#60); a checkout gets it from Hugging Face, with a token."""
-        from . import install_layout
-
-        return install_layout.bundle() is None
-
     def full_name(self) -> str:
         import pwd
 
@@ -1274,8 +1407,10 @@ class Calendar:
 # --- the helper process: `python -m palaver.onboarding download|transcribe` ---------------------------
 
 def _main(argv: list[str]) -> int:
+    """`python -m palaver.onboarding download <id> [repo]`: a model from Hugging Face
+    (the notes models, search). The speech models come from the engine instead."""
     what, arg = argv[0], argv[1]
-    repo = argv[2] if len(argv) > 2 else (MODELS[arg].repo if arg in MODELS else MODELS["parakeet"].repo)
+    repo = argv[2] if len(argv) > 2 else (MODELS[arg].repo if arg in MODELS else "")
     if what == "download":
         if arg == "e5":
             from . import embeddings
@@ -1284,15 +1419,6 @@ def _main(argv: list[str]) -> int:
         from huggingface_hub import snapshot_download
 
         snapshot_download(repo, token=os.environ.get("HF_TOKEN"))
-        return 0
-    if what == "transcribe":  # offline (HF_HUB_OFFLINE from the caller): never a download
-        if not complete(repo):
-            return 3
-        from .dictionary import Dictionary
-        from .transcriber import ParakeetMlxTranscriber
-
-        segments = ParakeetMlxTranscriber(repo=repo, dictionary=Dictionary()).transcribe(Path(arg))
-        print(" ".join(s.text.strip() for s in segments).strip())
         return 0
     return 2
 

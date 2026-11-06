@@ -61,9 +61,8 @@ export function meetingCommands(m) {
 export function untranscribedText(m) {
   const u = m.untranscribed || {};
   if (m.status === "waiting") {
-    const missing = (u.missing || []).join(" and ") || "The transcription models";
-    const are = (u.missing || []).length > 1 ? "are" : "is";
-    return `Recorded before the models were downloaded: ${missing} ${are} still missing. `
+    const missing = (u.missing || []).join(" and ") || "the speech models";
+    return `Recorded before the models were downloaded: waiting for ${missing}. `
       + "The meeting is transcribed by itself once the download in Settings is done.";
   }
   const why = !m.failure && u.error ? ` (${u.error})` : "";
@@ -1112,7 +1111,7 @@ export function setupOfferText(offer, labels = {}) {
   if (offer.why === "changed") return `This is another Mac (${offer.now}). Review the recommended settings?`;
   if (offer.why === "missing") {
     const names = offer.models.map((m) => labels[m] || m);
-    return `${andList(names)} ${names.length === 1 ? "is" : "are"} not downloaded yet.`;
+    return `${andList(names)} ${names.length === 1 && !/s$/.test(names[0]) ? "is" : "are"} not downloaded yet.`;
   }
   return null;
 }
@@ -1457,7 +1456,8 @@ export const GLOBAL_COMMANDS = [{ kind: "command", id: "importMeeting", label: "
 // --- recording by hand (#11) --------------------------------------------------------
 
 // The meeting being recorded now, as the list knows it; null when none.
-export const recordingNow = (meetings) => (meetings || []).find((m) => m.status === "recording") || null;
+// A recording stopped a moment ago may still be finishing (its live worker): shown live, nothing to stop.
+export const recordingNow = (meetings) => (meetings || []).find((m) => m.status === "recording" && !m.finishing) || null;
 
 // What starting by hand records, said where it can be started.
 export const RECORD_TEXT = "Your microphone and this Mac's sound: a meeting on site, a conversation, any call.";

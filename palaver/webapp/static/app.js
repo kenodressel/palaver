@@ -721,6 +721,7 @@ function renderMeeting() {
     cutNotice,
     respelledNotice(),
     renderCutSuggestion(m),
+    renderSilenceSuggestion(m),
     renderSharedSuggestion(m),
     renderSharedAsk(m),
     m.status === "ready" || m.transcript.length ? renderRibbon(m, color) : null,
@@ -2113,7 +2114,7 @@ function lineText(t, people = null) {
   for (const x of marks) {
     const words = t.text.slice(x.a, x.b);
     out.push(t.text.slice(at, x.a), x.kind === "name" ? nameMark(words, x.color) : x.kind === "glossed"
-      ? h("span", { class: "glossed", title: `Glossary: heard “${x.heard}”` }, words)
+      ? h("span", { class: "glossed", title: `Glossary: heard “${x.heard}”`, "data-heard": x.heard }, words)
       : h("span", { class: "unsure",
         title: "Palaver wasn't sure about this word. Double-click it, or use Fix spelling on the line." }, words));
     at = x.b;
@@ -2195,7 +2196,7 @@ function respellTarget(turn, t) {
   if (selected && turn.contains(selected.box)) return selected;
   const word = fixableWord(t);
   const el = word && turn.querySelector(".said .glossed, .said .unsure");
-  return el ? { text: word.text, rect: el.getBoundingClientRect() } : null;
+  return el ? { text: word.text, rect: el.getBoundingClientRect(), heard: el.dataset.heard } : null;
 }
 
 function copyText(text) {
@@ -2344,12 +2345,25 @@ function renderCutSuggestion(m) {
     h("button", { type: "button", class: "btn btn-quiet small", onclick: (e) => dismissCut(m.id, e.currentTarget) }, "Not this"));
 }
 
-async function dismissCut(id, button) {
+// Long silence before the first word or after the last (a call joined early,
+// a recording left running): offered for removal, the same cut as "Everything before/after it".
+function renderSilenceSuggestion(m) {
+  const found = m.silence || [];
+  if (!found.length || state.cutAt != null || m.status !== "ready") return null;
+  const text = found.map((s) => `${minutes(s.seconds)} of silence ${s.edge === "start" ? "before anyone speaks" : "after the last word"}`);
+  return h("div", { class: "cut-suggest silence-suggest" },
+    h("span", {}, `${text.join(", and ")}.`),
+    ...found.map((s) => h("button", { class: "btn", onclick: (e) => cutMeeting(m.id, s.at, { discard: s.edge === "start" ? "before" : "after" },
+      e.currentTarget) }, found.length > 1 ? `Remove the ${s.edge === "start" ? "start" : "end"}` : "Remove it")),
+    h("button", { type: "button", class: "btn btn-quiet small", onclick: (e) => dismissCut(m.id, e.currentTarget, "silence") }, "Keep it"));
+}
+
+async function dismissCut(id, button, what = "cut") {
   let m;
   try {
-    m = await working(button, api(`/api/meetings/${encodeURIComponent(id)}/cut-suggestion`, { dismiss: true }));
+    m = await working(button, api(`/api/meetings/${encodeURIComponent(id)}/cut-suggestion`, { dismiss: true, what }));
   } catch (err) {
-    errorToast(`Not saved: ${err.message}`, { action: { label: "Try again", run: () => dismissCut(id, button) } });
+    errorToast(`Not saved: ${err.message}`, { action: { label: "Try again", run: () => dismissCut(id, button, what) } });
     return;
   }
   if (state.meeting?.id === id) {
@@ -3450,7 +3464,9 @@ function selectedWords() {
   if (!box || !box.contains(end) || [start, end].some((e) => e.closest(".speaker, button, input, textarea, .line-editor"))) return null;
   const text = sel.toString().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "").replace(/\s+/g, " ");
   if (!text || text.split(" ").length > RESPELL_MAX_WORDS) return null;
-  return { text, rect: range.getBoundingClientRect(), box };
+  const glossed = start.closest(".glossed");  // a word the glossary respelled: what was heard, to undo that
+  return { text, rect: range.getBoundingClientRect(), box,
+    heard: glossed && glossed.contains(end) ? glossed.dataset.heard : undefined };
 }
 
 function closeRespell() {
@@ -3497,7 +3513,13 @@ function respellForm(found) {
     if (term && term !== found.text) respellEverywhere(id, found.text, term);
   } }, input, h("button", { class: "btn" }, "Fix everywhere"));
   respellBox.replaceChildren(h("span", { class: "respell-label" }, `“${found.text}” is spelled`), form,
-    h("p", { class: "meta" }, "Goes into the glossary, so every meeting shows it this way. What was heard is kept."));
+    h("p", { class: "meta" }, "Goes into the glossary, so every meeting shows it this way. What was heard is kept."),
+    found.heard ? h("div", { class: "respell-undo" },
+      h("span", { class: "meta" }, `The glossary made “${found.text}” of “${found.heard}”.`),
+      h("button", { type: "button", class: "btn btn-quiet small", onclick: () => {
+        closeRespell();
+        unrespell(id, found.heard, found.text);
+      } }, `Keep “${found.heard}”`)) : null);
   placeRespell(found.rect);
   input.focus();
   input.select();
@@ -3514,6 +3536,22 @@ async function respellEverywhere(id, heard, term) {
   }
   state.respelled = `“${heard}” is now “${d.term.term}”. ${changedText(d.changed)}`;
   remember(`“${heard}” is now “${d.term.term}” everywhere`, () => respellBack(id, d.undo));
+  await showRespelled(id);
+}
+
+// A wrong respelling found in a meeting: the glossary stops making ``term``
+// of ``heard`` (that mapping only; the term and its other spellings stay).
+async function unrespell(id, heard, term) {
+  let d;
+  try {
+    d = await api("/api/glossary/unrespell", { heard });
+  } catch (err) {
+    errorToast(`“${heard}” still shows as “${term}”: ${err.message}`,
+      { action: { label: "Try again", run: () => unrespell(id, heard, term) } });
+    return;
+  }
+  state.respelled = `“${heard}” is no longer “${d.term.term}”. ${changedText(d.changed)}`;
+  remember(`“${heard}” is no longer “${d.term.term}”`, () => respellBack(id, d.undo));
   await showRespelled(id);
 }
 
@@ -3932,6 +3970,7 @@ function renderReview() {
     cutNotice,
     respelledNotice(),
     renderCutSuggestion(m),
+    renderSilenceSuggestion(m),
     h("header", { class: "head" }, h("div", { class: "head-text" },
       h("h1", {}, h("button", { class: "link", title: "Open the meeting", onclick: () => openMeeting(m.id) },
         titleOf(m))),
@@ -4409,12 +4448,12 @@ function openUninstall() {
       h("p", { class: "meta" }, "Palaver quits and removes the app, its runtime, the login item, the palaver command and a downloaded update."),
       h("fieldset", { class: "export-choices" }, h("legend", { class: "visually-hidden" }, "What else goes"),
         h("label", { class: "export-choice" }, models, h("span", { class: "export-label" }, "Also remove the models"),
-          h("span", { class: "meta export-hint" }, "The speaker model in Palaver's folder; it can be downloaded again.")),
+          h("span", { class: "meta export-hint" }, "The speech models in Palaver's folder; they can be downloaded again.")),
         h("label", { class: "export-choice" }, recordings,
           h("span", { class: "export-label" }, "Also delete my recordings"),
           h("span", { class: "meta export-hint" }, "Every meeting folder in your recordings folder and in its trash (audio, transcripts, notes), ",
             "and Palaver's data: voices, glossary, people, projects, settings and logs. Other files in the recordings folder stay."))),
-      h("p", { class: "meta" }, "Models from Hugging Face (Parakeet, the notes model) stay in ~/.cache/huggingface."),
+      h("p", { class: "meta" }, "Models from Hugging Face (the notes model) stay in ~/.cache/huggingface."),
     ],
     buttons: [{ label: "Cancel" }, { label: "Uninstall", value: "done", run: () => api("/api/uninstall",
       { confirm: true, models: models.checked, recordings: recordings.checked }) }],
@@ -5256,8 +5295,6 @@ function packValue(r, changes) {
   return { label: same(value, r.value) ? r.label : o ? o.label : currentLabel(r), recommended: same(value, r.value) };
 }
 
-const needsToken = (d) => d.needed.some((m) => m.id === "pyannote") && d.hf_token.needed && !d.hf_token.set;
-
 // Step 2: all Palaver would set on this Mac as one package, taken with one
 // click (the downloads start with it); Customize opens each choice with its
 // alternatives. Login start and where meetings live are part of it.
@@ -5299,11 +5336,6 @@ function recommendedStep(p, next) {
       d.needed.length ? h("p", { class: fits ? "meta setup-downloads" : "meta setup-downloads error" },
         `${downloadsText(d.needed)} ${Math.round(d.free_disk_gb)} GB free on this Mac.${fits ? " They download in the background." : " Free up space first."}`) : null,
       disk ? h("p", { class: "meta error" }, disk.reason) : null,
-      needsToken(d) ? h("div", { class: "gloss-card settings-card setup-token" },
-        h("p", {}, h("strong", {}, "pyannote needs a Hugging Face token. "),
-          "Its model is gated: accept its terms on Hugging Face once, then set the token as ",
-          h("code", {}, d.hf_token.where), ". Palaver never shows the token."),
-        h("p", {}, h("a", { href: d.hf_token.terms, target: "_blank", rel: "noopener" }, "The model's page on Hugging Face"))) : null,
       d.status.models.length ? downloadStatus(d.status) : null,
     ],
     primary: { label: primary.label, run: (button) => applyRecommended(primary.changes, button, next),
@@ -5312,7 +5344,7 @@ function recommendedStep(p, next) {
 }
 
 // The package's one click: the settings, login start, then the downloads they
-// need. Stays on the step when the models can't download yet (disk, token).
+// need. Stays on the step when the models can't download yet (disk).
 async function applyRecommended(changes, button, next) {
   const want = setup.autostart ?? true;
   try {
@@ -5321,7 +5353,7 @@ async function applyRecommended(changes, button, next) {
       if (want !== setup.page.storage.autostart) await api("/api/setup/autostart", { on: want });
       await loadSetup();
       const d = setup.page.downloads;
-      if (d.needed.length && !d.status.models.length && d.free_disk_gb >= d.total_gb && !needsToken(d)) {
+      if (d.needed.length && !d.status.models.length && d.free_disk_gb >= d.total_gb) {
         d.status = await api("/api/setup/downloads", { models: d.needed.map((m) => m.id) });
       }
     })());
@@ -5702,8 +5734,9 @@ function liveNowCard(first = false) {
         m.live?.until ? `transcribed up to ${clock(m.live.until)}` : null].filter(Boolean).join(" · ")),
       h("div", { class: "live-now-actions" },
         h("button", { type: "button", class: "tbtn", onclick: () => openMeeting(m.id) }, "Open"),
-        h("button", { type: "button", class: "tbtn", onclick: (e) => stopRecording(m.id, e.currentTarget) },
-          h("span", { class: "stop-mark", "aria-hidden": "true" }), "Stop"))),
+        m.finishing ? h("span", { class: "meta" }, "Stopped, finishing…")
+          : h("button", { type: "button", class: "tbtn", onclick: (e) => stopRecording(m.id, e.currentTarget) },
+            h("span", { class: "stop-mark", "aria-hidden": "true" }), "Stop"))),
     h("h2", {}, titleOf(m)),
     h("div", { class: "live-speakers" }, m.speakers.map((s) => personToken(s.display || s.name || labelDisplay(s.label),
       color(s.label), { named: !!s.name }))),

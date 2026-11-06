@@ -3,7 +3,7 @@
 `palaver live <folder>` runs next to the recorder (the daemon
 starts it at low priority) and does the heavy work as audio arrives: echo
 cancellation, transcription in ~1 min blocks cut at pauses, and the
-expensive part of diarization (``IncrementalDiarizer``). When the recording
+speaker detection (``LiveEngineDiarizer``). When the recording
 stops it finishes the last block and writes the same files `process`
 writes — mic.wav, *_segments.json, system_turns.json,
 speaker_embeddings.json — so the `run` that follows only merges and
@@ -46,7 +46,7 @@ POLL_SECONDS = 5.0
 STALL_SECONDS = 120.0
 # Shorter remainders hold no speech worth a model call.
 MIN_BLOCK_SECONDS = 0.5
-# Freed MLX memory kept for reuse. Replaying 8 min as it arrives: 512 MB
+# Freed MLX memory kept for reuse (Whisper only; the engine loads no MLX). Replaying 8 min as it arrives: 512 MB
 # cache 4.0 GB footprint, 128 MB 3.6 GB at the same speed; 0 cost a third
 # more CPU.
 MLX_CACHE_LIMIT = 128 * 1024**2
@@ -346,7 +346,14 @@ def run_live(processor: LiveProcessor, paths: RecordingPaths, *, poll: float = P
     finishing the recording."""
     last_size, last_growth = -1, clock()
     while not recording_finished(paths):
-        if processor.step():
+        try:
+            progressed = processor.step()
+        except Exception:
+            if not paths.folder.exists():  # dropped as too short, or moved away: nothing left to do
+                LOGGER.info("the recording's folder is gone; the live worker stops")
+                return False
+            raise
+        if progressed:
             continue
         try:
             processor.snapshot()

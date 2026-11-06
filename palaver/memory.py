@@ -2,7 +2,7 @@
 too much (issue #49).
 
 Memory is measured as macOS counts it: the phys_footprint, Activity
-Monitor's "Memory". RSS misses what MLX and PyTorch keep on the GPU, which
+Monitor's "Memory". RSS misses what a model keeps on the GPU, which
 was most of a live worker's 7.9 GB during a call.
 
 The daemon starts four kinds of worker, each with a budget in GB
@@ -45,14 +45,13 @@ MAX_REQUEUES = 2  # notes or `process` stopped for low memory more often are giv
 # The Mac is low on memory below this much free (daemon.available_memory_gb):
 # only then are notes and `process` over budget stopped.
 PRESSURE_GB = 1.5
-# Measured 2026-10-29 (phys_footprint during calls and replays): the realtime
-# stream ~1.9 GB (2.46 GB peak), Gemma 4 12B writing notes ~12 GB. The live
-# worker, measured again 2026-10-30 over a whole 60-min call (a 3-min soak
-# had missed its growth): 2.4–3.7 GB, peaks to 4.8 GB. The budgets leave
-# room above that; `process` is estimated (see #49).
-DEFAULT_LIVE_GB = 6.0
-DEFAULT_STREAM_GB = 3.5
-DEFAULT_PROCESS_GB = 8.0
+# Speech and speakers run in the Swift engine (CoreML), a child of the worker,
+# so a worker's footprint is the tree's: the process plus the engine. Gemma 4
+# 12B writing notes ~12 GB (measured 2026-10-29). The speech budgets are for
+# the engine; the budgets are the tree's, with headroom.
+DEFAULT_LIVE_GB = 2.0
+DEFAULT_STREAM_GB = 1.5
+DEFAULT_PROCESS_GB = 4.0  # a 73-min meeting peaked at 2.5 GB (process plus engine)
 DEFAULT_INDEX_GB = 1.0  # the search index (#46): a small embedding model
 CLOUD_NOTES_GB = 2.0  # notes written by a cloud model: the model runs elsewhere
 

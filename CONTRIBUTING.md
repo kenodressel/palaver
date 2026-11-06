@@ -27,10 +27,10 @@ echo-cancellation library).
 
    Rebuild after pulling updates that touch `palaver/_vendored/`.
 
-2. pyannote's model: a checkout downloads it from Hugging Face, where it is
-   gated: accept the terms for `pyannote/speaker-diarization-community-1`
-   and create a token with Read permission (an installed release downloads
-   Palaver's own copy instead, without a token).
+2. The speech and speaker models need no account or token: the first run
+   downloads them (about 0.5 GB) into
+   `~/Library/Application Support/palaver/models/fluidaudio`, and
+   `make engine` builds the Swift helper (`palaver-engine`) that runs them.
 
 3. (Optional) In Notion, create an internal integration at
    notion.so/profile/integrations. Share a parent page with the integration
@@ -65,11 +65,10 @@ echo-cancellation library).
    for duration (`Duration`/`Dauer`) and speakers (`Speakers`/`Teilnehmer`),
    and a select column `Source` (set to "Teams").
 
-5. Export tokens (or add them to `config.toml` directly); without a Notion
+5. Export the token (or add it to `config.toml` directly); without a Notion
    token meetings stay on this Mac:
 
    ```bash
-   export HF_TOKEN=hf_xxx
    export NOTION_TOKEN=ntn_xxx
    ```
 
@@ -128,11 +127,12 @@ CI (`.github/workflows/ci.yml`) runs `make aec` and `make test` on macOS 15.
 | `aec` | Build the vendored WebRTC echo-cancellation library |
 | `test` | Run the test suite (in parallel) |
 | `test-changed` | Run the tests for what changed since master |
+| `eval-engine` | Maintainer-only gate: the Swift engine against the old stack's numbers on your own recordings. Needs `PALAVER_EVAL_DIR` (a folder with a local `eval.json`); writes numbers only to `engine-gate.md`. The exit code contract is `tools/eval_engine.py`'s: 0 pass, 1 a check FAILED, 2 misconfigured. Through make both failures show as make's exit 2, so read the printed table |
 | `wheel` | Build the wheel (includes the AEC library) |
 | `requirements` | Export the locked dependency set the runtime is built from |
 | `icons` | Draw the app and menu bar icons into `palaver/assets` (needs Pillow) |
 | `runtime` | Build the runtime archive (kept while `uv.lock` is unchanged) |
-| `models` | Pack the models Palaver hosts (pyannote) with their licenses |
+| `models` | Pack the models Palaver hosts (none now; the engine downloads its own) |
 | `app` | Build Palaver.app with the wheel's code inside, zipped |
 | `manifest` | Write `manifest.json` and `upload.txt` over the assets in `dist/` |
 | `release` | All release assets in `dist/` |
@@ -142,13 +142,29 @@ CI (`.github/workflows/ci.yml`) runs `make aec` and `make test` on macOS 15.
 
 ## Running it from a checkout
 
-As a menu bar app (auto-recording, manual start/stop, the Meetings window):
+As a menu bar app (auto-recording, manual start/stop, the Meetings window).
+The app is native Swift since 0.5 (`native/`, target `Palaver`): it records,
+runs the daemon, serves `app.sock`, hosts the window and starts the Python
+workers (`process`, `notes`, `live`, `webapp-serve`, …) with the checkout's
+`.venv/bin/python` (`PALAVER_PYTHON` overrides it):
 
 ```bash
-palaver menubar          # icon alone: waiting · 🔴 recording · ⏳ transcribing · ⏸ paused
+make app-swift && native/.build/release/Palaver   # icon alone: waiting · 🔴 recording · ⏳ transcribing · ⏸ paused
+palaver menubar          # the Python menu bar app of before (kept for one release)
 ```
 
-Install it as a real Mac app that starts at login (no terminal tab needed):
+A release's `Palaver.app` holds the Swift app as its executable
+(`Contents/MacOS/Palaver`), the Python host `palaver-python` (Palaver's code
+on the runtime, what every worker runs), `palaver-engine`, and the code in
+`Contents/Resources/python`. `PALAVER_LEGACY_APP=1`, or an empty file
+`~/Library/Application Support/palaver/legacy-app`, makes it start the
+Python menu bar app (`palaver-python -m palaver menubar`) instead, for one
+release, in case the Swift app fails on a Mac. A development build of the
+Swift app asks for the microphone and system audio for the terminal that
+runs it; run it only when you mean to record.
+
+Install the Python menu bar app of this checkout as a Mac app that starts at
+login (no terminal tab needed; the release's app is the Swift one):
 
 ```bash
 palaver app install --login   # → ~/Applications/Palaver.app
@@ -173,6 +189,9 @@ is never touched; the window reloads where it was):
 ```bash
 palaver app restart-web
 ```
+
+`palaver app ping` says whether the running app answers on its socket
+(`app.sock`), and with which pid.
 
 A change anywhere else (recording, call detection, the menu) still needs the
 whole app restarted, and that should wait until nothing records or processes
@@ -234,9 +253,9 @@ ready or uploaded, or when a step fails (`--no-notify` to turn off).
 1. **Record**: captures the microphone and the Mac's sound as separate WAV
    tracks (16 kHz mono PCM_16) in a timestamped folder under `output_dir`.
 2. **Process**: removes speaker bleed from the microphone track (below),
-   transcribes both tracks with Parakeet-TDT v3 (`parakeet-mlx`, Apple
-   Silicon GPU; Whisper optional), diarizes the system track with
-   `pyannote.audio`, merges words to speakers, writes `transcript.md` and
+   transcribes both tracks with Parakeet-TDT v3 and diarizes the system
+   track, both in `palaver-engine` (a Swift helper running FluidAudio's
+   CoreML models; Whisper optional), merges words to speakers, writes `transcript.md` and
    `transcript.json`, then the notes.
 3. **Sync**: uploads the transcript as a new Notion page under the
    configured parent (only with a Notion token).
@@ -305,10 +324,11 @@ needed. `[recording] slack = false` turns it off.
 While it records, the daemon runs `palaver live <folder>` at background
 priority (efficiency cores, yields to Teams). It echo-cancels and transcribes
 the audio in ~1 minute blocks cut at pauses, and computes the expensive part
-of diarization — the voice embeddings of pyannote's sliding windows — as the
-audio arrives. When the call ends only the last block and the speaker
-clustering are left, so the transcript is ready in seconds instead of
-minutes, and the result is the same as processing the finished file. If the
+of the speaker detection — it runs over the recording so far every two
+minutes — as the audio arrives. When the call ends only the last block and
+the final speaker pass are left, so the transcript is ready in seconds
+instead of minutes, and the result is the same as processing the finished
+file. If the
 live worker fails, `run` does everything after the call as before. Turn it
 off with:
 
@@ -338,8 +358,8 @@ palaver bench-live <folder>... --out DIR [--speed 1.0]
 
 It writes a numbers-only report (latency, disagreement with the final
 transcript, echo, load) to `DIR/report.md`. At `--speed 1.0` it measures
-latency; faster speeds measure accuracy and load only. It loads two Parakeet
-models side by side (the live worker's and the stream's) plus pyannote, and
+latency; faster speeds measure accuracy and load only. It loads two engines
+side by side (the live worker's and the stream's), and
 the offline baseline after each replay, so don't run it during a call.
 `--out` must lie outside the Recordings folder: it keeps full audio copies
 of every replayed meeting and the stream's transcript text, which is meeting
@@ -348,7 +368,8 @@ content. Only `report.md` is numbers only.
 ### Memory budgets
 
 Each worker has a budget, measured as Activity Monitor's "Memory" (the
-phys_footprint, GPU memory included). A live or realtime worker over its
+phys_footprint, GPU memory included) of the worker and the engine helper it
+started. A live or realtime worker over its
 budget for 10 s is restarted (twice per meeting, then stopped: the
 transcript is then written after the call); the recording itself goes on,
 since capture runs in the app. Notes, transcriptions and the search index
@@ -360,9 +381,9 @@ shows each worker, and `palaver doctor` checks the budgets. The defaults:
 
 ```toml
 [memory]
-live_gb = 6             # measured 2.4–3.7 GB over a 60-min call, 4.8 GB peak
-stream_gb = 3.5         # measured ~1.9 GB, 2.5 GB peak
-process_gb = 8
+live_gb = 2             # the worker plus the engine (CoreML models)
+stream_gb = 1.5         # two engine windows on one engine process
+process_gb = 4          # a 73-min meeting peaked at 2.5 GB (the process plus the engine)
 # notes_gb = 14         # default: what the notes model chosen in Settings needs (Gemma 14)
 index_gb = 1            # the search index
 ```
@@ -491,9 +512,8 @@ Mac. `palaver mcp --install` adds it to Claude Code (runs `claude mcp add
 
 `[model] transcriber` selects the speech-to-text model:
 
-- `"parakeet-mlx"` (default) — NVIDIA Parakeet-TDT v3. Transcribes in 15 s
-  chunks: with longer chunks German meetings full of English terms flipped
-  into wrong English. On real meetings it matched Whisper on German and beat
+- `"parakeet"` (default; the old name `"parakeet-mlx"` still works) — NVIDIA
+  Parakeet-TDT v3, run by `palaver-engine` on CoreML. On real meetings it matched Whisper on German and beat
   it on English (35 s instead of several minutes for 24 min of audio, no
   text over silence, passages Whisper skipped). It is verbatim (keeps "um",
   "äh") and has no `initial_prompt`; fix recurring misspellings with
@@ -532,9 +552,6 @@ only the Mac with the signing certificate does (below).
   into `dist/build`, checked against the release's `SHA256SUMS`, installs the
   requirements into it with uv, makes the entry points relocatable, and
   `otool` checks that no library names `/Users`, Homebrew or `/usr/local`
-- `palaver-models-pyannote-community-1-<revision>.tar`: pyannote's pipeline
-  from your Hugging Face cache, with its license (see
-  [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md))
 - `manifest.json`, `install.sh`, and `upload.txt`: the files this release must
   upload. An asset the previous release published unchanged keeps its URL
   there and is not uploaded again; `make publish` creates the GitHub release
@@ -543,9 +560,9 @@ only the Mac with the signing certificate does (below).
 An installed Palaver has three layers, each downloaded only when it changed:
 the app (`~/Applications/Palaver.app`, every release), the runtime
 (`~/Library/Application Support/palaver/runtime/<id>/`, when `uv.lock`
-changes) and the models (`~/Library/Application Support/palaver/models/` for
-pyannote, hosted with the release, and `~/.cache/huggingface` for Parakeet,
-the notes model and the search model). The updater checks each download
+changes) and the models (`~/Library/Application Support/palaver/models/fluidaudio` for
+speech and speakers, which the engine downloads itself, and
+`~/.cache/huggingface` for the notes model and the search model). The updater checks each download
 against the manifest's SHA-256. The runtime before the current one is kept,
 so `PALAVER_VERSION=0.1.0 sh install.sh` goes back without a download, and
 `PALAVER_ASSETS_DIR=dist sh install.sh` installs from local release assets.
@@ -583,8 +600,7 @@ Gatekeeper for downloads.
 
 `make smoke-install` installs `dist/` into a throwaway home under
 `sandbox-exec` (no writes outside it, no network), imports Palaver and its
-dependencies as the app runs them, loads pyannote from the hosted copy
-without a token, and updates twice, with `install.sh` and with the app's
+dependencies as the app runs them, and updates twice, with `install.sh` and with the app's
 updater, checking the runtime is not downloaded again.
 
 ## README screenshots

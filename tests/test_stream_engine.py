@@ -158,18 +158,36 @@ def test_a_draft_settles_once_when_a_jump_passes_the_window():
     assert [w.start for w in settled] == sorted(w.start for w in settled)
 
 
-def test_load_engines_caps_the_mlx_cache(monkeypatch):
-    import mlx.core as mx
-    import parakeet_mlx
-
+def test_load_engines_share_one_engine():
     from palaver import stream_engine
 
-    limits = []
-    monkeypatch.setattr(mx, "set_cache_limit", lambda n: limits.append(n) or 0)
-    monkeypatch.setattr(parakeet_mlx, "from_pretrained", lambda repo: object())  # no model
-    system, mic = stream_engine.load_engines("repo/parakeet", Dictionary())
+    class Fake:
+        def call(self, cmd, **kw):
+            return {"words": []}
+
+    engine = Fake()
+    system, mic = stream_engine.load_engines(Dictionary(), engine)
     assert isinstance(system, WindowEngine) and isinstance(mic, WindowEngine)
-    assert limits == [512 * 1024**2]
+    assert system._transcribe.__closure__ and mic._transcribe is system._transcribe
+
+
+def test_window_transcriber_sends_base64_float32(monkeypatch):
+    from pathlib import Path
+
+    from palaver import stream_engine
+    from palaver.engine import Engine
+
+    monkeypatch.setenv("PALAVER_ENGINE", str(Path(__file__).parent / "fake_engine.py"))
+    engine = Engine()
+    seen = []
+    real = engine.call
+    engine.call = lambda cmd, **kw: seen.append(real(cmd, **kw)) or seen[-1]
+    try:
+        words = stream_engine.window_transcriber(engine)(np.zeros(16_000, dtype=np.float32))
+    finally:
+        engine.close()
+    assert seen[0]["samples"] == 16_000
+    assert [(w.text, w.start, w.end, w.confidence) for w in words] == [("cloud", 0.0, 0.1, 0.9)]
 
 
 def test_how_long_a_word_waits_depends_on_how_sure_the_model_is():
@@ -198,3 +216,17 @@ def test_word_confidence_is_its_least_sure_piece():
     assert word.text == "Budget" and word.confidence == 0.7
     assert Word.from_dict(word.to_dict()) == word
     assert "confidence" not in Word("x", 0, 1).to_dict()  # none known: not stored
+
+
+def test_memory_meter_reads_the_process_tree_and_keeps_the_peak(monkeypatch):
+    """The model lives in the engine child, so the stream's memory is the
+    tree's footprint, not this process's MLX memory."""
+    from palaver import memory
+    from palaver.stream_engine import MemoryMeter
+
+    readings = iter([700 * 1024**2, 1300 * 1024**2, 900 * 1024**2])
+    asked = []
+    monkeypatch.setattr(memory, "tree_footprint", lambda pid: asked.append(pid) or next(readings))
+    meter = MemoryMeter(pid=4242)
+    assert [meter(), meter(), meter()] == [700 * 1024**2, 1300 * 1024**2, 900 * 1024**2]
+    assert asked == [4242, 4242, 4242] and meter.peak_mb() == 1300

@@ -115,13 +115,40 @@ def answer_recording_question(recording, choice: str, meeting_id: str) -> dict:
     return {_ANSWERED[choice]: meeting_id}
 
 
-def record(recording, action: str, meeting_id: str | None = None) -> dict:
+def record(recording, action: str, meeting_id: str | None = None, *, output_dir: Path | None = None) -> dict:
     """Start Recording / Stop Recording in the window (#11): the menu bar
-    app records by hand, microphone and this Mac's sound, as from its menu."""
+    app records by hand, microphone and this Mac's sound, as from its menu.
+    Stopping a recording that has stopped already (from the menu, a moment
+    ago) is no error: it is stopped."""
     record = getattr(recording, "record", None)
     if record is None:
         raise Refused("Recordings are started and stopped by the Palaver menu bar app.")
-    return record(action, meeting_id)
+    try:
+        return record(action, meeting_id)
+    except Refused:
+        if action == "stop" and meeting_id and output_dir is not None and _stopped(output_dir, meeting_id):
+            return {"stopped": meeting_id}
+        raise
+
+
+def _stopped(output_dir: Path, meeting_id: str) -> bool:
+    try:
+        paths = meeting_paths(output_dir, meeting_id)
+    except NotFound:
+        return False
+    return paths.meta.exists() and not _recorder_running(paths)
+
+
+def _recorder_running(paths: RecordingPaths) -> bool:
+    from ..cli import _status as folder_status
+
+    return folder_status(paths) == "recording"
+
+
+def _finishing(paths: RecordingPaths, status: str) -> bool:
+    """Stopped, while the live worker still finishes it: the meeting is shown
+    live a little longer, but there is nothing left to stop."""
+    return status == "recording" and not _recorder_running(paths)
 
 
 _STILL_PROCESSING = "This meeting is still being transcribed. It can {} once that is done."
@@ -169,17 +196,21 @@ def _status(paths: RecordingPaths) -> str:
     return "incomplete"
 
 
-def transcribe_again(output_dir: Path, meeting_id: str, recording, cfg=None) -> bool:
+def transcribe_again(output_dir: Path, meeting_id: str, recording, cfg=None, probe=None) -> bool:
     """Transcribe Again, for a meeting `palaver process` failed on or that
     waits for its models: the menu bar app transcribes it next. False when
-    it does so already."""
+    it does so already. A missing speech model starts downloading."""
     paths = meeting_paths(output_dir, meeting_id)
     if _status(paths) not in ("failed", "waiting"):
         raise Refused("This meeting is transcribed already, or being transcribed.")
     missing = process_state.missing_models(cfg, paths)
     if missing:
-        raise Refused(f"{' and '.join(missing)} {'is' if len(missing) == 1 else 'are'} not downloaded yet. "
-                      "Settings shows the download; the meeting is transcribed once it is done.")
+        if probe is not None:
+            from .. import onboarding
+
+            onboarding.fetch_missing_speech(probe)
+        raise Refused(f"Waiting for {' and '.join(missing)}: not downloaded yet. "
+                      "Palaver downloads it now; the meeting is transcribed once it is done.")
     transcribe = getattr(recording, "transcribe", None)
     if transcribe is None:
         raise Refused("Recordings are transcribed by the Palaver menu bar app.")
@@ -235,11 +266,13 @@ def _list_entry(paths: RecordingPaths) -> dict[str, Any]:
     # No to-do: a voice the user can't name, nor one left unnamed in the review (as in Needs you).
     unknown, seen = load_unknown(paths), _seen(paths) or set()
     title, title_from = titles.resolve(paths, event=event, meeting_notes=meeting_notes)
+    status = _status(paths)
     return {
         "id": paths.folder.name,
         "start": _start(paths),
         "duration": meta.get("duration_seconds"),
-        "status": _status(paths),
+        "status": status,
+        "finishing": _finishing(paths, status),
         "title": title,
         "title_from": title_from,
         "summary": glossary.current().apply_to((meeting_notes or {}).get("summary")),
@@ -282,7 +315,9 @@ def list_meetings(output_dir: Path) -> list[dict[str, Any]]:
             cached = (signature, _list_entry(paths))
             _LIST_CACHE[str(folder)] = cached
         # The status changes without a file changing (a live worker).
-        out.append({**cached[1], "status": _status(paths), "projects": _projects_of(store, folder.name)})
+        status = _status(paths)
+        out.append({**cached[1], "status": status, "finishing": _finishing(paths, status),
+                    "projects": _projects_of(store, folder.name)})
     return out
 
 
@@ -577,14 +612,18 @@ def _cut_suggestion(output_dir: Path, paths: RecordingPaths, calendar) -> dict[s
         return None
 
 
-def dismiss_cut(output_dir: Path, meeting_id: str, dismiss: bool = True) -> None:
-    """No, the suggested cut is wrong; don't suggest it again. ``dismiss``
+def dismiss_cut(output_dir: Path, meeting_id: str, dismiss: bool = True, *, what: str = "cut") -> None:
+    """No, the suggested cut (``what`` "cut") or removing the silence at the
+    start or end ("silence") is wrong; don't suggest it again. ``dismiss``
     False: its undo, suggested again."""
     paths = meeting_paths(output_dir, meeting_id)
+    if what not in ("cut", "silence"):
+        raise ValueError(f"no suggestion {what!r}")
+    marker = paths.cut_dismissed if what == "cut" else paths.silence_dismissed
     if not dismiss:
-        paths.cut_dismissed.unlink(missing_ok=True)
+        marker.unlink(missing_ok=True)
         return
-    paths.cut_dismissed.write_text(json.dumps({"dismissed": datetime.now().astimezone().isoformat(timespec="seconds")}))
+    marker.write_text(json.dumps({"dismissed": datetime.now().astimezone().isoformat(timespec="seconds")}))
 
 
 def _candidate_events(paths: RecordingPaths, calendar) -> list[calendar_events.Event]:
@@ -735,6 +774,7 @@ def _meeting(output_dir: Path, paths: RecordingPaths, meeting_id: str, *, user_n
     stale = notes.stale_reason(paths, raw) if raw and meeting_notes is not None else None
     mic = shared_mic.mic_display(paths)  # the room's, while several people sat at the microphone (#56)
     title, title_from = titles.resolve(paths, event=event, meeting_notes=meeting_notes)
+    status = _status(paths)
     return {
         "id": meeting_id,
         "title": title,
@@ -743,7 +783,8 @@ def _meeting(output_dir: Path, paths: RecordingPaths, meeting_id: str, *, user_n
         "event_question": _event_question(paths),
         "start": _start(paths),
         "duration": meta.get("duration_seconds"),
-        "status": _status(paths),
+        "status": status,
+        "finishing": _finishing(paths, status),
         # Not transcribed (failed.json): why, for Transcribe Again; "failure" below is the log's, for a report.
         "untranscribed": None if paths.transcript_json.exists() else process_state.read(paths),
         # The notes model wrote from the transcript as heard: spell names right.
@@ -770,6 +811,7 @@ def _meeting(output_dir: Path, paths: RecordingPaths, meeting_id: str, *, user_n
         "failure": last_failure(paths),  # a failed run, offered for a report (#59)
         "neighbours": _neighbours(output_dir, paths),
         "cut_suggestion": _cut_suggestion(output_dir, paths, calendar),
+        "silence": cutting.suggest_trim(paths) if status == "ready" else [],
         "shared": _shared(paths, event),
         "shared_suggestion": shared_mic.suggestion(paths, event, user_name=user_name),
         "removed": [{"label": label, "display": _label_display(label)} for label in sorted(load_ignored(paths))],
@@ -2230,6 +2272,19 @@ def respell(output_dir: Path, *, heard: str, term: str) -> dict[str, Any]:
     return {"changed": changed, "term": {"id": tid, **g.terms()[tid]}, "undo": token}
 
 
+def unrespell(output_dir: Path, *, heard: str) -> dict[str, Any]:
+    """“dem” is not “Demo”: the glossary stops respelling ``heard``, from a
+    meeting where it shows. Only that mapping goes; the term and its other
+    spellings stay."""
+    heard = heard.strip()
+    tid = glossary.Glossary().owner(heard)
+    if tid is None:
+        raise Refused(f"“{heard}” is not respelled by the glossary.")
+    with _undoable(output_dir, "not respelled", stores=_store_paths("glossary")) as token:
+        changed = change_glossary(output_dir, lambda g: g.remove_variant(tid, heard))
+    return {"changed": changed, "term": {"id": tid, **glossary.Glossary().terms()[tid]}, "undo": token}
+
+
 def reject_suggestion(output_dir: Path, keys: str | list[str]) -> str:
     """"Not this": the suggestion (or one spelling of it: each spelling of a
     known name has its own key) is not made again. Returns the undo token."""
@@ -3217,10 +3272,9 @@ def setup_offer(app) -> dict[str, Any] | None:
 
     state = _setup_state()
     has_meetings = _has_meetings(app.output_dir)
-    if not state and has_meetings:
-        return None
     hw = app.probe.hardware()
-    missing = onboarding.missing_models(_setup_current(app), hw) if state and state.get("done") else []
+    # After the assistant ran: every missing model. Never ran, but has meetings: they wait for the speech models.
+    missing = onboarding.missing_models(_setup_current(app), hw) if (state and state.get("done")) or (not state and has_meetings) else []
     offer = onboarding.offer(state, hw.fingerprint, has_meetings=has_meetings, missing=missing)
     if offer and offer.get("models"):
         offer["labels"] = {m: onboarding.MODELS[m].label for m in offer["models"]}
@@ -3277,7 +3331,6 @@ def setup_page(app) -> dict[str, Any]:
     needed = onboarding.missing_models(current, hw)
     if current.settings.get("search_meaning", True) and "e5" not in current.downloaded:
         needed.append("e5")
-    pyannote = onboarding.MODELS["pyannote"]
     events = _calendar_events(app.calendar)
     profile = _profile(app, events)
     known = [t["term"] for t in glossary.Glossary().terms().values()]
@@ -3296,10 +3349,6 @@ def setup_page(app) -> dict[str, Any]:
                                   "note": onboarding.download_note(m, hw)} for m in needed],
                       "total_gb": round(onboarding.download_size(needed), 2),
                       "free_disk_gb": round(hw.free_disk_gb, 1),
-                      # pyannote's model is gated: its download needs a token (never shown, only whether set)
-                      "hf_token": {"set": app.probe.hf_token_set(), "needed": app.probe.hf_token_needed(),
-                                   "where": "[hf].token in ~/.config/palaver/config.toml, or HF_TOKEN",
-                                   "terms": f"https://huggingface.co/{app.probe.repo_of(pyannote)}"},
                       "status": app.probe.downloads.status()},
         "profile": profile,
         "glossary": onboarding.seed_terms(events, user_name=profile["name"] or app.user_name, known=known),
@@ -3462,7 +3511,7 @@ def _test_mode(app) -> dict[str, Any]:
     chosen = providers.choice(tr[0], default="local") if tr else "local"
     if chosen != "local":
         return {"transcribe": "cloud", "service": providers.PROVIDERS[chosen].label}
-    return {"transcribe": "local", "repo": app.probe.repo_of(onboarding.MODELS["parakeet"])}
+    return {"transcribe": "local"}
 
 
 def setup_test(app, body: dict) -> dict[str, Any]:

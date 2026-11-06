@@ -137,7 +137,7 @@ def test_process_then_sync_end_to_end(tmp_path: Path, monkeypatch):
 
 def test_a_call_whose_system_track_got_nothing_is_transcribed_from_the_mic(tmp_path: Path, monkeypatch):
     """The tap delivered nothing for a 6-minute Slack call: system.wav was a
-    bare header, and parakeet's "Audio must contain at least 160 decoded
+    bare header, and a model's "Audio must contain at least 160 decoded
     samples" cost the whole transcript though the mic was fine."""
     from palaver.capture_recorder import _wav_header
 
@@ -153,13 +153,13 @@ def test_a_call_whose_system_track_got_nothing_is_transcribed_from_the_mic(tmp_p
     }))
 
     def _segments(name):
-        if sf.info(str(folder / name)).frames < 160:  # as parakeet-mlx
+        if sf.info(str(folder / name)).frames < 160:  # as a model does
             raise ValueError(f"Audio must contain at least 160 decoded samples; got 0 from {name}")
         return [_seg(0.5, 2.0, "Let's start the review.")]
 
     _fake_models(monkeypatch, segments_for=_segments)
 
-    class _Pyannote:
+    class _Diarizer:
         last_embeddings: dict = {}
 
         def __init__(self, **_):
@@ -167,10 +167,10 @@ def test_a_call_whose_system_track_got_nothing_is_transcribed_from_the_mic(tmp_p
 
         def diarize(self, wav):
             if not sf.info(str(wav)).frames:
-                raise ValueError("'waveform' must be provided as a (channel, time) torch Tensor.")
+                raise ValueError("a model refuses an empty waveform")
             return []
 
-    monkeypatch.setattr("palaver.diarizer.PyannoteDiarizer", _Pyannote)
+    monkeypatch.setattr("palaver.diarizer.EngineDiarizer", _Diarizer)
 
     assert cli._cmd_process(_ns(folder)) == 0
 

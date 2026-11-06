@@ -123,6 +123,9 @@ _WARNING = {
     "access": "{Track} access was turned off — allow it in System Settings → Privacy & Security",
     ("device", "system"): "System audio couldn't be rebuilt; Palaver keeps trying",
     "device": "{Track} is unavailable; Palaver keeps trying",
+    # Written by the Swift recorder only: a full capture buffer, a failing disk write.
+    "dropped": "{Track} is losing audio: the recorder cannot keep up",
+    "write": "{Track} cannot be written to disk; audio is being lost — is the disk full?",
 }
 # Afterwards: the meeting page, `palaver doctor`.
 _HAPPENED = {
@@ -134,6 +137,8 @@ _HAPPENED = {
     "access": "{track} access was turned off",
     ("device", "system"): "system audio couldn't be rebuilt",
     "device": "{track} was unavailable",
+    "dropped": "{track} lost audio",
+    "write": "{track} could not be written to disk",
 }
 _HINT = {"silent": "Your mic sends nothing — muted?"}
 

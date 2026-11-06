@@ -118,9 +118,10 @@ test("Transcribe Again: only for a meeting not transcribed, which can then go to
   for (const status of ["ready", "processing", "recording"]) {
     assert.equal(meetingCommands(ready({ status })).transcribe.hidden, true, status);
   }
-  const waiting = { status: "waiting", untranscribed: { missing: ["Parakeet", "pyannote"] } };
-  assert.match(untranscribedText(waiting), /Parakeet and pyannote are still missing/);
-  assert.match(untranscribedText({ ...waiting, untranscribed: { missing: ["Parakeet"] } }), /Parakeet is still missing/);
+  const waiting = { status: "waiting", untranscribed: { missing: ["Speech models", "Notes model"] } };
+  assert.match(untranscribedText(waiting), /waiting for Speech models and Notes model\./);
+  assert.match(untranscribedText({ ...waiting, untranscribed: { missing: ["Speech models"] } }), /waiting for Speech models\./);
+  assert.match(untranscribedText({ status: "waiting" }), /waiting for the speech models\./);
   const failed = { status: "failed", untranscribed: { error: "no GPU" } };
   assert.match(untranscribedText(failed), /not transcribed \(no GPU\)\. The audio is kept/);
   // The log's failure line says why already: not twice.

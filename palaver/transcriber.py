@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
@@ -15,7 +14,7 @@ class Transcriber(Protocol):
     def transcribe(self, wav: Path, language: str | None = None) -> list[Segment]: ...
 
 
-# Less audio than this holds no word; parakeet-mlx refuses under 10 ms.
+# Less audio than this holds no word; the engine refuses under 10 ms.
 MIN_AUDIO_SECONDS = 0.05
 
 
@@ -103,78 +102,41 @@ class MlxWhisperTranscriber:
         return segments
 
 
-DEFAULT_PARAKEET_REPO = "mlx-community/parakeet-tdt-0.6b-v3"
-
-
-class ParakeetMlxTranscriber:
-    """NVIDIA Parakeet-TDT v3 on Apple Silicon via parakeet-mlx (default
-    backend). No initial_prompt support — dictionary replacements still apply.
-
-    ~5x faster than Whisper large-v3-turbo on a 24-min meeting and produced
-    no text over silence. Multilingual with automatic language handling, so
-    ``language`` is ignored and ``last_language`` stays None. Sentences are
-    split at 1 s pauses and capped at 15 s — unsplit, they ran for minutes.
+class EngineTranscriber:
+    """Parakeet TDT v3 through palaver-engine (the Swift speech engine). The
+    engine splits sentences (pauses of 1 s, at most 15 s) and joins pieces
+    into words; this maps its answer to Segments and applies the dictionary.
+    Like Parakeet always did: ``language`` is ignored, ``last_language`` is None.
     """
 
-    # Parakeet picks the language per chunk. With 120 s chunks a German
-    # meeting full of English terms flipped into (wrong) English and lost
-    # passages; 15 s chunks — dictation-sized, like sabbel's — kept it German
-    # (79 % → 91 % of segments, on par with Whisper's 92 %) and recovered 9 %
-    # more words on an English meeting, at about the same speed.
-    CHUNK_SECONDS = 15.0
-    OVERLAP_SECONDS = CHUNK_SECONDS / 4
-
-    def __init__(self, repo: str, dictionary: Dictionary, model: Any = None):
-        self._repo = repo
+    def __init__(self, dictionary: Dictionary, engine: Any = None):
         self._dictionary = dictionary
-        self._model = model
+        self._engine = engine
         self.last_language: str | None = None
 
     def transcribe(self, wav: Path, language: str | None = None) -> list[Segment]:
         if not holds_audio(wav):
             return []
-        from parakeet_mlx import DecodingConfig, SentenceConfig
+        if self._engine is None:
+            from .engine import Engine
 
-        if self._model is None:
-            from parakeet_mlx import from_pretrained
-
-            self._model = from_pretrained(self._repo)
-        with _parakeet_reads_with_soundfile():
-            result = self._model.transcribe(
-                str(wav),
-                decoding_config=DecodingConfig(
-                    sentence=SentenceConfig(silence_gap=1.0, max_duration=15.0)
-                ),
-                chunk_duration=self.CHUNK_SECONDS,
-                overlap_duration=self.OVERLAP_SECONDS,
+            self._engine = Engine()
+        reply = self._engine.call("transcribe", wav=str(wav))
+        apply = self._dictionary.apply
+        return [
+            Segment(
+                start=float(raw["start"]),
+                end=float(raw["end"]),
+                text=apply(raw["text"]).strip(),
+                speaker=None,
+                words=[
+                    Word(text=apply(w["text"]), start=float(w["start"]), end=float(w["end"]),
+                         confidence=w.get("confidence"))
+                    for w in raw.get("words", [])
+                ],
             )
-        segments: list[Segment] = []
-        for sentence in result.sentences:
-            words = _words_from_tokens(sentence.tokens)
-            if not words:
-                continue
-            if segments and not any(ch.isalnum() for ch in sentence.text):
-                # Orphaned punctuation split off at a pause: attach it to the
-                # previous segment instead of making a timestamped segment.
-                prev = segments[-1]
-                prev.text += sentence.text.strip()
-                if prev.words:
-                    last = prev.words[-1]
-                    prev.words[-1] = Word(last.text + sentence.text.strip(), last.start, last.end, last.confidence)
-                continue
-            segments.append(
-                Segment(
-                    start=float(sentence.start),
-                    end=float(sentence.end),
-                    text=self._dictionary.apply(sentence.text).strip(),
-                    speaker=None,
-                    words=[
-                        Word(text=self._dictionary.apply(w.text), start=w.start, end=w.end, confidence=w.confidence)
-                        for w in words
-                    ],
-                )
-            )
-        return segments
+            for raw in reply.get("segments", [])
+        ]
 
 
 def _words_from_tokens(tokens) -> list[Word]:
@@ -203,20 +165,25 @@ def make_transcriber(
     whisper_repo: str,
     dictionary: Dictionary,
     language: str,
-    parakeet_repo: str = DEFAULT_PARAKEET_REPO,
 ):
-    """The ``[model].transcriber`` backend: "parakeet-mlx" (default) or "mlx-whisper"."""
+    """The ``[model].transcriber`` backend: "parakeet" (default, the Swift
+    engine), "parakeet-mlx" (the old name, now the same) or "mlx-whisper"."""
     if name == "mlx-whisper":
         return MlxWhisperTranscriber(repo=whisper_repo, dictionary=dictionary, language=language)
     if name == "parakeet-mlx":
-        return ParakeetMlxTranscriber(repo=parakeet_repo, dictionary=dictionary)
-    raise ValueError(f'unknown transcriber "{name}" (use "mlx-whisper" or "parakeet-mlx")')
+        from . import session_log
+
+        session_log.event("transcriber_mapped", configured="parakeet-mlx", used="parakeet")
+        name = "parakeet"
+    if name == "parakeet":
+        return EngineTranscriber(dictionary)
+    raise ValueError(f'unknown transcriber "{name}" (use "parakeet" or "mlx-whisper")')
 
 
 def read_mono(wav: Path, sample_rate: int):
     """Decode a WAV to float32 mono at ``sample_rate`` without ffmpeg.
 
-    Both mlx-whisper and parakeet-mlx shell out to ffmpeg to decode file
+    mlx-whisper shells out to ffmpeg to decode file
     paths; our recordings are plain PCM WAVs, so soundfile suffices.
     """
     import numpy as np
@@ -228,24 +195,3 @@ def read_mono(wav: Path, sample_rate: int):
     if sr != sample_rate:
         mono = soxr.resample(mono, sr, sample_rate).astype(np.float32)
     return mono
-
-
-@contextmanager
-def _parakeet_reads_with_soundfile():
-    """Swap parakeet-mlx's ffmpeg-based ``load_audio`` for ``read_mono``
-    while one transcription runs."""
-    import mlx.core as mx
-    import parakeet_mlx.parakeet as parakeet
-
-    original = parakeet.load_audio
-
-    def load_audio(filename, sampling_rate, dtype=mx.bfloat16):
-        # Like the original: float32 regardless of ``dtype`` — the STFT in
-        # get_logmel breaks on bfloat16 input.
-        return mx.array(read_mono(Path(filename), sampling_rate), dtype=mx.float32)
-
-    parakeet.load_audio = load_audio
-    try:
-        yield
-    finally:
-        parakeet.load_audio = original

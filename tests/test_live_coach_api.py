@@ -179,7 +179,7 @@ def test_the_app_asks_in_a_helper_process(tmp_path: Path, monkeypatch):
 
     cfg = Config(user_name="Timo", notion_token="t", notion_parent_page_id="p", hf_token=None, output_dir=tmp_path,
                  retention_days=14, max_session_hours=4, grace_period_seconds=10, transcriber="parakeet-mlx",
-                 whisper_repo="w", diarizer_repo="d", language="auto", calendar_enabled=False)
+                 whisper_repo="w", language="auto", calendar_enabled=False)
     _meeting(tmp_path)
     runs = []
 

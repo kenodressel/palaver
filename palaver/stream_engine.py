@@ -9,6 +9,7 @@ have not settled yet are the draft: they change from pass to pass.
 
 from __future__ import annotations
 
+import os
 from typing import Callable, Protocol
 
 import numpy as np
@@ -127,46 +128,51 @@ class WindowEngine(Engine):
         return self._dictionary.apply(text) if self._dictionary else text
 
 
-def window_transcriber(model) -> Callable[[np.ndarray], list[Word]]:
-    """Turn a loaded parakeet-mlx model into a `transcribe` for WindowEngine."""
-    import mlx.core as mx
-    from parakeet_mlx.audio import get_logmel
-
-    from .transcriber import _words_from_tokens
+def window_transcriber(engine) -> Callable[[np.ndarray], list[Word]]:
+    """A `transcribe` for WindowEngine that sends each window to palaver-engine
+    as base64 float32 little-endian samples."""
+    import base64
 
     def transcribe(audio: np.ndarray) -> list[Word]:
-        mel = get_logmel(mx.array(audio), model.preprocessor_config)
-        result = model.generate(mel)[0]
-        return [w for sentence in result.sentences for w in _words_from_tokens(sentence.tokens)]
+        pcm = base64.b64encode(np.asarray(audio, dtype="<f4").tobytes()).decode("ascii")
+        reply = engine.call("transcribe_window", pcm=pcm)
+        return [
+            Word(w["text"], float(w["start"]), float(w["end"]), w.get("confidence"))
+            for w in reply.get("words", [])
+        ]
 
     return transcribe
 
 
-CACHE_LIMIT = 512 * 1024**2  # MLX keeps at most this much freed memory for reuse
+def load_engines(dictionary: Dictionary, engine=None) -> tuple[WindowEngine, WindowEngine]:
+    """The system and the mic engine, sharing one palaver-engine process."""
+    if engine is None:
+        from .engine import Engine
 
-
-def load_engines(repo: str, dictionary: Dictionary) -> tuple[WindowEngine, WindowEngine]:
-    """The system and the mic engine, sharing one loaded model."""
-    import mlx.core as mx
-    from parakeet_mlx import from_pretrained
-
-    mx.set_cache_limit(CACHE_LIMIT)
-    transcribe = window_transcriber(from_pretrained(repo))
+        engine = Engine()
+    transcribe = window_transcriber(engine)
     return (
         WindowEngine(transcribe, dictionary=dictionary),
         WindowEngine(transcribe, dictionary=dictionary),
     )
 
 
-def mlx_memory() -> int:
-    """The bytes MLX holds now: in use and cached."""
-    import mlx.core as mx
+class MemoryMeter:
+    """The stream's memory: this process and the engine it started (the
+    model lives in the engine, so only the whole tree says what the stream
+    costs). Called, it returns the bytes now and remembers the most."""
 
-    return mx.get_active_memory() + mx.get_cache_memory()
+    def __init__(self, pid: int | None = None):
+        self._pid = os.getpid() if pid is None else pid
+        self._peak = 0
 
+    def __call__(self) -> int:
+        from . import memory
 
-def mlx_peak_mb() -> int:
-    """The most MLX has held at once, in MB."""
-    import mlx.core as mx
+        used = memory.tree_footprint(self._pid) or 0
+        self._peak = max(self._peak, used)
+        return used
 
-    return round(mx.get_peak_memory() / 1024**2)
+    def peak_mb(self) -> int:
+        """The most the tree held at once, in MB."""
+        return round(self._peak / 1024**2)

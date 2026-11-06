@@ -420,7 +420,7 @@ def _cfg(tmp_path):
 
     return Config(user_name="Timo", notion_token="t", notion_parent_page_id="p", hf_token=None, output_dir=tmp_path,
                   retention_days=14, max_session_hours=4, grace_period_seconds=10, transcriber="parakeet-mlx",
-                  whisper_repo="w", diarizer_repo="d", language="auto", calendar_enabled=False)
+                  whisper_repo="w", language="auto", calendar_enabled=False)
 
 
 def test_build_app_has_the_app_start_the_notes_helper(tmp_path, monkeypatch):
@@ -484,3 +484,16 @@ def test_build_app_model_busy(tmp_path):
     app = webapp.build_app(_cfg(tmp_path), [], recording=Recording())
     with pytest.raises(ModelBusy):
         app.run_projects(["suggest"])
+
+
+def test_a_daemon_json_the_swift_app_wrote_reads_the_same(short_dir):
+    """Phase 2: the Swift daemon writes daemon.json (fixture from native/Tests/PalaverDaemonTests
+    `swiftDaemonJsonFixture`); the window's server reads it as it read the Python app's."""
+    fixture = Path(__file__).parent / "fixtures" / "swift_daemon" / "daemon.json"
+    status = json.loads(fixture.read_text())
+    r = _remote(short_dir, status, now=datetime.fromisoformat(status["updated"]) + timedelta(seconds=1))
+    assert r.question() == status["stop_question"] and r.question()["reason"] == "silence"
+    assert r.recording() == {"meeting": "2026-11-04T09-00-00", "text": status["why_text"],
+                             "warnings": ["No system audio is arriving"], "hints": []}
+    assert r.memory() == status["memory"] and r.busy() is True
+    assert r.indexing() == {"indexing": False, "downloading": False}

@@ -1,0 +1,53 @@
+{
+  "state": "stopped",
+  "auto": true,
+  "manual": false,
+  "since": "2026-11-03T09:06:42+01:00",
+  "folder": null,
+  "queued": [
+    "/tmp/palaver-fixture/Recordings/2026-11-03T08-30-00"
+  ],
+  "transcribing": true,
+  "transcribing_folder": "/tmp/palaver-fixture/Recordings/2026-11-03T08-00-00",
+  "notes_queued": [
+    "/tmp/palaver-fixture/Recordings/2026-11-02T16-00-00"
+  ],
+  "writing_notes": null,
+  "indexing": false,
+  "index_downloading": false,
+  "system_source": null,
+  "mic_source": null,
+  "missing": [],
+  "teams_active": true,
+  "stop_question": null,
+  "ignored": [
+    "slack"
+  ],
+  "why": null,
+  "why_text": null,
+  "warnings": [],
+  "hints": [],
+  "memory": null,
+  "talk": null,
+  "talk_text": null,
+  "nudge": null,
+  "quiet": [],
+  "last_stop": {
+    "folder": "/tmp/palaver-fixture/Recordings/2026-11-03T09-00-14",
+    "reason": "restart",
+    "text": "Palaver restarted",
+    "at": "2026-11-03T09:06:42+01:00"
+  },
+  "continues": [],
+  "cut": {
+    "folders": [
+      "/tmp/palaver-fixture/Recordings/2026-11-03T09-00-14"
+    ],
+    "trigger": "teams",
+    "at": "2026-11-03T09:06:42+01:00",
+    "since": "2026-11-03T09:00:04+01:00",
+    "seconds": 400.0
+  },
+  "pid": 4242,
+  "updated": "2026-11-03T09:06:42+01:00"
+}

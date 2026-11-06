@@ -5,8 +5,8 @@ the cloud service the user chose in Settings → Transcription (#54).
   the user chose one for transcription (providers.choose) and it is set
   up; a meeting marked "Keep on This Mac" is always transcribed here.
 - Only the system track goes out: what the others said. The mic track is
-  one clean voice and stays on Parakeet, and who spoke when is worked out
-  here (pyannote): the service's word timestamps are lined up with the
+  one clean voice and stays local, and who spoke when is worked out
+  here (the engine): the service's word timestamps are lined up with the
   local speaker turns, so no voice characteristics leave the Mac.
 - Long silences are cut out before the upload (fewer billed minutes), and
   the offsets kept, so the words come back on the recording's clock. A

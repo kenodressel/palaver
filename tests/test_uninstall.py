@@ -13,7 +13,7 @@ def home(tmp_path) -> Path:
     h = tmp_path / "home"
     (install_layout.app_path(h) / "Contents").mkdir(parents=True)
     (install_layout.runtime_dir("rt-1", h) / "bin").mkdir(parents=True)
-    (install_layout.models_dir(h) / "pyannote-community-1").mkdir(parents=True)
+    (install_layout.models_dir(h) / "northwind-voices").mkdir(parents=True)
     install_layout.launch_agent(h).parent.mkdir(parents=True)
     install_layout.launch_agent(h).write_text("<plist/>")
     install_layout.cli_link(h).parent.mkdir(parents=True)
@@ -123,4 +123,4 @@ def test_the_folders_emptied_go_too_when_nothing_else_is_in_them(home, tmp_path)
     subprocess.run(["/bin/sh", str(script)], check=True, timeout=10)
     assert not (rec / ".trash").exists()
     assert (rec / "notes about the folder.txt").exists()  # the recordings folder stays: it holds the user's file
-    assert (install_layout.models_dir(home) / "pyannote-community-1").exists()
+    assert (install_layout.models_dir(home) / "northwind-voices").exists()

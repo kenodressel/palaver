@@ -1,121 +1,117 @@
-"""Tests for pyannote diarizer wrapper."""
+"""Tests for the engine diarizer wrappers."""
 
-import os
 from pathlib import Path
 
 import pytest
 
-from palaver.diarizer import PyannoteDiarizer
 from palaver.models import SpeakerTurn
 
 
-def test_diarizer_class_is_constructible():
-    d = PyannoteDiarizer(
-        repo="pyannote/speaker-diarization-community-1",
-        hf_token="fake_for_construction",
-    )
-    assert d is not None
-
-
-@pytest.mark.integration
-def test_pyannote_smoke(tiny_wav: Path):
-    token = os.environ.get("HF_TOKEN")
-    if not token:
-        pytest.skip("HF_TOKEN not set")
-    d = PyannoteDiarizer(
-        repo="pyannote/speaker-diarization-community-1",
-        hf_token=token,
-    )
-    turns = d.diarize(tiny_wav)
-    assert isinstance(turns, list)
-    assert all(isinstance(t, SpeakerTurn) for t in turns)
-    for t in turns:
-        assert t.end > t.start
-
-
-def test_diarize_passes_waveform_in_memory(tmp_path: Path):
-    """pyannote 4.x decodes file paths via torchcodec, which needs FFmpeg
-    dylibs at runtime. Our WAVs are always 16 kHz mono PCM, so they are
-    loaded here and handed over as a waveform instead."""
-    import numpy as np
-    import soundfile as sf
-    import torch
-
-    wav = tmp_path / "system.wav"
-    sf.write(str(wav), np.full(1_600, 0.25, dtype=np.float32), 16_000, subtype="PCM_16")
-
-    class _Segment:
-        start, end = 0.5, 1.5
-
-    class _Annotation:
-        def itertracks(self, yield_label):
-            return [(_Segment(), None, "SPEAKER_00")]
-
-    received = {}
-
-    def _pipeline(file):
-        received.update(file)
-        return _Annotation()
-
-    d = PyannoteDiarizer(repo="unused", hf_token="unused")
-    d._pipeline = _pipeline
-
-    turns = d.diarize(wav)
-
-    assert turns == [SpeakerTurn(speaker="SPEAKER_00", start=0.5, end=1.5)]
-    assert received["sample_rate"] == 16_000
-    waveform = received["waveform"]
-    assert isinstance(waveform, torch.Tensor)
-    assert tuple(waveform.shape) == (1, 1_600)
-    assert waveform.dtype == torch.float32
-    assert abs(float(waveform.mean()) - 0.25) < 1e-3
-
-
-def test_diarize_keeps_one_voice_embedding_per_speaker(tmp_path: Path):
-    """pyannote 4.x returns a centroid embedding per speaker, ordered like
-    speaker_diarization.labels(); they feed voice recognition (#13)."""
+def _wav(path: Path, seconds: float, rate: int = 16_000) -> Path:
     import numpy as np
     import soundfile as sf
 
-    wav = tmp_path / "system.wav"
-    sf.write(str(wav), np.zeros(1_600, dtype=np.float32), 16_000, subtype="PCM_16")
-
-    class _Segment:
-        def __init__(self, start, end):
-            self.start, self.end = start, end
-
-    class _Annotation:
-        def __init__(self, tracks):
-            self._tracks = tracks
-
-        def itertracks(self, yield_label):
-            return [(_Segment(s, e), None, label) for s, e, label in self._tracks]
-
-        def labels(self):
-            return sorted({label for _, _, label in self._tracks})
-
-    class _Output:
-        speaker_diarization = _Annotation([(0, 1, "SPEAKER_01"), (1, 2, "SPEAKER_00")])
-        exclusive_speaker_diarization = speaker_diarization
-        speaker_embeddings = np.array([[1.0, 0.0], [0.0, 1.0]])
-
-    d = PyannoteDiarizer(repo="unused", hf_token="unused")
-    d._pipeline = lambda _file: _Output()
-
-    d.diarize(wav)
-
-    assert d.last_embeddings == {"SPEAKER_00": [1.0, 0.0], "SPEAKER_01": [0.0, 1.0]}
+    sf.write(str(path), np.zeros(int(seconds * rate), dtype="float32"), rate, subtype="PCM_16")
+    return path
 
 
-def test_a_track_that_holds_no_audio_has_no_speakers_and_needs_no_model(tmp_path: Path):
-    """A system track the tap delivered nothing to is only its header;
-    pyannote refuses an empty waveform."""
-    from palaver.capture_recorder import _wav_header
+@pytest.fixture
+def fake_engine(monkeypatch):
+    from palaver.engine import Engine
 
-    wav = tmp_path / "system.wav"
-    wav.write_bytes(_wav_header(0))
-    d = PyannoteDiarizer(repo="unused", hf_token=None)  # no token: loading the model would fail
-    d.last_embeddings = {"SPEAKER_00": [1.0]}
+    monkeypatch.delenv("FAKE_ENGINE_MODE", raising=False)
+    monkeypatch.setenv("PALAVER_ENGINE", str(Path(__file__).parent / "fake_engine.py"))
+    engine = Engine()
+    yield engine
+    engine.close()
 
-    assert d.diarize(wav) == []
+
+def test_engine_diarizer_turns_and_embeddings(tmp_path: Path, fake_engine):
+    from palaver.diarizer import EngineDiarizer
+
+    d = EngineDiarizer(engine=fake_engine)
+    turns = d.diarize(_wav(tmp_path / "s.wav", 4.0))
+    assert turns == [SpeakerTurn(speaker="SPEAKER_00", start=0.0, end=2.0),
+                     SpeakerTurn(speaker="SPEAKER_01", start=2.0, end=3.5)]
+    assert set(d.last_embeddings) == {"SPEAKER_00", "SPEAKER_01"}
+    assert len(d.last_embeddings["SPEAKER_00"]) == 256
+
+
+def test_engine_diarizer_short_track_needs_no_engine(tmp_path: Path):
+    from palaver.diarizer import EngineDiarizer
+
+    class Boom:
+        def call(self, *a, **k):
+            raise AssertionError("engine must not be started")
+
+    d = EngineDiarizer(engine=Boom())
+    d.last_embeddings = {"SPEAKER_00": [0.0]}
+    assert d.diarize(_wav(tmp_path / "s.wav", 0.01)) == []
     assert d.last_embeddings == {}
+
+
+def _live(tmp_path: Path, engine):
+    import numpy as np
+
+    from palaver.diarizer import LiveEngineDiarizer
+
+    reads = []
+
+    def read(start, end):
+        reads.append((start, end))
+        return np.zeros(end - start, dtype="float32")
+
+    return LiveEngineDiarizer(tmp_path, engine=engine), read, reads
+
+
+def test_live_diarizer_runs_every_two_minutes(tmp_path: Path, fake_engine):
+    live, read, reads = _live(tmp_path, fake_engine)
+    sr = 16_000
+    assert [live.advance(read, s * sr) for s in (60, 130, 140, 260)] == [0, 1, 0, 1]
+    assert live.chunks_done == 2
+    assert reads == [(0, 130 * sr), (0, 260 * sr)]
+    assert len(live.provisional()) == 2 and set(live.last_embeddings) == {"SPEAKER_00", "SPEAKER_01"}
+
+
+def test_live_diarizer_finish_uses_all_samples(tmp_path: Path, fake_engine):
+    import numpy as np
+
+    live, _, _ = _live(tmp_path, fake_engine)
+    calls = []
+    real = fake_engine.call
+    fake_engine.call = lambda cmd, /, **kw: calls.append(real(cmd, **kw)) or calls[-1]
+    samples = np.zeros(16_000 * 3 + 123, dtype="float32")
+    assert len(live.finish(samples)) == 2
+    assert calls[0]["frames"] == len(samples) and calls[0]["rate"] == 16_000
+
+
+def test_live_scratch_file_removed(tmp_path: Path, fake_engine):
+    import numpy as np
+
+    live, read, _ = _live(tmp_path, fake_engine)
+    live.advance(read, 130 * 16_000)
+    assert not (tmp_path / ".live-diarize.wav").exists()
+    live.finish(np.zeros(16_000 * 3, dtype="float32"))
+    assert not (tmp_path / ".live-diarize.wav").exists()
+
+
+def test_live_scratch_file_removed_when_engine_dies(tmp_path: Path, monkeypatch):
+    import numpy as np
+
+    from palaver.engine import Engine, EngineError
+
+    monkeypatch.setenv("PALAVER_ENGINE", str(Path(__file__).parent / "fake_engine.py"))
+    monkeypatch.setenv("FAKE_ENGINE_MODE", "diarize_crash")
+    engine = Engine()
+    live, _, _ = _live(tmp_path, engine)
+    with pytest.raises(EngineError):
+        live.finish(np.zeros(16_000 * 3, dtype="float32"))
+    assert not (tmp_path / ".live-diarize.wav").exists()
+    engine.close()
+
+
+def test_live_diarizer_removes_a_scratch_a_killed_worker_left(tmp_path: Path):
+    stale = tmp_path / ".live-diarize.wav"
+    stale.write_bytes(b"\0" * 100)
+    _live(tmp_path, object())
+    assert not stale.exists()

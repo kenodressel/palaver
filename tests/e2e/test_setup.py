@@ -101,7 +101,7 @@ def test_the_first_start_takes_three_steps(page, fresh, no_mcp_install):
     expect(pack(page, "record_teams")).to_be_visible()
     expect(pack(page, "claude_code")).to_be_visible()
     expect(page.locator("#main")).to_contain_text("nothing leaves it")
-    expect(page.locator(".setup-downloads")).to_contain_text("Parakeet (2.3 GB)")
+    expect(page.locator(".setup-downloads")).to_contain_text("Speech models (500 MB)")
     customize_all(page)  # every choice with its reason
     lm = rec(page, "language_model")
     expect(lm.locator(".setup-why")).to_contain_text("48 GB")
@@ -113,7 +113,7 @@ def test_the_first_start_takes_three_steps(page, fresh, no_mcp_install):
 
     step_title(page, "Test recording")
     expect(page.locator("#setup-downloads")).to_contain_text("downloaded")  # the click started them
-    assert sorted(fresh.probe.fetched) == ["e5", "gemma", "parakeet"]
+    assert sorted(fresh.probe.fetched) == ["e5", "gemma", "speech"]
     assert fresh.probe.autostart_on and no_mcp_install == ["code"]
     expect(page.locator("#main")).not_to_contain_text("headphone")
     assert fresh.probe.recorder.started == []  # never by itself
@@ -227,28 +227,26 @@ def test_reopening_keeps_a_deliberate_choice(page, fresh, no_mcp_install):
 
 
 def test_a_failed_download_can_be_tried_again(page, fresh, no_mcp_install):
-    fresh.probe.fail_once = {"parakeet"}
+    fresh.probe.fail_once = {"speech"}
     page.goto(fresh.url + "#/setup/recommended")
     primary(page).click()
     step_title(page, "Test recording")
-    retry = page.locator('#setup-downloads .setup-retry[data-model="parakeet"]')
+    retry = page.locator('#setup-downloads .setup-retry[data-model="speech"]')
     expect(retry).to_have_text("Try again")
     expect(page.locator("#setup-downloads")).to_contain_text("failed: connection reset")
     retry.click()
     expect(page.locator("#setup-downloads .setup-retry")).to_have_count(0)
-    assert fresh.probe.fetched.count("parakeet") == 2
+    assert fresh.probe.fetched.count("speech") == 2
 
 
-def test_pyannote_without_a_token_says_where_to_set_it(page, fresh, no_mcp_install):
-    fresh.probe._downloaded.discard("pyannote")
-    fresh.probe.hf_token = False
+def test_the_assistant_asks_for_no_hugging_face_token(page, fresh, no_mcp_install):
     page.goto(fresh.url + "#/setup/recommended")
-    token = page.locator(".setup-token")
-    expect(token).to_contain_text("pyannote needs a Hugging Face token")
-    expect(token).to_contain_text("[hf].token in ~/.config/palaver/config.toml")
+    expect(page.locator("#main")).to_contain_text("Speech models")
+    expect(page.locator(".setup-token")).to_have_count(0)
+    expect(page.locator("#main")).not_to_contain_text("Hugging Face token")
     primary(page).click()
-    step_title(page, "Recommended for this Mac")  # the models can't come yet: it says why here
-    assert fresh.probe.fetched == []
+    step_title(page, "Test recording")  # the download starts with no token
+    assert fresh.probe.fetched.count("speech") == 1
 
 
 def test_a_cloud_model_that_is_not_set_up_leaves_notes_off(page, fresh, no_mcp_install):
@@ -299,3 +297,9 @@ def test_a_refused_calendar_opens_system_settings(page, fresh):
     row.get_by_role("button", name="Open System Settings").click()
     expect_toast(page, re.compile("System Settings is open at Calendars"))
     assert fresh.probe.calendar.opened_settings == 1 and fresh.probe.calendar.asked == 0
+
+
+def test_an_existing_user_without_the_speech_models_is_told_their_meetings_wait(page, app_server):
+    app_server.probe._downloaded.discard("speech")
+    goto(page, app_server)
+    expect_toast(page, "Speech models are not downloaded yet.")

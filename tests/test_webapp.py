@@ -494,6 +494,47 @@ def test_respelling_words_as_a_meeting_shows_them(tmp_path: Path):
         api.respell(tmp_path, heard="Zini", term=" ")
 
 
+def test_a_stopped_recording_whose_live_worker_still_finishes_is_no_longer_stoppable(tmp_path: Path, monkeypatch):
+    # Stopped from the menu: the recorder is done (no .part, meta.json written), but the
+    # live worker takes another minute. The window must not offer Stop for it any more.
+    from palaver import live
+
+    _meeting(tmp_path)
+    monkeypatch.setattr(live, "worker_running", lambda folder: True)
+    [listed] = api.list_meetings(tmp_path)
+    assert listed["status"] == "recording" and listed["finishing"] is True  # the live view stays
+    assert api.get_meeting(tmp_path, MEETING, user_name="Timo")["finishing"] is True
+
+    class _Stopped:  # the app answers as it does once the recording ended
+        def record(self, action, meeting=None):
+            raise api.Refused("This recording is no longer running.")
+
+    assert api.record(_Stopped(), "stop", MEETING, output_dir=tmp_path) == {"stopped": MEETING}
+    with pytest.raises(api.Refused, match="no longer running"):
+        api.record(_Stopped(), "stop", None, output_dir=tmp_path)  # which one is unknown: say so
+
+
+def test_a_wrong_respelling_is_removed_where_it_shows(tmp_path: Path):
+    # "dem" became a variant of "Demo" by mistake: from the meeting, only that
+    # mapping goes; the term and its other spellings stay.
+    paths = _meeting(tmp_path)
+    transcript = json.loads(paths.transcript_json.read_text())
+    transcript[1]["text"] = "Wir zeigen dem Kunden die Demmo morgen."
+    paths.transcript_json.write_text(json.dumps(transcript))
+    said = lambda: api.get_meeting(tmp_path, MEETING, user_name="Timo")["transcript"][1]["text"]
+    api.accept_suggestion(tmp_path, term="Demo", variants=["dem", "Demmo"])
+    assert said() == "Wir zeigen Demo Kunden die Demo morgen."
+
+    d = api.unrespell(tmp_path, heard="Dem")  # as heard, any case
+    assert d["changed"]["replacements"] == 1 and d["term"]["term"] == "Demo" and d["term"]["variants"] == ["Demmo"]
+    assert said() == "Wir zeigen dem Kunden die Demo morgen."
+    api.undo_change(tmp_path, d["undo"], user_name="Timo")
+    assert said() == "Wir zeigen Demo Kunden die Demo morgen."
+
+    with pytest.raises(api.Refused, match="not respelled by the glossary"):
+        api.unrespell(tmp_path, heard="Kunden")
+
+
 def test_review_queue_lists_what_is_open_until_done(tmp_path: Path):
     _meeting(tmp_path)
     [item] = api.review_queue(tmp_path, user_name="Timo")
@@ -2246,12 +2287,12 @@ def test_a_failed_transcription_shows_why_and_can_be_transcribed_again(tmp_path:
 def test_a_meeting_waiting_for_its_models_says_which(tmp_path: Path, monkeypatch):
     from palaver import process_state
 
-    _untranscribed(tmp_path, process_state.MODELS, missing=["Parakeet", "pyannote"])
+    _untranscribed(tmp_path, process_state.MODELS, missing=["Speech models"])
     m = api.get_meeting(tmp_path, MEETING, user_name="Timo")
-    assert m["status"] == "waiting" and m["untranscribed"]["missing"] == ["Parakeet", "pyannote"]
-    monkeypatch.setattr(process_state, "missing_models", lambda cfg, p: ["Parakeet"])
+    assert m["status"] == "waiting" and m["untranscribed"]["missing"] == ["Speech models"]
+    monkeypatch.setattr(process_state, "missing_models", lambda cfg, p: ["Speech models"])
     rec = _AppRecording()
-    with pytest.raises(api.Refused, match="Parakeet is not downloaded yet"):
+    with pytest.raises(api.Refused, match="Waiting for Speech models: not downloaded yet"):
         api.transcribe_again(tmp_path, MEETING, rec)
     assert rec.queued == []
     monkeypatch.setattr(process_state, "missing_models", lambda cfg, p: [])

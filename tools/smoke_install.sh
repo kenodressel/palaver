@@ -5,10 +5,15 @@
 #     nothing outside that home and reaches no network (sandbox-exec);
 #   - the runtime imports Palaver and its heavy dependencies, as Palaver.app
 #     (its main bundle, its name: what the Dock shows);
-#   - the launcher finds the runtime by its id; pyannote loads from the
-#     hosted copy without a Hugging Face token;
+#   - the app's executable is the Swift app (Mach-O, linked against Swift; never
+#     started here), its Python host palaver-python finds the runtime by its id,
+#     and every program in Contents/MacOS is signed;
 #   - an update (version bumped, app rebuilt) through install.sh downloads
-#     no runtime, and one through the app's updater neither.
+#     no runtime, and one through the app's updater neither;
+#   - 0.3.14's own swap.sh (frozen in that release) installs the new bundle,
+#     and puts the version before back when started-ok does not come.
+# Not here, as they need the app running (docs/swift-app-manual-check.md):
+# `palaver app ping` on app.sock, the window's server (webapp-serve) up.
 #
 #   sh tools/smoke_install.sh DIST [PYTHON]
 set -eu
@@ -41,6 +46,10 @@ in_home() {
 sandboxed() { in_home sandbox-exec -f "${PROFILE}" "$@"; }
 
 APP="${H}/Applications/Palaver.app"
+engine_hello() {
+  [ "$(printf '%s\n' '{"id":1,"cmd":"hello"}' | sandboxed "${APP}/Contents/MacOS/palaver-engine" --version x 2>/dev/null \
+    | grep -c '"ok" *: *true')" = 1 ] || fail "palaver-engine does not answer hello ($1)"
+}
 RID="$(plutil -extract runtime.id raw -o - "${DIST}/manifest.json")"
 VERSION="$(plutil -extract version raw -o - "${DIST}/manifest.json")"
 
@@ -52,19 +61,29 @@ RUNTIME="${H}/Library/Application Support/palaver/runtime/${RID}"
 [ -L "${H}/.local/bin/palaver" ] || fail "the palaver command is not linked"
 [ -f "${H}/Library/LaunchAgents/com.kenodressel.meeting-transcribe.plist" ] || fail "autostart agent missing"
 codesign --verify --strict "${APP}" || fail "Palaver.app's signature does not verify"
-strings "${APP}/Contents/MacOS/palaver-launcher" | grep -q "Library/Application Support/palaver/runtime/${RID}/bin/python3" \
-  || fail "the launcher does not point at runtime ${RID}"
-strings "${APP}/Contents/MacOS/Palaver" | grep -q "palaver/runtime/${RID}" \
+MACOS="${APP}/Contents/MacOS"
+# The Swift app is only looked at, never started: it would ask for the microphone and system audio.
+[ "$(plutil -extract CFBundleExecutable raw -o - "${APP}/Contents/Info.plist")" = "Palaver" ] \
+  || fail "the bundle's executable is not Palaver"
+file "${MACOS}/Palaver" | grep -q "Mach-O 64-bit executable arm64" || fail "Contents/MacOS/Palaver is not an arm64 program"
+otool -L "${MACOS}/Palaver" | grep -q "/usr/lib/swift/libswiftCore.dylib" || fail "Contents/MacOS/Palaver is not the Swift app"
+[ ! -e "${MACOS}/palaver-launcher" ] || fail "the release still carries the ObjC launcher"
+[ -f "${APP}/Contents/Resources/menubar.png" ] || fail "the menu bar icon is missing"
+strings "${MACOS}/palaver-python" | grep -q "palaver/runtime/${RID}" \
   || fail "the app's Python host does not point at runtime ${RID}"
-if strings "${APP}/Contents/MacOS/palaver-launcher" "${APP}/Contents/MacOS/Palaver" | grep -q "^/Users/"; then
+engine_hello "after install"
+for program in Palaver palaver-python palaver-engine; do
+  codesign --verify --strict "${MACOS}/${program}" || fail "${program}'s signature does not verify"
+done
+if strings "${MACOS}/Palaver" "${MACOS}/palaver-python" | grep -q "^/Users/"; then
   fail "the app contains build-machine paths"
 fi
-ok "install.sh: runtime ${RID}, Palaver.app ${VERSION}, command, login item; nothing written outside the home"
+ok "install.sh: runtime ${RID}, Palaver.app ${VERSION} (the Swift app, palaver-python, palaver-engine, all signed), command, login item; nothing written outside the home"
 
 # --- the runtime, as the app runs it ----------------------------------------------------------------
 sandboxed "${H}/.local/bin/palaver" --help >/dev/null || fail "the palaver command does not run"
 sandboxed "${APP}/Contents/Resources/bin/python" -c "
-import palaver, torch, mlx.core, pyannote.audio, parakeet_mlx, rumps, mlx_lm
+import palaver, mlx.core, rumps, mlx_lm
 import AVFoundation, CoreAudio, ScreenCaptureKit, WebKit, EventKit, Vision, Foundation, AppKit
 import palaver.aec as a; a._load_lib()
 assert palaver.__file__.startswith('${APP}/Contents/Resources/python/'), palaver.__file__
@@ -75,34 +94,26 @@ NSApplication.sharedApplication()  # as rumps does: the process is an app now (L
 assert NSBundle.mainBundle().bundleIdentifier() == 'com.kenodressel.meeting-transcribe', NSBundle.mainBundle().bundlePath()
 assert NSRunningApplication.currentApplication().localizedName() == 'Palaver'
 import sys
-assert sys.executable == '${APP}/Contents/MacOS/Palaver', sys.executable
+assert sys.executable == '${APP}/Contents/MacOS/palaver-python', sys.executable
 assert sys.prefix == '${RUNTIME}', sys.prefix
 assert sys.version_info >= (3, 13, 4), sys.version  # tarfile's CVE fixes
 " 2>"${T}/imports.log" || { grep -v "^ " "${T}/imports.log" | tail -5; fail "the installed runtime does not import Palaver and its dependencies"; }
-ok "imports palaver, torch, mlx, pyannote.audio, parakeet_mlx, rumps and the PyObjC frameworks, as Palaver.app (Dock name \"Palaver\")"
-
-# --- the hosted pyannote copy, loaded without a token --------------------------------------------------
-MODEL="$(ls "${DIST}"/palaver-models-pyannote-community-1-*.tar | head -1)"
-sandboxed "${APP}/Contents/Resources/bin/python" -c "
-from pathlib import Path
-from palaver import model_store
-from palaver.diarizer import PyannoteDiarizer
-repo = 'pyannote/speaker-diarization-community-1'
-version = Path('${MODEL}').stem.rsplit('-', 1)[1]
-model_store.install_archive(Path('${MODEL}'), name='pyannote-community-1', version=version)
-assert model_store.resolve(repo).startswith('${H}/'), model_store.resolve(repo)
-d = PyannoteDiarizer(repo=repo, hf_token=None)
-d._ensure_pipeline()
-assert d._pipeline is not None
-" 2>"${T}/pyannote.log" || { tail -20 "${T}/pyannote.log"; fail "pyannote does not load from the hosted copy"; }
-ok "pyannote loads from ~/Library/Application Support/palaver/models without a token, offline"
+ok "imports palaver, mlx, mlx_lm, rumps and the PyObjC frameworks, as Palaver.app (Dock name \"Palaver\")"
 
 # --- an update through install.sh: the app only ---------------------------------------------------------
-NEXT="${VERSION}.1"
+# What the app keeps in Application Support survives every update: its state with the queue (a crash
+# is recovered from it), the fallback's marker.
+SUPPORT="${H}/Library/Application Support/palaver"
+printf '%s\n' '{"state": "stopped", "queued": ["'"${H}"'/Meetings/Recordings/2026-11-01T10-00-00"], "cut": null}' \
+  > "${SUPPORT}/daemon.json"
+cp "${SUPPORT}/daemon.json" "${T}/daemon.json.before"
+touch "${SUPPORT}/legacy-app"
+# A later version than the one built: rc1 -> rc2, else 0.3.14 -> 0.3.14.1 (the updater rejects 0.5.0rc1.1).
+later() { case "$1" in *rc[0-9]*) echo "${1%rc*}rc$(( ${1##*rc} + $2 ))" ;; *) echo "$1.$2" ;; esac; }
+NEXT="$(later "${VERSION}" 1)"
 D2="${T}/dist-${NEXT}"
 mkdir -p "${D2}"
 cp "${DIST}"/palaver-*.whl "${DIST}/requirements.txt" "${D2}/"
-cp "${DIST}"/palaver-models-*.tar "${D2}/"
 ln "${DIST}/palaver-runtime-${RID}".tar.* "${D2}/"  # for the manifest; removed before installing
 (cd "${REPO}" && ${PYTHON} tools/build_release.py app --dist "${D2}" --version "${NEXT}" >/dev/null \
   && ${PYTHON} tools/build_release.py manifest --dist "${D2}" --version "${NEXT}" >/dev/null) \
@@ -117,20 +128,22 @@ grep -q "not downloaded again" "${T}/update.log" || fail "install.sh fetched the
 [ "$(plutil -extract version raw -o - "${APP}/Contents/Resources/runtime.json")" = "${NEXT}" ] \
   || fail "the app was not updated to ${NEXT}"
 sandboxed "${H}/.local/bin/palaver" --help >/dev/null || fail "the command does not run after the update"
+engine_hello "after the update"
 ok "update to ${NEXT} with install.sh: the app only, the runtime not downloaded again"
 
 # --- an update from inside the app: the app only ----------------------------------------------------------
-LAST="${VERSION}.2"
+LAST="$(later "${VERSION}" 2)"
 D3="${T}/dist-${LAST}"
 mkdir -p "${D3}"
-cp "${D2}"/palaver-*.whl "${D2}/requirements.txt" "${D2}"/palaver-models-*.tar "${D3}/"
+cp "${D2}"/palaver-*.whl "${D2}/requirements.txt" "${D3}/"
 ln "${DIST}/palaver-runtime-${RID}".tar.* "${D3}/"
 (cd "${REPO}" && ${PYTHON} tools/build_release.py app --dist "${D3}" --version "${LAST}" >/dev/null \
   && ${PYTHON} tools/build_release.py manifest --dist "${D3}" --version "${LAST}" --base-url "file://${D3}" >/dev/null) \
   || fail "rebuilding the app as ${LAST} failed"
 rm "${D3}/palaver-runtime-${RID}".tar.*
 # `open` as the new app answers it: it writes its started-ok mark, as the
-# menu bar app does after its first tick (else the swap puts the old one back).
+# app does after its first tick (else the swap puts the old one back). The
+# real app is never opened here.
 OPENER="${H}/open-app"
 printf '%s\n' '#!/bin/sh' \
   "plutil -extract version raw -o - \"\$1/Contents/Resources/runtime.json\" > \"${H}/Library/Application Support/palaver/started-ok\"" \
@@ -159,12 +172,92 @@ sandboxed /bin/sh "${SWAP}" || fail "the swap script failed"
   || fail "the app's updater did not install ${LAST}"
 [ "$(stat -f %i "${RUNTIME}")" = "${BEFORE}" ] || fail "the app's updater replaced the runtime"
 codesign --verify --strict "${APP}" || fail "the updated app's signature does not verify"
-ok "update to ${LAST} from inside the app: the app only, swapped after quitting, the runtime kept"
+cmp -s "${SUPPORT}/daemon.json" "${T}/daemon.json.before" || fail "an update changed daemon.json"
+[ -f "${SUPPORT}/legacy-app" ] || fail "an update removed the legacy-app marker"
+rm -f "${SUPPORT}/legacy-app"
+ok "update to ${LAST} from inside the app: the app only, swapped after quitting, the runtime, daemon.json and the markers kept"
+
+# --- the update from 0.3.14 (the last Python app): its swap.sh, which can never change ---------------
+# 0.3.14 writes its own swap script (tests/fixtures/updater_0.3.14/swap.sh.txt, from git 8956274) and
+# runs it against the new bundle; here the bundle just installed plays the new one, staged as 0.3.14's
+# updater stages it. The real app is never started: `open` is a fake. Success: it writes started-ok as
+# the Swift app does at its first tick. Failure: it writes nothing and starts a sleeping stand-in at
+# Contents/MacOS/Palaver; 0.3.14 then restores the version before and ends only palaver-launcher, so
+# the stand-in is still running afterwards (the Swift app ends itself when its bundle is put aside:
+# native/Tests/PalaverDaemonTests/OldSwapTests.swift runs that against this script).
+cat > "${T}/render_old_swap.py" <<'PY'
+# 0.3.14's Installer.apply, as far as it fills the template: render_old_swap.py SUPPORT APP STAGED OPEN VERSION OUT REPO
+import json
+import sys
+from pathlib import Path
+
+support, app, staged, opener, version, out = sys.argv[1:7]
+
+
+def sh(value):
+    return "'" + str(value).replace("'", "'\\''") + "'"
+
+
+def failure(error):
+    return json.dumps({"state": "failed", "from_swap": True, "error": error,
+                       "available": {"version": version}}).replace("'", "")
+
+
+template = (Path(sys.argv[7]) / "tests/fixtures/updater_0.3.14/swap.sh.txt").read_text()
+Path(out).write_text(template.format(
+    current="0.3.14", version=version, version_sh=sh(version), pids="999999", target=sh(app), staged=sh(staged),
+    keep=sh(Path(support) / "previous-app"), ok=sh(Path(support) / "started-ok"), status=sh(Path(support) / "update.json"),
+    open=opener, start_ticks=50,
+    not_replaced=failure(f"Palaver {version} could not replace the app; 0.3.14 stays."),
+    did_not_start=failure(f"Palaver {version} did not start; 0.3.14 is back.")))
+PY
+old_swap() {  # old_swap NAME OPENER: 0.3.14's script with the bundle at ${APP} staged again as the new one
+  mkdir -p "${H}/staged-$1" "${H}/fastbin"
+  ditto "${APP}" "${H}/staged-$1/Palaver.app"
+  printf '%s\n' '#!/bin/sh' 'exec /bin/sleep 0.01' > "${H}/fastbin/sleep"  # its 0.2 s waits, shorter
+  chmod +x "${H}/fastbin/sleep"
+  (cd "${REPO}" && ${PYTHON} "${T}/render_old_swap.py" "${SUPPORT}" "${APP}" "${H}/staged-$1/Palaver.app" "$2" "${LAST}" \
+    "${H}/swap-0.3.14-$1.sh" "${REPO}") || fail "rendering 0.3.14's swap.sh failed"
+  rm -f "${SUPPORT}/update.json"
+  sandboxed env PATH="${H}/fastbin:/usr/bin:/bin:/usr/sbin:/sbin" /bin/sh "${H}/swap-0.3.14-$1.sh"
+}
+# Success: the new bundle takes the place and stays, the one before goes.
+OK_OPENER="${H}/open-writes-started-ok"
+printf '%s\n' '#!/bin/sh' \
+  "plutil -extract version raw -o - \"\$1/Contents/Resources/runtime.json\" > \"${SUPPORT}/started-ok\"" > "${OK_OPENER}"
+chmod +x "${OK_OPENER}"
+old_swap ok "${OK_OPENER}" || fail "0.3.14's swap.sh failed although the new app started"
+KEPT_INODE="$(stat -f %i "${APP}")"
+[ ! -e "${H}/staged-ok/Palaver.app" ] && [ ! -e "${SUPPORT}/previous-app" ] && [ ! -e "${SUPPORT}/update.json" ] \
+  || fail "0.3.14's swap.sh did not keep the new app"
+codesign --verify --strict "${APP}" || fail "the app 0.3.14's swap.sh installed does not verify"
+cmp -s "${SUPPORT}/daemon.json" "${T}/daemon.json.before" || fail "0.3.14's swap.sh changed daemon.json"
+# Failure: no started-ok. The version before comes back and update.json says so.
+STANDIN_PID="${H}/standin.pid"
+NO_OPENER="${H}/open-starts-a-standin"
+printf '%s\n' '#!/bin/sh' \
+  'if [ "$1" = "'"${APP}"'" ] && [ ! -e "'"${STANDIN_PID}"'" ]; then' \
+  "  /bin/sh -c 'while :; do /bin/sleep 0.2; done' \"\$1/Contents/MacOS/Palaver\" </dev/null >/dev/null 2>&1 &" \
+  "  echo \$! > \"${STANDIN_PID}\"" \
+  'fi' > "${NO_OPENER}"
+chmod +x "${NO_OPENER}"
+old_swap failed "${NO_OPENER}" || fail "0.3.14's swap.sh failed on its failure branch"
+STANDIN="$(cat "${STANDIN_PID}" 2>/dev/null || true)"
+STILL_RUNNING=no
+if [ -n "${STANDIN}" ] && kill -0 "${STANDIN}" 2>/dev/null; then STILL_RUNNING=yes; kill "${STANDIN}"; fi
+[ "$(stat -f %i "${APP}")" = "${KEPT_INODE}" ] || fail "0.3.14's swap.sh did not put the version before back"
+grep -q "did not start; 0.3.14 is back" "${SUPPORT}/update.json" || fail "update.json does not say the update failed"
+[ ! -e "${SUPPORT}/previous-app" ] && [ ! -e "${SUPPORT}/started-ok" ] || fail "0.3.14's failure branch left files behind"
+[ "${STILL_RUNNING}" = yes ] || fail "the stand-in app ended: 0.3.14's failure branch no longer behaves as this smoke assumes"
+codesign --verify --strict "${APP}" || fail "the app put back by 0.3.14's swap.sh does not verify"
+rm -f "${SUPPORT}/update.json"
+ok "update from 0.3.14 with its own swap.sh: kept when started-ok comes; else the version before is back, update.json says so (and the new app must end itself: 0.3.14 ends only palaver-launcher)"
 
 # --- uninstall ------------------------------------------------------------------------------------------
+mkdir -p "${H}/Library/Application Support/palaver/models/fluidaudio"  # the engine's models: --uninstall keeps them
 sandboxed sh "${DIST}/install.sh" --uninstall >/dev/null || fail "install.sh --uninstall failed"
 [ ! -e "${APP}" ] && [ ! -e "${H}/Library/Application Support/palaver/runtime" ] \
   && [ ! -e "${H}/.local/bin/palaver" ] && [ ! -e "${H}/Library/LaunchAgents/com.kenodressel.meeting-transcribe.plist" ] \
   || fail "install.sh --uninstall left something behind"
-[ -d "${H}/Library/Application Support/palaver/models/pyannote-community-1" ] || fail "--uninstall removed the models"
+[ -d "${H}/Library/Application Support/palaver/models/fluidaudio" ] || fail "--uninstall removed the models"
 ok "install.sh --uninstall removes the app, runtime, command and login item; the models stay"

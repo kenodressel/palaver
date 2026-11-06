@@ -307,7 +307,7 @@ def test_build_daemon_processes_locally_without_auto_sync(monkeypatch, tmp_path:
     monkeypatch.setattr(daemon, "launch_run", lambda folder, opts, **kw: calls.append(kw.get("cmd", "run")))
     cfg = Config(user_name="K", notion_token="t", notion_parent_page_id="p", hf_token=None,
                  output_dir=tmp_path, retention_days=14, max_session_hours=4, grace_period_seconds=10,
-                 transcriber="parakeet-mlx", whisper_repo="w", diarizer_repo="d", language="auto",
+                 transcriber="parakeet-mlx", whisper_repo="w", language="auto",
                  notion_auto_sync=False)
     daemon.build_daemon(cfg)._launch(tmp_path / "rec")
     assert calls == ["process"]
@@ -421,7 +421,7 @@ def test_build_daemon_wires_stream_and_the_switches(monkeypatch, tmp_path: Path)
     monkeypatch.setattr(daemon, "launch_run", lambda folder, opts, **kw: calls.append(kw))
     cfg = Config(user_name="K", notion_token="t", notion_parent_page_id="p", hf_token=None,
                  output_dir=tmp_path, retention_days=14, max_session_hours=4, grace_period_seconds=10,
-                 transcriber="parakeet-mlx", whisper_repo="w", diarizer_repo="d", language="auto",
+                 transcriber="parakeet-mlx", whisper_repo="w", language="auto",
                  live_processing=False, record_slack=False)
     d = daemon.build_daemon(cfg)
     assert d._realtime() is True
@@ -452,7 +452,7 @@ def test_build_daemon_live_processing_follows_the_settings_file(tmp_path: Path, 
     monkeypatch.setattr(daemon, "launch_run", lambda folder, opts, **kw: calls.append(kw))
     cfg = Config(user_name="K", notion_token="t", notion_parent_page_id="p", hf_token=None,
                  output_dir=tmp_path, retention_days=14, max_session_hours=4, grace_period_seconds=10,
-                 transcriber="parakeet-mlx", whisper_repo="w", diarizer_repo="d", language="auto",
+                 transcriber="parakeet-mlx", whisper_repo="w", language="auto",
                  live_processing=False)
     d = daemon.build_daemon(cfg)
     assert d._live() is False  # config.toml's default
@@ -585,7 +585,7 @@ def test_build_daemon_waits_for_the_configured_notes_model(monkeypatch, tmp_path
     monkeypatch.setattr(daemon, "STATE_PATH", tmp_path / "daemon.json")
     cfg = Config(user_name="K", notion_token="t", notion_parent_page_id="p", hf_token=None,
                  output_dir=tmp_path, retention_days=14, max_session_hours=4, grace_period_seconds=10,
-                 transcriber="parakeet-mlx", whisper_repo="w", diarizer_repo="d", language="auto",
+                 transcriber="parakeet-mlx", whisper_repo="w", language="auto",
                  notion_auto_sync=False, notes_engine=engine, notes_local_model=model)
     assert daemon.build_daemon(cfg)._memory_needed(tmp_path / "rec") == needed
 
@@ -600,7 +600,7 @@ def test_build_daemon_follows_the_notes_choice_made_in_settings(monkeypatch, tmp
     monkeypatch.setattr(daemon, "STATE_PATH", tmp_path / "daemon.json")
     cfg = Config(user_name="K", notion_token="t", notion_parent_page_id="p", hf_token=None,
                  output_dir=tmp_path, retention_days=14, max_session_hours=4, grace_period_seconds=10,
-                 transcriber="parakeet-mlx", whisper_repo="w", diarizer_repo="d", language="auto",
+                 transcriber="parakeet-mlx", whisper_repo="w", language="auto",
                  notion_auto_sync=False)
     d = daemon.build_daemon(cfg)
     rec, private = tmp_path / "rec", tmp_path / "private"
@@ -633,7 +633,7 @@ def test_build_daemon_keeps_its_state_at_STATE_PATH(monkeypatch, tmp_path: Path)
     monkeypatch.setattr(daemon, "STATE_PATH", state)
     cfg = Config(user_name="K", notion_token="t", notion_parent_page_id="p", hf_token=None,
                  output_dir=tmp_path, retention_days=14, max_session_hours=4, grace_period_seconds=10,
-                 transcriber="parakeet-mlx", whisper_repo="w", diarizer_repo="d", language="auto",
+                 transcriber="parakeet-mlx", whisper_repo="w", language="auto",
                  notion_auto_sync=False)
     d = daemon.build_daemon(cfg)
     assert d._state_path == state and d._notes_queue == [rec]
@@ -676,7 +676,7 @@ def test_build_daemon_leaves_the_notes_for_later(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(daemon, "launch_run", lambda folder, opts, **kw: calls.append(kw))
     cfg = Config(user_name="K", notion_token="t", notion_parent_page_id="p", hf_token=None,
                  output_dir=tmp_path, retention_days=14, max_session_hours=4, grace_period_seconds=10,
-                 transcriber="parakeet-mlx", whisper_repo="w", diarizer_repo="d", language="auto",
+                 transcriber="parakeet-mlx", whisper_repo="w", language="auto",
                  notion_auto_sync=False)
     d = daemon.build_daemon(cfg)
     d._launch(tmp_path / "rec")
@@ -1407,7 +1407,7 @@ def test_build_daemon_looks_up_the_calendar_only_when_it_is_on(monkeypatch, tmp_
 
     cfg = Config(user_name="K", notion_token="t", notion_parent_page_id="p", hf_token=None,
                  output_dir=tmp_path, retention_days=14, max_session_hours=4, grace_period_seconds=10,
-                 transcriber="parakeet-mlx", whisper_repo="w", diarizer_repo="d", language="auto",
+                 transcriber="parakeet-mlx", whisper_repo="w", language="auto",
                  calendar_enabled=False)
     asked = []
     monkeypatch.setattr(calendar_eventkit, "has_access", lambda: True)
@@ -1462,6 +1462,38 @@ def test_only_the_app_or_the_daemon_count_as_a_running_palaver():
         p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", *args])
         try:
             assert palaver_alive(p.pid) is alive, args
+        finally:
+            p.kill()
+            p.wait()
+
+
+def test_the_swift_app_counts_as_a_running_palaver_its_python_workers_do_not(tmp_path):
+    """The native app (phase 2) runs as Palaver.app/Contents/MacOS/Palaver, or as a development build in
+    native/.build/…/Palaver; the bundle's palaver-python runs workers, which own no recording."""
+    import subprocess
+
+    from palaver.daemon import palaver_alive
+
+    def program(relative: str) -> Path:
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("#!/bin/sh\nsleep 30\n")  # ps shows `/bin/sh <its path> <args>`
+        target.chmod(0o755)
+        return target
+
+    cases = [("Palaver.app/Contents/MacOS/Palaver", ["30"], True),
+             ("native/.build/release/Palaver", ["30"], True),
+             ("native/.build/arm64-apple-macosx/debug/Palaver", ["30"], True),
+             ("Palaver.app/Contents/MacOS/palaver-python", ["30", "-m", "palaver", "live", "/m/a"], False),
+             ("Palaver.app/Contents/MacOS/palaver-engine", ["30"], False),
+             # 0.3.14 and before: Contents/MacOS/Palaver was the Python host, its workers ran with it.
+             ("old/Palaver.app/Contents/MacOS/Palaver", ["30", "-m", "palaver", "process", "/m/a"], False),
+             ("older/Palaver.app/Contents/MacOS/Palaver", ["30", "-m", "palaver", "menubar"], True)]
+    programs = [program(relative) for relative, _, _ in cases]  # all written first: macOS guards a bundle once run
+    for target, (relative, args, alive) in zip(programs, cases):
+        p = subprocess.Popen([str(target), *args])
+        try:
+            assert palaver_alive(p.pid) is alive, relative
         finally:
             p.kill()
             p.wait()

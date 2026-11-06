@@ -1,8 +1,9 @@
 """The search's text embedder (#46): an XLM-RoBERTa encoder run with numpy
-from memory-mapped weights, checked against the transformers implementation
-on a tiny random model."""
+from memory-mapped weights, checked against golden outputs of the transformers
+implementation on a tiny random model (tools/make_embedder_fixture.py)."""
 
 import json
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -11,50 +12,30 @@ import pytest
 from palaver import embeddings
 
 
-def _tiny_model(folder: Path, kind: str = "xlm-roberta"):
-    torch = pytest.importorskip("torch")
-    transformers = pytest.importorskip("transformers")
-    import sentencepiece
+FIXTURES = Path(__file__).parent / "fixtures" / "tiny_embedder"
 
-    torch.manual_seed(0)
-    corpus = folder / "corpus.txt"
-    corpus.write_text("\n".join(["hello world", "pricing the offer", "a b c d", "cost and price",
-                                  "the offer costs a lot", "world wide pricing"] * 20))
-    sentencepiece.SentencePieceTrainer.train(input=str(corpus), model_prefix=str(folder / "sentencepiece.bpe"),
-                                             vocab_size=30, model_type="unigram", minloglevel=2)
-    sp = sentencepiece.SentencePieceProcessor(model_file=str(folder / "sentencepiece.bpe.model"))
-    shape = dict(vocab_size=sp.vocab_size() + 1, hidden_size=32, num_hidden_layers=2, num_attention_heads=4,
-                 intermediate_size=64, max_position_embeddings=40)
-    if kind == "bert":  # as multilingual-e5-small is stored: BERT positions, XLM-R's vocabulary
-        model = transformers.BertModel(transformers.BertConfig(**shape, type_vocab_size=2, pad_token_id=0),
-                                       add_pooling_layer=False)
-    else:
-        model = transformers.XLMRobertaModel(transformers.XLMRobertaConfig(**shape, type_vocab_size=1, pad_token_id=1),
-                                             add_pooling_layer=False)
-    model.eval()
-    model.save_pretrained(folder)
 
-    def ids(text):  # XLM-R's ids, written out apart from the encoder's
-        return [0] + [i + 1 if i else 3 for i in sp.encode(text)] + [2]
-
-    return torch, model, ids
+def _tiny_model(folder: Path, kind: str = "xlm-roberta") -> dict:
+    """Copy a golden tiny model (random weights, made once with transformers
+    by tools/make_embedder_fixture.py) into ``folder``; returns its
+    reference: the texts and the embeddings transformers gave for them."""
+    source = FIXTURES / kind
+    if not (source / "expected.json").exists():
+        pytest.fail(f"{source} is missing: run tools/make_embedder_fixture.py")
+    for name in ("config.json", "sentencepiece.bpe.model", "model.safetensors"):
+        shutil.copy(source / name, folder / name)
+    return json.loads((source / "expected.json").read_text())
 
 
 @pytest.mark.parametrize("kind", ["xlm-roberta", "bert"])
 def test_the_encoder_matches_transformers(tmp_path: Path, kind: str):
-    torch, model, ids_of = _tiny_model(tmp_path, kind)
-    texts = ["hello world", "pricing the offer a b c d", "cost"]
-    with torch.no_grad():
-        want = []
-        for text in texts:
-            ids = torch.tensor([ids_of(text)])
-            out = model(input_ids=ids, attention_mask=torch.ones_like(ids)).last_hidden_state[0].mean(0)
-            want.append((out / out.norm()).numpy())
+    reference = _tiny_model(tmp_path, kind)
+    texts, want = reference["texts"], np.array(reference["embeddings"], dtype=np.float32)
 
     encoder = embeddings.Encoder(tmp_path, prefix_query="", prefix_passage="")
     got = encoder.passages(texts)  # one padded batch: padding must not change anything
     assert got.shape == (3, 32) and got.dtype == np.float32
-    np.testing.assert_allclose(got, np.stack(want), atol=1e-4)
+    np.testing.assert_allclose(got, want, atol=1e-4)
     np.testing.assert_allclose(np.linalg.norm(got, axis=1), 1.0, atol=1e-5)
     np.testing.assert_allclose(encoder.query("hello world"), want[0], atol=1e-4)
 

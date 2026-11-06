@@ -84,8 +84,11 @@ WAIT_SECONDS="${PALAVER_WAIT_SECONDS:-10}"
 OPEN_COMMAND="${PALAVER_OPEN_COMMAND:-open}"
 WAS_RUNNING=0
 
+# The app itself, never one of its workers: the Swift app (Contents/MacOS/Palaver, run without
+# arguments) or, up to 0.4, the launcher. Workers run as palaver-python (up to 0.4: "Palaver -m palaver").
+APP_PROCESS="${APP}/Contents/MacOS/(palaver-launcher|Palaver)\$"
 app_running() {
-  pgrep -f "${APP}/Contents/MacOS/palaver-launcher" >/dev/null 2>&1 \
+  pgrep -f "${APP_PROCESS}" >/dev/null 2>&1 \
     || pgrep -f "${OLD_APP}/Contents/MacOS/" >/dev/null 2>&1
 }
 
@@ -102,15 +105,16 @@ busy_reason() {
   fi
   # A transcription or notes helper of the app (the menu bar app, the window's
   # server and the search index stop with it).
-  if pgrep -lf "${APP}/Contents/MacOS/Palaver -m palaver" 2>/dev/null \
-      | grep -vqE ' (menubar|webapp-serve|index)( |$)'; then
+  if pgrep -lf "${APP}/Contents/MacOS/(palaver-python|Palaver) -m palaver" 2>/dev/null \
+      | grep -vqE ' (menubar|webapp-serve|index|coach)( |$)'; then
     echo "processing a meeting"
   fi
 }
 
 # Wait while Palaver records or processes; then quit only the menu bar app
-# (SIGTERM through its launcher, as the menu's Quit) and wait as long as it
-# takes until nothing of it runs. Its helpers are never killed.
+# (SIGTERM to the app, or through its launcher before 0.5; a recording is
+# held for the next start) and wait as long as it takes until nothing of it
+# runs. Its helpers are never killed.
 quit_app() {
   app_running || pgrep -f "${APP}/Contents/MacOS/" >/dev/null 2>&1 || return 0
   app_running && WAS_RUNNING=1
@@ -124,7 +128,7 @@ quit_app() {
   done
   if app_running; then
     info "Quitting Palaver..."
-    pkill -TERM -f "${APP}/Contents/MacOS/palaver-launcher" >/dev/null 2>&1 || true
+    pkill -TERM -f "${APP_PROCESS}" >/dev/null 2>&1 || true
     pkill -TERM -f "${OLD_APP}/Contents/MacOS/" >/dev/null 2>&1 || true
   fi
   n=0
@@ -187,7 +191,7 @@ uninstall() {
   success "Palaver is removed."
   printf "Kept: your recordings, settings (~/.config/palaver) and Palaver's data in\n  %s\n" "${SUPPORT}"
   [ "${UNINSTALL_MODELS}" = "1" ] || printf "The models stay too; remove them with --uninstall --models.\n"
-  printf "Models downloaded from Hugging Face (Parakeet, the notes model) are in ~/.cache/huggingface.\n"
+  printf "The notes and search models, downloaded from Hugging Face, are in ~/.cache/huggingface.\n"
 }
 
 # --- the release -------------------------------------------------------------------------------

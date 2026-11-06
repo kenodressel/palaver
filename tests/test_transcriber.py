@@ -119,95 +119,24 @@ class _Tok:
         self.text, self.start, self.end = text, start, end
 
 
-class _Sent:
-    def __init__(self, tokens):
-        self.tokens = tokens
-        self.text = "".join(t.text for t in tokens)
-        self.start, self.end = tokens[0].start, tokens[-1].end
-
-
-class _FakeParakeetModel:
-    def __init__(self):
-        self.calls = []
-
-    def transcribe(self, path, **kwargs):
-        self.calls.append(kwargs)
-
-        class _Result:
-            sentences = [
-                _Sent([_Tok(" Hel", 0.0, 0.2), _Tok("lo", 0.2, 0.4), _Tok(" kay", 0.5, 0.7),
-                       _Tok(" pee", 0.7, 0.8), _Tok(" eye", 0.8, 1.0), _Tok(".", 1.0, 1.05)]),
-            ]
-
-        return _Result()
-
-
-def test_parakeet_builds_words_from_subword_tokens(tmp_path: Path):
-    pytest.importorskip("parakeet_mlx")
-    from palaver.transcriber import ParakeetMlxTranscriber
-
-    model = _FakeParakeetModel()
-    t = ParakeetMlxTranscriber(
-        repo="r", dictionary=Dictionary(replacements={"kay pee eye": "KPI"}), model=model
-    )
-    segments = t.transcribe(tmp_path / "x.wav", language="en")
-
-    assert len(segments) == 1
-    seg = segments[0]
-    assert seg.text == "Hello KPI."
-    assert [(w.text, w.start, w.end) for w in seg.words] == [
-        ("Hello", 0.0, 0.4), ("kay", 0.5, 0.7), ("pee", 0.7, 0.8), ("eye.", 0.8, 1.05)
-    ]
-    assert (seg.start, seg.end) == (0.0, 1.05)
-    assert t.last_language is None  # Parakeet does not report a language
-    sentence = model.calls[0]["decoding_config"].sentence
-    assert sentence.max_duration == 15.0 and sentence.silence_gap == 1.0
-    # Short chunks keep the language decision local (see CHUNK_SECONDS).
-    assert model.calls[0]["chunk_duration"] == 15.0
-    assert model.calls[0]["overlap_duration"] == 3.75
-
-
 def test_make_transcriber_routes_by_config():
     from palaver.transcriber import (
+        EngineTranscriber,
         MlxWhisperTranscriber,
-        ParakeetMlxTranscriber,
         make_transcriber,
     )
 
     whisper = make_transcriber("mlx-whisper", whisper_repo="w", dictionary=Dictionary(), language="auto")
-    parakeet = make_transcriber("parakeet-mlx", whisper_repo="w", dictionary=Dictionary(), language="auto")
+    parakeet = make_transcriber("parakeet", whisper_repo="w", dictionary=Dictionary(), language="auto")
     assert isinstance(whisper, MlxWhisperTranscriber)
-    assert isinstance(parakeet, ParakeetMlxTranscriber)
+    assert isinstance(parakeet, EngineTranscriber)
     with pytest.raises(ValueError, match="unknown transcriber"):
         make_transcriber("nope", whisper_repo="w", dictionary=Dictionary(), language="auto")
 
 
-def test_parakeet_attaches_orphaned_punctuation_to_previous_segment(tmp_path: Path):
-    """Splitting at pauses can leave the closing period as its own sentence."""
-    pytest.importorskip("parakeet_mlx")
-    from palaver.transcriber import ParakeetMlxTranscriber
-
-    class _Model:
-        def transcribe(self, path, **kwargs):
-            class _R:
-                sentences = [
-                    _Sent([_Tok(" We", 0.0, 0.2), _Tok(" agree", 0.2, 0.6)]),
-                    _Sent([_Tok(".", 2.0, 2.1)]),
-                    _Sent([_Tok(" Next", 3.0, 3.4)]),
-                ]
-            return _R()
-
-    segs = ParakeetMlxTranscriber(repo="r", dictionary=Dictionary(), model=_Model()).transcribe(
-        tmp_path / "x.wav"
-    )
-    assert [(s.text, s.end) for s in segs] == [("We agree.", 0.6), ("Next", 3.4)]
-    assert segs[0].words[-1].text == "agree."
-
-
-def test_neither_backend_needs_ffmpeg(tmp_path: Path, monkeypatch):
-    """Both libraries shell out to ffmpeg to decode paths; our WAVs are 16 kHz
+def test_whisper_needs_no_ffmpeg(tmp_path: Path, monkeypatch):
+    """mlx-whisper shells out to ffmpeg to decode paths; our WAVs are 16 kHz
     mono PCM, so they are decoded with soundfile instead."""
-    pytest.importorskip("parakeet_mlx")
     import sys
 
     import numpy as np
@@ -230,20 +159,6 @@ def test_neither_backend_needs_ffmpeg(tmp_path: Path, monkeypatch):
     transcriber.MlxWhisperTranscriber(repo="r", dictionary=Dictionary()).transcribe(wav)
     assert isinstance(seen["whisper"], np.ndarray) and seen["whisper"].shape == (1_600,)
 
-    import parakeet_mlx.parakeet as pk
-
-    class _Model:
-        def transcribe(self, path, **kw):
-            seen["parakeet"] = pk.load_audio(path, 16_000, kw.get("dtype"))
-            return type("R", (), {"sentences": []})()
-
-    transcriber.ParakeetMlxTranscriber(repo="r", dictionary=Dictionary(), model=_Model()).transcribe(wav)
-    assert seen["parakeet"].shape == (1_600,)
-    import mlx.core as mx
-
-    assert seen["parakeet"].dtype == mx.float32  # what get_logmel needs
-    assert abs(float(seen["parakeet"].mean()) - 0.25) < 1e-2
-
 
 def _header_only(path: Path) -> Path:
     from palaver.capture_recorder import _wav_header
@@ -253,19 +168,17 @@ def _header_only(path: Path) -> Path:
 
 
 def test_a_track_that_holds_no_audio_is_transcribed_as_nothing_without_a_model_call(monkeypatch, tmp_path: Path):
-    """The system tap can deliver nothing for a whole call; parakeet-mlx
-    then raised "Audio must contain at least 160 decoded samples" and the
-    meeting got no transcript, though its mic was fine."""
-    pytest.importorskip("parakeet_mlx")
-    from palaver.transcriber import ParakeetMlxTranscriber
+    """The system tap can deliver nothing for a whole call; a model refuses
+    an empty track and the meeting got no transcript, though its mic was fine."""
+    from palaver.transcriber import EngineTranscriber
 
     class _Refuses:
-        def transcribe(self, path, **kwargs):
-            raise ValueError("Audio must contain at least 160 decoded samples; got 0")
+        def call(self, *args, **kwargs):
+            raise AssertionError("no engine call for a header-only track")
 
     wav = _header_only(tmp_path / "system.wav")
-    parakeet = ParakeetMlxTranscriber(repo="r", dictionary=Dictionary(), model=_Refuses())
-    assert parakeet.transcribe(wav) == [] and parakeet.last_language is None
+    engine = EngineTranscriber(Dictionary(), engine=_Refuses())
+    assert engine.transcribe(wav) == [] and engine.last_language is None
 
     fake = _FakeMlxWhisper(language="de")
     _with_fake_whisper(monkeypatch, fake)
@@ -273,3 +186,66 @@ def test_a_track_that_holds_no_audio_is_transcribed_as_nothing_without_a_model_c
     whisper.last_language = "de"
     assert whisper.transcribe(wav) == [] and whisper.last_language is None
     assert fake.calls == []
+
+
+@pytest.fixture
+def fake_engine(monkeypatch):
+    from palaver.engine import Engine
+
+    monkeypatch.setenv("PALAVER_ENGINE", str(Path(__file__).parent / "fake_engine.py"))
+    engine = Engine()
+    yield engine
+    engine.close()
+
+
+def _secs_wav(path: Path, seconds: float) -> Path:
+    import numpy as np
+    import soundfile as sf
+
+    sf.write(str(path), np.zeros(int(16_000 * seconds), dtype="float32"), 16_000, subtype="PCM_16")
+    return path
+
+
+def test_engine_transcriber_builds_segments(tmp_path: Path, fake_engine):
+    from palaver.transcriber import EngineTranscriber
+
+    t = EngineTranscriber(Dictionary(), engine=fake_engine)
+    segs = t.transcribe(_secs_wav(tmp_path / "a.wav", 1.0), language="en")
+    assert [(s.start, s.end, s.text, s.speaker) for s in segs] == [
+        (0.0, 1.2, "The cloud is up.", None), (3.0, 3.5, "Yes.", None)]
+    assert [(w.text, w.start, w.end, w.confidence) for w in segs[0].words] == [
+        ("The", 0.0, 0.2, 0.99), ("cloud", 0.3, 0.6, 0.5), ("is", 0.7, 0.9, 0.97), ("up.", 0.9, 1.2, 0.92)]
+    assert t.last_language is None
+    assert isinstance(t, Transcriber)
+
+
+def test_engine_transcriber_applies_dictionary(tmp_path: Path, fake_engine):
+    from palaver.transcriber import EngineTranscriber
+
+    t = EngineTranscriber(Dictionary(replacements={"cloud": "KLOUD"}), engine=fake_engine)
+    [first, _] = t.transcribe(_secs_wav(tmp_path / "a.wav", 1.0))
+    assert first.text == "The KLOUD is up."
+    assert [w.text for w in first.words] == ["The", "KLOUD", "is", "up."]
+
+
+def test_engine_transcriber_skips_empty_track(tmp_path: Path):
+    from palaver.transcriber import EngineTranscriber
+
+    class Boom:
+        def call(self, *a, **k):
+            raise AssertionError("no engine call for a header-only track")
+
+    assert EngineTranscriber(Dictionary(), engine=Boom()).transcribe(_secs_wav(tmp_path / "e.wav", 0.0)) == []
+
+
+def test_parakeet_mlx_config_maps_to_engine(tmp_path: Path, monkeypatch):
+    from palaver import session_log
+    from palaver.transcriber import EngineTranscriber, make_transcriber
+
+    logged = []
+    monkeypatch.setattr(session_log, "event", lambda name, **f: logged.append((name, f)))
+    t = make_transcriber("parakeet-mlx", whisper_repo="w", dictionary=Dictionary(), language="auto")
+    assert isinstance(t, EngineTranscriber)
+    assert len(logged) == 1 and logged[0][0] == "transcriber_mapped"
+    assert isinstance(make_transcriber("parakeet", whisper_repo="w", dictionary=Dictionary(), language="auto"),
+                      EngineTranscriber)

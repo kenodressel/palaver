@@ -18,7 +18,7 @@ Environment:
 
 - PALAVER_SOAK_MINUTES: how much audio to replay (60).
 - PALAVER_SOAK_SOURCE: a folder with mic_raw.wav and system.wav (16 kHz
-  mono); default: pyannote's 30 s two-speaker sample, looped, as the other
+  mono); default: a synthetic 30 s voice, looped, as the other
   side, and the same voices shifted and quieter as the microphone.
 - PALAVER_SOAK_CONFIG: the config.toml the workers read (default
   ~/.config/palaver/config.toml; only read).
@@ -53,9 +53,19 @@ FINISH_TIMEOUT = 15 * 60.0  # the live worker finishes its last block after the 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _synthetic_voice(seconds: float) -> np.ndarray:
+    """Harmonics of a low voice in ~0.25 s bursts with pauses: no speech, but
+    audio of the same shape (use ``source`` for a real recording)."""
+    t = np.arange(int(seconds * SAMPLE_RATE)) / SAMPLE_RATE
+    pitch = 110 + 20 * np.sin(2 * np.pi * 0.3 * t)
+    voice = sum(np.sin(2 * np.pi * k * np.cumsum(pitch) / SAMPLE_RATE) / k for k in range(1, 9))
+    bursts = (np.sin(2 * np.pi * 2.0 * t) > -0.3) & (np.sin(2 * np.pi * 0.17 * t) > -0.5)
+    return (0.3 * voice * bursts).astype(np.float32)
+
+
 def soak_source(dest: Path, minutes: float, source: Path | None = None) -> RecordingPaths:
     """A recording folder with ``minutes`` of mic_raw.wav and system.wav:
-    cut from ``source``, or made from pyannote's sample (real speech)."""
+    cut from ``source``, or made from a synthetic voice (harmonics in syllable bursts)."""
     dest.mkdir(parents=True, exist_ok=True)
     out = RecordingPaths(dest)
     n = int(minutes * 60 * SAMPLE_RATE)
@@ -66,11 +76,7 @@ def soak_source(dest: Path, minutes: float, source: Path | None = None) -> Recor
             assert rate == SAMPLE_RATE and audio.ndim == 1, f"{path.name}: needs 16 kHz mono"
             sf.write(str(target), audio, SAMPLE_RATE, subtype="PCM_16")
         return out
-    import importlib.util
-
-    package = Path(importlib.util.find_spec("pyannote.audio").submodule_search_locations[0])
-    voices, rate = sf.read(str(package / "sample" / "sample.wav"), dtype="float32")
-    assert rate == SAMPLE_RATE
+    voices = _synthetic_voice(30.0)
     system = np.resize(voices, n)
     # The microphone: the same voices 15 s later (someone else talking) and
     # a little of the other side heard through the speakers.
@@ -193,7 +199,7 @@ def test_live_and_stream_stay_under_their_ceilings_at_real_speed(tmp_path):
     report = {"minutes": minutes, "ceilings_gb": ceilings, "footprint_gb": summary,
               "live_finish_s": round(time.monotonic() - stopped_at, 1) if stopped_at else None,
               "exit": {k: p.returncode for k, p in workers.items()},
-              "source": source or "pyannote sample, looped"}
+              "source": source or "synthetic voice, looped"}
     print("\nsoak:", json.dumps(report))
     if os.environ.get("PALAVER_SOAK_REPORT"):
         Path(os.environ["PALAVER_SOAK_REPORT"]).write_text(json.dumps(report, indent=2))

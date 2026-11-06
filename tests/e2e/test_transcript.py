@@ -161,6 +161,24 @@ def test_fix_spelling_everywhere_and_undo(page, app_server):
     assert app_server.api("/api/glossary")["terms"] == []
 
 
+def test_a_wrong_respelling_is_undone_where_it_shows(page, app_server):
+    # The glossary turned "Atterkring" into "Attakring" by mistake: from the line, keep what was heard.
+    app_server.api("/api/glossary/respell", {"heard": "Atterkring", "term": "Attakring"})
+    open_meeting(page, app_server, A, tab="Transcript")
+    said = line(page, 4).locator(".said")
+    expect(said.locator(".glossed")).to_have_text("Attakring")
+    line_tool(page, 4, "fixSpelling").click()
+    form = page.get_by_role("dialog", name="Fix the spelling")
+    expect(form).to_contain_text("The glossary made “Attakring” of “Atterkring”.")
+    form.get_by_role("button", name="Keep “Atterkring”").click()
+    expect_toast(page, "“Atterkring” is no longer “Attakring”")
+    expect(said).to_contain_text("Atterkring")
+    expect(said.locator(".glossed")).to_have_count(0)
+    assert [t["variants"] for t in app_server.api("/api/glossary")["terms"]] == [[]]  # the term stays
+    undo_in_toast(page)
+    expect(said.locator(".glossed")).to_have_text("Attakring")
+
+
 def test_a_selection_offers_fix_spelling(page, app_server):
     open_meeting(page, app_server, A, tab="Transcript")
     box = line(page, 15).locator(".said").bounding_box()

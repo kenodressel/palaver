@@ -26,8 +26,13 @@ DELETED = "audio_deleted.json"
 CLEANUP_EVERY = 3600.0
 
 
+LIVE_SCRATCH = ".live-diarize.wav"  # the live diarizer's copy of the system track, gone when its worker ends
+
+
 def audio_files(paths: RecordingPaths) -> list[Path]:
-    return [f for f in (getattr(paths, a) for a in AUDIO) if f.exists()]
+    files = [f for f in (getattr(paths, a) for a in AUDIO) if f.exists()]
+    scratch = paths.folder / LIVE_SCRATCH
+    return files + [scratch] if scratch.exists() else files
 
 
 def audio_bytes(paths: RecordingPaths) -> int:
@@ -135,20 +140,31 @@ def summary(output_dir: Path, cfg=None, now: datetime | None = None) -> dict[str
 
 def models(cfg=None) -> list[dict[str, Any]]:
     """The downloaded models, their size, and whether one can be deleted:
-    only a notes model Palaver doesn't use now, or one no longer offered."""
-    from . import llm, model_store, onboarding
+    only a notes model Palaver doesn't use now, or one no longer offered (the
+    old Parakeet MLX cache and pyannote copy, once the speech models are here)."""
+    from . import install_layout, llm, onboarding
 
     local = llm.local_model(cfg)
+    proven = install_layout.engine_proven_marker().exists()  # a meeting went through the engine
     out = []
     for m in (*onboarding.MODELS.values(), *onboarding.RETIRED.values()):
         repo = onboarding.repo_for(cfg, m)
-        folder = model_store.local_path(repo)
-        size = _tree_size(folder) if folder is not None else onboarding.cached_bytes(repo)
+        folder = _local_folder(m)
+        size = onboarding.cached_bytes(repo) + (_tree_size(folder) if folder is not None else 0)
         if not size:
             continue
         spare = (m.id in onboarding.NOTES_MODELS.values() or m.id in onboarding.RETIRED) and repo != local
+        if m.manual:  # only once the models that replaced it did a meeting's work
+            spare = spare and proven
         out.append({"id": m.id, "label": m.label, "purpose": m.purpose, "bytes": size, "deletable": spare})
     return out
+
+
+def _local_folder(m) -> Path | None:
+    """A folder of Palaver's own models that holds ``m`` (or an old copy of it)."""
+    from . import install_layout
+
+    return install_layout.models_dir() / m.local_folder if m.local_folder else None
 
 
 def delete_model(cfg, mid: str) -> int:
@@ -160,6 +176,9 @@ def delete_model(cfg, mid: str) -> int:
         raise ValueError("only a notes model Palaver doesn't use can be deleted")
     model = onboarding.MODELS.get(mid) or onboarding.RETIRED[mid]
     shutil.rmtree(onboarding._cache_dir(model.repo), ignore_errors=True)
+    folder = _local_folder(model)
+    if folder is not None:
+        shutil.rmtree(folder, ignore_errors=True)
     return entry["bytes"]
 
 
@@ -172,7 +191,7 @@ def drop_retired(cfg) -> int:
     freed = 0
     for m in onboarding.RETIRED.values():
         folder = onboarding._cache_dir(m.repo)
-        if m.repo == llm.local_model(cfg) or not folder.exists():
+        if m.manual or m.repo == llm.local_model(cfg) or not folder.exists():  # manual: the user deletes it
             continue
         size = onboarding.cached_bytes(m.repo)
         shutil.rmtree(folder, ignore_errors=True)

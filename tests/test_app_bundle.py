@@ -122,26 +122,30 @@ def _ran(marker: Path) -> tuple[str, str, str, str, str]:
     return tuple(marker.read_text().strip().split("|"))
 
 
+def _swift_app(tmp_path: Path) -> Path:
+    """Stands in for the built Swift app: a real Mach-O to sign (it is never run here)."""
+    binary = tmp_path / "Palaver-binary"
+    shutil.copy("/usr/bin/true", binary)
+    return binary
+
+
 @pytest.mark.skipif(shutil.which("clang") is None, reason="needs Xcode Command Line Tools")
-def test_release_launcher_starts_the_bundles_host_on_the_runtime_found_under_home(tmp_path: Path):
-    """The app is built on another Mac: the runtime and log paths are
-    resolved from $HOME when the app runs, not baked in at build time."""
+def test_the_python_host_runs_the_bundles_code_on_the_runtime_found_under_home(tmp_path: Path):
+    """The app is built on another Mac: the runtime is found from $HOME when
+    the host runs, not baked in at build time."""
     import os
 
     home, marker = tmp_path / "home", tmp_path / "ran.txt"
     runtime = _fake_runtime(home, "3.13.2-arm64-abc")
-    macos = tmp_path / "Fake.app" / "Contents" / "MacOS"  # no Info.plist: no notifications asked for
+    macos = tmp_path / "Fake.app" / "Contents" / "MacOS"
     macos.mkdir(parents=True)
-    app_bundle.compile_launcher(macos / "launcher", python=app_bundle.release_python("3.13.2-arm64-abc"),
-                                cli_options=[], log_path=app_bundle.RELEASE_LOG, release=True)
     app_bundle.compile_host(macos / app_bundle.HOST, runtime_id="3.13.2-arm64-abc", python_version="3.13")
     env = dict(os.environ, HOME=str(home), MARKER=str(marker))
-    assert subprocess.run([str(macos / "launcher")], env=env, timeout=10).returncode == 0
+    assert subprocess.run([str(macos / "palaver-python"), "-m", "palaver", "menubar"], env=env, timeout=10).returncode == 0
     args, pythonpath, app, pythonhome, _ = _ran(marker)
-    assert args == "-m palaver menubar"
+    assert args == "-m palaver menubar"  # the legacy fallback's command
     assert pythonpath == str((tmp_path / "Fake.app" / "Contents" / "Resources" / "python").resolve())
     assert app == str((tmp_path / "Fake.app").resolve()) and pythonhome == str(runtime)
-    assert (home / "Library" / "Logs" / "palaver" / "app.log").exists()
 
 
 @pytest.mark.skipif(shutil.which("clang") is None, reason="needs Xcode Command Line Tools")
@@ -154,8 +158,14 @@ def test_a_release_app_runs_its_code_as_palaver_app_and_its_command_does_too(tmp
     code = tmp_path / "wheel"
     (code / "palaver").mkdir(parents=True)
     (code / "palaver" / "__init__.py").write_text("__version__ = '9.9.9'\n")
-    app = app_bundle.build_release_app(tmp_path / "dist", runtime_id="3.13.2-arm64-abc", code=code, version="9.9.9")
+    app = app_bundle.build_release_app(tmp_path / "dist", runtime_id="3.13.2-arm64-abc", code=code, version="9.9.9",
+                                       app_binary=_swift_app(tmp_path))
     resources = app / "Contents" / "Resources"
+    info = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
+    assert info["CFBundleExecutable"] == "Palaver" and info["CFBundleIdentifier"] == app_bundle.BUNDLE_ID
+    assert sorted(p.name for p in (app / "Contents" / "MacOS").iterdir()) == ["Palaver", "palaver-python"]
+    assert (resources / "menubar.png").read_bytes() == app_bundle.MENUBAR_ICON.read_bytes()  # the Swift app's icon
+    assert (resources / "Palaver.icns").exists()
     assert (resources / "python" / "palaver" / "__init__.py").exists()
     assert json.loads((resources / "runtime.json").read_text()) == {"version": "9.9.9", "runtime": "3.13.2-arm64-abc"}
     assert plistlib.loads((app / "Contents" / "Info.plist").read_bytes())["PalaverRuntimeID"] == "3.13.2-arm64-abc"
@@ -180,7 +190,8 @@ def test_without_its_runtime_the_command_says_how_to_get_it_back(tmp_path: Path)
 
     code = tmp_path / "wheel"
     (code / "palaver").mkdir(parents=True)
-    app = app_bundle.build_release_app(tmp_path / "dist", runtime_id="3.13.2-arm64-gone", code=code, version="1.0")
+    app = app_bundle.build_release_app(tmp_path / "dist", runtime_id="3.13.2-arm64-gone", code=code, version="1.0",
+                                       app_binary=_swift_app(tmp_path))
     proc = subprocess.run([str(app / "Contents" / "Resources" / "bin" / "palaver")],
                           env=dict(os.environ, HOME=str(tmp_path)), capture_output=True, text=True)
     assert proc.returncode == 1 and "install.sh | sh" in proc.stderr
@@ -221,3 +232,50 @@ def test_the_permissions_marker_is_where_the_menu_bar_app_keeps_it():
     from palaver import install_layout, menubar
 
     assert menubar.PERMISSIONS_MARKER == install_layout.permissions_marker()
+
+
+def _build_release():
+    import importlib.util
+
+    root = Path(__file__).resolve().parent.parent
+    spec = importlib.util.spec_from_file_location("build_release", root / "tools" / "build_release.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.skipif(shutil.which("clang") is None, reason="needs Xcode Command Line Tools")
+def test_build_app_includes_engine(tmp_path: Path):
+    """The engine sits in Contents/MacOS (where engine.py looks) and is signed with the app."""
+    code = tmp_path / "wheel"
+    (code / "palaver").mkdir(parents=True)
+    engine = tmp_path / "palaver-engine"
+    shutil.copy("/usr/bin/true", engine)  # a real Mach-O to sign
+    app = app_bundle.build_release_app(tmp_path / "dist", runtime_id="3.13.2-arm64-abc", code=code, version="1.0",
+                                       engine=engine, app_binary=_swift_app(tmp_path))
+    macos = app / "Contents" / "MacOS"
+    assert sorted(p.name for p in macos.iterdir()) == ["Palaver", "palaver-engine", "palaver-python"]
+    for name in ("Palaver", "palaver-engine", "palaver-python"):  # every program executable and signed
+        assert (macos / name).stat().st_mode & 0o111, name
+        assert subprocess.run(["codesign", "--verify", "--strict", str(macos / name)], capture_output=True).returncode == 0
+    assert subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], capture_output=True).returncode == 0
+
+
+def test_build_app_refuses_without_engine(tmp_path: Path):
+    with pytest.raises(SystemExit, match="make engine"):
+        _build_release().build_app(tmp_path, "3.13.18", engine=tmp_path / "missing")
+
+
+def test_build_app_refuses_without_the_swift_app(tmp_path: Path):
+    engine = tmp_path / "palaver-engine"
+    engine.write_text("x")
+    with pytest.raises(SystemExit, match="make app-swift"):
+        _build_release().build_app(tmp_path, "3.13.18", engine=engine, app_binary=tmp_path / "missing")
+
+
+def test_a_development_install_keeps_the_launcher_and_the_python_menu_bar_app(tmp_path: Path, monkeypatch):
+    """`palaver app install` from a checkout: the ObjC launcher runs the venv's `palaver menubar`."""
+    monkeypatch.setattr(app_bundle, "compile_launcher", lambda path, **kw: path.write_text("bin"))
+    monkeypatch.setattr(app_bundle.subprocess, "run", lambda argv, **kw: None)
+    app = app_bundle.build_app(tmp_path, python=Path("/venv/bin/python"), cli_options=[])
+    assert plistlib.loads((app / "Contents" / "Info.plist").read_bytes())["CFBundleExecutable"] == "palaver-launcher"

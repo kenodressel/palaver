@@ -286,10 +286,29 @@ def test_a_meeting_whose_transcription_failed_can_be_transcribed_again(page, app
 def test_a_meeting_waiting_for_its_models_says_so_and_links_to_settings(page, app_server):
     from palaver import process_state
 
-    _not_transcribed(app_server, A, process_state.MODELS, missing=["Parakeet"])
+    _not_transcribed(app_server, A, process_state.MODELS, missing=["Speech models"])
     goto(page, app_server, f"#/{A}")
     notice = page.locator("#main .notes-empty")
-    expect(notice).to_contain_text("Parakeet is still missing")
+    expect(notice).to_contain_text("waiting for Speech models")
     expect(list_item(page, A)).to_contain_text("Waiting for models")
     notice.get_by_role("link", name="Open Settings").click()
     expect(page).to_have_url(re.compile(r"#/settings$"))
+
+
+def test_silence_before_the_first_word_is_offered_for_removal_and_removed(page, app_server):
+    # A one-on-one joined three minutes early: nobody speaks until 3:20.
+    from datetime import datetime
+
+    from .recordings import ME, Line, make_meeting
+
+    mid = "2026-10-26T14-00-00"
+    make_meeting(app_server.root / mid, start=datetime.fromisoformat("2026-10-26T14:00:00+01:00"), duration=260.0,
+                 title="One-on-one", lines=[Line("SPEAKER_00", 200.0, 230.0, "Sorry, I'm late."),
+                                            Line(ME, 230.0, 255.0, "No problem.")])
+    goto(page, app_server, f"#/{mid}")
+    expect(page.locator("#main h1")).to_have_text("One-on-one")
+    offer = page.locator("#main .silence-suggest")
+    expect(offer).to_contain_text("3 min of silence before anyone speaks.")
+    offer.get_by_role("button", name="Remove it").click()
+    expect(offer).to_have_count(0)
+    assert app_server.api(f"/api/meetings/{mid}")["duration"] == 62.0  # from 3:18, two seconds before the first word

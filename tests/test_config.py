@@ -33,7 +33,7 @@ def test_load_minimal_config(tmp_path: Path):
     assert cfg.retention_days == 14
     assert cfg.language == "auto"
     assert cfg.whisper_repo == "mlx-community/whisper-large-v3-turbo"
-    assert cfg.transcriber == "parakeet-mlx"
+    assert cfg.transcriber == "parakeet"
     assert cfg.notion_auto_sync is True
 
 
@@ -254,4 +254,41 @@ def test_an_installed_palaver_runs_without_a_config_file(tmp_path: Path, monkeyp
     cfg = load_config()  # ~/.config/palaver/config.toml was never written
     assert cfg.output_dir == Path.home() / "Meetings" / "Recordings"
     assert cfg.notion_auto_sync is False
-    assert cfg.diarizer_repo == "pyannote/speaker-diarization-community-1"
+
+
+def test_the_old_model_repos_are_accepted_and_ignored_with_one_log_line(tmp_path: Path, monkeypatch, caplog):
+    from palaver import config as config_module
+
+    _no_tokens(monkeypatch)
+    monkeypatch.setattr(config_module, "_ignored_said", False)
+    cfg_path = tmp_path / "config.toml"
+    _write(cfg_path, _BASE + '[model]\ndiarizer_repo = "x/y"\nparakeet_repo = "a/b"\n')
+    with caplog.at_level("INFO", logger="palaver.config"):
+        cfg = load_config(cfg_path)
+        load_config(cfg_path)
+    assert not hasattr(cfg, "diarizer_repo") and not hasattr(cfg, "parakeet_repo")
+    said = [r for r in caplog.records if "ignored" in r.getMessage()]
+    assert len(said) == 1 and "diarizer_repo" in said[0].getMessage() and "parakeet_repo" in said[0].getMessage()
+
+
+def test_a_config_without_secrets_never_asks_the_keychain(tmp_path: Path, monkeypatch):
+    """`palaver app query`/`update` load it often: the Keychain is not read, a token from the
+    environment or config.toml still counts."""
+    import keyring
+
+    asked = []
+    monkeypatch.setattr(keyring, "get_password", lambda service, name: asked.append(name) or "ntn_kc")
+    monkeypatch.delenv("NOTION_TOKEN", raising=False)
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    cfg_path = tmp_path / "config.toml"
+    _write(cfg_path, """
+        [notion]
+        parent_page_id = "abc"
+        """)
+    cfg = load_config(cfg_path, secrets=False)
+    assert asked == [] and cfg.notion_token == "" and cfg.hf_token is None and cfg.notion_auto_sync is False
+    monkeypatch.setenv("NOTION_TOKEN", "ntn_env")
+    assert load_config(cfg_path, secrets=False).notion_token == "ntn_env" and asked == []
+    assert load_config(cfg_path).notion_token == "ntn_env"
+    monkeypatch.delenv("NOTION_TOKEN")
+    assert load_config(cfg_path).notion_token == "ntn_kc" and "NOTION_TOKEN" in asked
