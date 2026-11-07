@@ -18,6 +18,8 @@ final class MeetingsWindow: NSObject, NSWindowDelegate, WKUIDelegate, WKScriptMe
     private var commandMenus: [NSMenu] = []
     /// The page's commands that work right now (its last `commands` message).
     private var enabled: Set<String> = []
+    /// "Palaver", or what records (MenuText.windowTitle), also for a window made later.
+    private var title = WindowPage.title
     /// Palaver → Quit Palaver (⌘Q): the app's own quit, so a recording is handled as after the
     /// menu bar's Quit; nil: the app just terminates.
     var quit: (() -> Void)?
@@ -42,6 +44,7 @@ final class MeetingsWindow: NSObject, NSWindowDelegate, WKUIDelegate, WKScriptMe
            let address = URL(string: WindowPage.withKey(url, key: key)) {
             web.load(URLRequest(url: address))
         }
+        if window.isMiniaturized { window.deminiaturize(nil) }  // a Dock click or Open restores it (#20)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -54,6 +57,16 @@ final class MeetingsWindow: NSObject, NSWindowDelegate, WKUIDelegate, WKScriptMe
         guard let web, WindowPage.reloadsAfterRestart(current: web.url?.absoluteString, base: base) else { return false }
         web.reload()
         return true
+    }
+
+    /// A recording in the window's title and on the Dock icon (#23): seen while the window is open,
+    /// also when the menu bar icon is hidden behind the notch. Called on every refresh.
+    func showRecording(title: String, badge: String?) {
+        if self.title != title {
+            self.title = title
+            window?.title = title
+        }
+        if NSApp.dockTile.badgeLabel != badge { NSApp.dockTile.badgeLabel = badge }
     }
 
     /// Palaver's icon in the Dock while the window is open, when the process has no bundle icon of
@@ -69,7 +82,7 @@ final class MeetingsWindow: NSObject, NSWindowDelegate, WKUIDelegate, WKScriptMe
     private func makeWindow(_ rect: NSRect) -> (NSWindow, WKWebView) {
         let window = NSWindow(contentRect: rect, styleMask: [.titled, .closable, .miniaturizable, .resizable],
                               backing: .buffered, defer: false)
-        window.title = WindowPage.title
+        window.title = title
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: WindowPage.minSize.0, height: WindowPage.minSize.1)
         let config = WKWebViewConfiguration()

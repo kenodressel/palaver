@@ -305,7 +305,7 @@ _RESULTS_LOCK = threading.Lock()
 def _signature(paths: RecordingPaths) -> tuple:
     files = (paths.meta, paths.transcript_json, paths.calendar, paths.speakers, paths.speakers_auto,
              paths.speakers_merged, paths.speakers_ignored, paths.speakers_inferred, paths.speakers_rejected,
-             paths.speakers_shared)
+             paths.speakers_shared, paths.speakers_lines)
     return tuple(f.stat().st_mtime_ns if f.exists() else 0 for f in files)
 
 

@@ -28,6 +28,8 @@ public struct Paths: Sendable {
     public var appLock: URL { support.appendingPathComponent("app.lock") }
     public var startedOk: URL { support.appendingPathComponent("started-ok") }
     public var permissionsMarker: URL { support.appendingPathComponent("permissions-requested") }
+    /// The window was opened by itself at a start (#20): it is not again.
+    public var windowOfferedMarker: URL { support.appendingPathComponent("window-offered") }
     public var appLog: URL { logs.appendingPathComponent("app.log") }
     public var daemonLog: URL { logs.appendingPathComponent("daemon.log") }
     public var crashesLog: URL { logs.appendingPathComponent("crashes.log") }

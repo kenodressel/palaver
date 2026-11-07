@@ -59,6 +59,8 @@ to the new folders at the first start.
   suggestion: an invitee from the calendar, a voice Palaver knows, or a name
   the conversation reveals ("Hi Timo"). With the calendar and a few
   meetings, many voices name themselves, and Palaver says why it thinks so.
+  When one lane holds two people, click the speaker of a line and say who
+  it really was; Palaver goes on to that speaker's next line.
 - **Calendar.** Palaver matches a recording to the event in the macOS
   Calendar app (any account added there, such as Microsoft 365 or Google):
   the meeting gets the event's title and invitees. Read-only, on this Mac.
@@ -73,8 +75,8 @@ to the new folders at the first start.
   each time. Palaver suggests fixes, and you accept or reject them.
 - **Coach.** How you talked in a meeting compared with what is usual for
   you: talk share, monologues, pace, filler words, questions and
-  interruptions. Optional quiet nudges during a call. Only your own speech
-  is analyzed.
+  interruptions. Optional quiet nudges during a call, as notifications
+  without sound. Only your own speech is analyzed.
 - **Review.** Step through finished meetings one by one: confirm the
   project, name the speakers, check the notes.
 - **Share a meeting.** Export a meeting as a .zip and send it to a
@@ -91,7 +93,8 @@ to the new folders at the first start.
 
 - macOS 15 or later on Apple Silicon (M1 or later)
 - About 3 GB of disk for the app and its runtime, plus the models you choose
-  in the setup assistant (speech and speaker models 0.5 GB; the notes model 8 GB or more)
+  in the setup assistant (speech and speaker models 0.5 GB, the notes model Gemma 4 12B 8.3 GB,
+  search 0.45 GB: about 9.3 GB in all)
 - For notes written on your Mac: enough memory for the notes model. It needs
   about 10 GB while it writes, up to 12 GB for a long meeting. The setup
   assistant says what your Mac can run and recommends the rest.
@@ -117,8 +120,25 @@ The installer writes only into your home folder and changes no shell or
 | What | Where | Size | Downloaded |
 |---|---|---|---|
 | The app: the native Mac app, Palaver's code and its speech engine | `~/Applications/Palaver.app` | 13 MB download, 28 MB on disk | every release |
-| Its runtime: Python and every library Palaver uses, prebuilt | `~/Library/Application Support/palaver/runtime/` | 530 MB download, 1.6 GB on disk | only when it changed |
-| The models, with your OK in the setup assistant | `~/Library/Application Support/palaver/models/` and `~/.cache/huggingface` | ~10 GB (speech and speakers 0.5, Gemma 4 12B 9, search 0.5) | once, again when a model changes |
+| Its runtime: Python and every library Palaver uses, prebuilt | `~/Library/Application Support/palaver/runtime/` | 530 MB download, 1.6 GB on disk; the one before it stays to go back to (up to 3.3 GB) | only when it changed |
+| The models, with your OK in the setup assistant | `~/Library/Application Support/palaver/models/` and `~/.cache/huggingface` | about 9.3 GB: speech and speakers 0.5, Gemma 4 12B 8.3, search 0.45 | once |
+
+Sizes as Settings → Storage shows them (1 GB = 1024 MB); Finder counts
+1000 MB to the GB and shows the models as about 10 GB. Palaver downloads
+only the files it loads, at a fixed version of each model, so a new upload
+of a model on Hugging Face is never downloaded next to the old one (for a
+model downloaded with this version or later; an older download stays as it is).
+
+Earlier versions downloaded models that are no longer used, and they stay
+until you delete them in Settings → Storage: Qwen3 30B A3B (16 GB, the
+second notes model; deleted at start unless config.toml still names it),
+Parakeet MLX (2.3 GB) and Whisper (1.5 GB), the transcription models
+before the speech engine, and a pyannote copy. With Gemma 4 12B that was up
+to about 29 GB. Older versions of Hugging Face's download library could also
+keep a download cache of up to 10 GB in `~/.cache/huggingface/xet`; Palaver
+no longer lets it (it may belong to other apps too: delete it only if you
+know no other app uses it). The Hugging Face cache is shared: models other
+apps downloaded there are not Palaver's and don't show in Storage.
 
 ## First start
 
@@ -222,7 +242,9 @@ You don't need any of these. Each one is off until you set it up.
 **Storage.** A meeting is about 350 MB of audio per hour plus its transcript
 and notes. Settings → Storage shows what the meetings and the models take,
 deletes the audio of transcribed meetings after 7, 14, 30 or 90 days (never,
-by default), and deletes a notes model no longer chosen. Delete Audio… in a
+by default), and deletes a notes model no longer chosen and the old
+transcription models (Parakeet MLX, Whisper, pyannote) once a meeting went
+through the speech engine. Delete Audio… in a
 meeting's ⋯ menu deletes one meeting's audio: its transcript, notes and
 speakers stay, but it can't be played or transcribed again.
 

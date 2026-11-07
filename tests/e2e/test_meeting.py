@@ -120,6 +120,32 @@ def test_a_voice_without_a_sure_name_can_be_played_in_place(page, shared_server)
         lane(page, "SPEAKER_01").get_by_role("button", name="Play voice of Speaker 2").click()
 
 
+@pytest.mark.usefixtures("audio_decoding")
+def test_a_voice_sample_can_be_stopped(page, shared_server):
+    """#22: while a sample plays its ▶ is a stop button; a click, Escape or another sample stops it."""
+    open_meeting(page, shared_server, A)
+    two = lane(page, "SPEAKER_01")
+    three = lane(page, "SPEAKER_02")
+    two.get_by_role("button", name="Play voice of Speaker 2").click()
+    stop = two.get_by_role("button", name="Stop voice of Speaker 2")
+    expect(stop).to_have_class(re.compile(r"\bplaying\b"))
+    stop.click()
+    expect(two.get_by_role("button", name="Play voice of Speaker 2")).not_to_have_class(re.compile(r"\bplaying\b"))
+
+    two.get_by_role("button", name="Play voice of Speaker 2").click()
+    expect(two.get_by_role("button", name="Stop voice of Speaker 2")).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(two.get_by_role("button", name="Play voice of Speaker 2")).to_be_visible()
+
+    two.get_by_role("button", name="Play voice of Speaker 2").click()
+    expect(two.get_by_role("button", name="Stop voice of Speaker 2")).to_be_visible()
+    play_three = three.locator(".voice-play")
+    play_three.click()  # another sample: the first one stops
+    expect(two.get_by_role("button", name="Play voice of Speaker 2")).to_be_visible()
+    expect(three.locator(".voice-play.playing")).to_have_count(1)
+    expect(three.locator(".voice-play")).to_have_attribute("aria-label", re.compile(r"^Stop voice of "))
+
+
 def test_edit_a_line_then_back_to_what_was_heard(page, app_server):
     open_meeting(page, app_server, A, tab="Transcript")
     line_tool(page, 4, "edit").click()

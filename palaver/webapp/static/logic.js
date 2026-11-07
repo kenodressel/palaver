@@ -279,11 +279,13 @@ export function clock(seconds) {
 // A line's toolbar and right-click menu, in order. Editing and cutting wait
 // until the meeting is transcribed; a cut needs a line before it. ``fixable``:
 // there are words to start "Fix spelling" from.
-export function lineCommands(m, i, fixable) {
+// ``review``: the line is shown in Review, where its speaker is not corrected.
+export function lineCommands(m, i, fixable, { review = false } = {}) {
   const ready = m.status === "ready" && !m.live;
   return [
     m.has_audio ? { name: "play", label: "Play from here", enabled: true } : null,
     ready ? { name: "edit", label: "Edit", enabled: true } : null,
+    ready && !review ? { name: "speaker", label: "This line is…", enabled: true } : null,
     { name: "fixSpelling", label: "Fix spelling", enabled: !!fixable },
     { name: "copy", label: "Copy", enabled: true },
     ready && i > 0 ? { name: "split", label: "Split here", enabled: true } : null,
@@ -329,6 +331,48 @@ export function fixableWord(t) {
 export const lineBefore = (t) => (t.edited ? t.text : null);
 
 export const lineEditedText = (t) => `Line at ${clock(t.start)} edited`;
+
+// --- the speaker of one line (#12) ----------------------------------------------------
+
+// Who line ``t`` can be given to: "Me", the meeting's other voices, then the
+// invitees and people given lines before who have no voice of their own; a
+// corrected line can also go back to the voice it was heard as.
+export function lineSpeakerChoices(m, t) {
+  const from = t.fixed ? t.fixed.from : undefined;  // null: it was my line
+  const out = [];
+  const seen = new Set();
+  const see = (name) => name && seen.add(String(name).toLocaleLowerCase());
+  const speakers = m.speakers || [];
+  see(speakers.find((s) => s.is_user)?.name);
+  if (t.label != null && from !== null) out.push({ label: "Me", to: { me: true } });
+  for (const s of speakers) {
+    if (s.is_user) continue;
+    see(s.display);
+    see(s.name);
+    if (s.label === t.label || s.label === from) continue;
+    out.push({ label: s.display, to: { label: s.label } });
+  }
+  const lanes = new Set(speakers.map((s) => s.label));
+  const people = [...(m.calendar?.invited || []),
+    ...(m.transcript || []).filter((x) => x.label != null && !lanes.has(x.label)).map((x) => x.speaker)];
+  for (const name of people) {
+    const key = String(name).toLocaleLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (name !== t.speaker) out.push({ label: name, to: { name } });
+  }
+  if (t.fixed) out.push(null, { label: `Back to ${t.fixed.was}`, to: null });
+  return out;
+}
+
+// The line after ``start`` that the voice ``label`` (null: mine) still has.
+export function nextLineOfSpeaker(m, start, label) {
+  return (m.transcript || []).find((x) => x.start > start && (x.label ?? null) === (label ?? null)) || null;
+}
+
+// "Line at 0:16 → Valerie"; ``who`` null: back to the voice it was heard as (``was``).
+export const lineSpeakerText = (t, who, was) =>
+  `Line at ${clock(t.start)} → ${who == null ? `${was} again` : who}`;
 
 // Which cut the server made: "own", "next", "after" or "before".
 export const cutKind = (r) => r.discarded || (r.joined ? "next" : "own");

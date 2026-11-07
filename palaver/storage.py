@@ -141,7 +141,8 @@ def summary(output_dir: Path, cfg=None, now: datetime | None = None) -> dict[str
 def models(cfg=None) -> list[dict[str, Any]]:
     """The downloaded models, their size, and whether one can be deleted:
     only a notes model Palaver doesn't use now, or one no longer offered (the
-    old Parakeet MLX cache and pyannote copy, once the speech models are here)."""
+    old Parakeet MLX and Whisper caches and the pyannote copy, once the speech
+    models did a meeting's work)."""
     from . import install_layout, llm, onboarding
 
     local = llm.local_model(cfg)
@@ -156,6 +157,8 @@ def models(cfg=None) -> list[dict[str, Any]]:
         spare = (m.id in onboarding.NOTES_MODELS.values() or m.id in onboarding.RETIRED) and repo != local
         if m.manual:  # only once the models that replaced it did a meeting's work
             spare = spare and proven
+        if m.transcriber and getattr(cfg, "transcriber", "") == m.transcriber:  # config.toml still uses it
+            spare = False
         out.append({"id": m.id, "label": m.label, "purpose": m.purpose, "bytes": size, "deletable": spare})
     return out
 

@@ -39,6 +39,8 @@ NEXT_WITHIN = timedelta(minutes=30)
 SAME_VOICE = 0.75
 TRASH = ".trash"
 _DATA = ("mic_segments", "system_segments", "system_turns", "transcript_json")
+# Lines said to be someone else's (#12): by time like the data, kept only while there are any.
+_LINES = "speakers_lines"
 _LABEL = re.compile(r"SPEAKER_(\d+)$")
 # Silence before the first word or after the last worth offering to remove
 # (a call joined early, a recording left running), and what is kept of it.
@@ -186,6 +188,10 @@ def split(paths: RecordingPaths, at: float) -> RecordingPaths:
         if items is not None:
             _write(getattr(tail, name), _slice(items, at, math.inf, -at))
             _write(getattr(paths, name), _slice(items, 0.0, at, 0.0))
+    if paths.speakers_lines.exists():
+        fixes = load_line_speakers(paths)
+        _write_lines(tail, _slice(fixes, at, math.inf, -at))
+        _write_lines(paths, _slice(fixes, 0.0, at, 0.0))
     files = _per_label_files(paths)
     for part in (paths, tail):
         _keep_labels(part, files, head=part is paths)
@@ -214,7 +220,7 @@ def split(paths: RecordingPaths, at: float) -> RecordingPaths:
 # assignments by folder name), which stays in its folder.
 _CONTENT = ("mic_raw_wav", "mic_wav", "system_wav", "meta", "language", "transcript_md", "speaker_embeddings",
             "speakers", "speakers_auto", "speakers_merged", "speakers_ignored", "speakers_inferred",
-            "speakers_rejected", "speakers_unknown", "transcription", *_DATA)
+            "speakers_rejected", "speakers_unknown", "transcription", _LINES, *_DATA)
 
 
 def trash(paths: RecordingPaths) -> Path:
@@ -260,9 +266,22 @@ def _relabel(other: set[str], kept: set[str]) -> dict[str, str]:
     return {label: f"SPEAKER_{first + i:02d}" for i, label in enumerate(sorted(other))}
 
 
+def load_line_speakers(paths: RecordingPaths) -> list[dict]:
+    from .speakers import load_line_speakers as load  # speakers.py needs nothing of this module
+
+    return load(paths)
+
+
+def _write_lines(paths: RecordingPaths, fixes: list[dict]) -> None:
+    if fixes:
+        _write(paths.speakers_lines, sorted(fixes, key=lambda d: d["start"]))
+    else:
+        paths.speakers_lines.unlink(missing_ok=True)
+
+
 def _renamed(d: dict, relabel: dict[str, str]) -> dict:
     out = dict(d)
-    for key in ("speaker", "label"):
+    for key in ("speaker", "label", "from"):
         if out.get(key) in relabel:
             out[key] = relabel[out[key]]
     return out
@@ -394,6 +413,13 @@ def join(first: RecordingPaths, second: RecordingPaths, *, keep: RecordingPaths 
             else:
                 b_items = [_renamed(d, relabel) for d in b_items]
             _write(getattr(keep, name), sorted(a_items + b_items, key=lambda d: d["start"]))
+        a_fixes = _slice(load_line_speakers(first), 0.0, a_keep, 0.0)
+        b_fixes = _slice(load_line_speakers(second), 0.0, math.inf, offset)
+        if other is first:
+            a_fixes = [_renamed(d, relabel) for d in a_fixes]
+        else:
+            b_fixes = [_renamed(d, relabel) for d in b_fixes]
+        _write_lines(keep, a_fixes + b_fixes)
 
         kept, theirs = _per_label_files(keep), _per_label_files(other)
         embeddings = {**kept["speaker_embeddings"],

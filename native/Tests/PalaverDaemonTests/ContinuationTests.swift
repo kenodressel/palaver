@@ -439,12 +439,12 @@ extension DaemonTicks {
             await h.run { $0 > 434 }
             #expect(h.sessions.count == 2 && h.sessions[1].started && h.sessions[1].t0 == 434)  // at once
             #expect(h.status()["continues"] == .array([]) && h.status()["cut"]?["folders"] == .strings([h.rec(0).path]))
-            #expect(!h.titles.contains("Recording continued") && !h.titles.contains("Recording meeting"))
+            #expect(!h.titles.contains("Recording continued") && !h.titles.contains("Recording the Teams call"))
             await h.run { $0 > 440 }
             #expect(parts(h.rec(0)) == [h.rec(1).path])
             #expect(h.status()["continues"] == .strings([h.rec(0).path]) && h.status()["cut"] == .null)
             #expect(h.status()["why"]?["since"] == .string(WallTime.iso(WALL0.addingTimeInterval(14), TZ, seconds: true)))
-            #expect(h.titles.filter { $0 == "Recording continued" }.count == 1 && !h.titles.contains("Recording meeting"))
+            #expect(h.titles.filter { $0 == "Recording continued" }.count == 1 && !h.titles.contains("Recording the Teams call"))
             await h.run { $0 > 1100 }
             #expect(p(h.launched) == [h.rec(0).path])  // one meeting
         }
@@ -456,7 +456,7 @@ extension DaemonTicks {
             #expect(h.sessions[1].started && h.sessions[1].t0 == 434)
             await h.run { $0 > 440 }
             #expect(parts(h.rec(0)).isEmpty && h.status()["continues"] == .array([]))
-            #expect(h.notifications.last.map { [$0.title, $0.open ?? ""] } == ["Recording meeting", "rec1"])
+            #expect(h.notifications.last.map { [$0.title, $0.open ?? ""] } == ["Recording the Teams call", "rec1"])
             #expect(h.status()["cut"]?["folders"] == .strings([h.rec(0).path]))  // held until its window passes
             await h.run { $0 > 710 }
             #expect(p(h.launched) == [h.rec(0).path])  // on its own after 5 min

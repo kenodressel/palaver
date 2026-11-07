@@ -57,8 +57,9 @@ from . import __version__, calendar_events, notes as notes_mod, shared_mic, titl
 from .attribution import Link
 from .models import SpeakerTurn, Utterance
 from .paths import RecordingPaths, is_recording_folder_name
-from .speakers import (load_ignored, load_inferred_names, load_merges, load_recognized_names, load_rejected_names,
-                       load_speaker_names, names_in_effect, save_speaker_names)
+from .speakers import (line_fix, load_ignored, load_inferred_names, load_line_speakers, load_merges,
+                       load_recognized_names, load_rejected_names, load_speaker_names, names_in_effect,
+                       save_speaker_names)
 
 FORMAT = 1
 SUFFIX = ".zip"
@@ -338,14 +339,28 @@ def _lanes(paths: RecordingPaths, user_name: str) -> tuple[list[dict], list[dict
     shown = lambda label: names.get(label) or label  # noqa: E731
     exporter = None if shared_mic.mic_room(paths) is not None else user_name
 
+    # Lines said to be someone else's (#12): the user's go with the microphone, a
+    # person without a voice of their own gets a lane after it.
+    fixes = load_line_speakers(paths)
+    people: dict[str, str] = {}  # name → its lane in the export
+
     transcript, mic_turns = [], []
     for u in utterances:
-        if notes_mod._is_mic(u):
+        fix = line_fix(u, fixes) if fixes else None
+        if fix is not None and not fix.get("me") and not isinstance(fix.get("label"), str) and fix.get("name"):
+            name = str(fix["name"])
+            label = people.setdefault(name, f"SPEAKER_{int(mic.rsplit('_', 1)[1]) + 1 + len(people):02d}")
+            transcript.append({"start": round(u.start, 3), "end": round(u.end, 3), "text": u.text, "label": label,
+                               "speaker": name})
+            mic_turns.append({"speaker": label, "start": round(u.start, 3), "end": round(u.end, 3)})
+            continue
+        mine = bool(fix.get("me")) if fix is not None else notes_mod._is_mic(u)
+        if mine:
             transcript.append({"start": round(u.start, 3), "end": round(u.end, 3), "text": u.text, "label": mic,
                                "speaker": exporter or "Several people"})
             mic_turns.append({"speaker": mic, "start": round(u.start, 3), "end": round(u.end, 3)})
             continue
-        label = lane(u.label or u.speaker)
+        label = lane(fix["label"] if fix is not None and isinstance(fix.get("label"), str) else u.label or u.speaker)
         if label in ignored or not re.fullmatch(_LABEL, label):
             continue
         transcript.append({"start": round(u.start, 3), "end": round(u.end, 3), "text": u.text, "label": label,
@@ -358,6 +373,9 @@ def _lanes(paths: RecordingPaths, user_name: str) -> tuple[list[dict], list[dict
     for label in sorted({t["speaker"] for t in out_turns} | {t["label"] for t in transcript}):
         if label == mic:
             speakers.append({"label": mic, "name": exporter, "how": "exporter" if exporter else None})
+            continue
+        if label in people.values():
+            speakers.append({"label": label, "name": next(n for n, x in people.items() if x == label), "how": "hand"})
             continue
         name = names.get(label)
         how = None

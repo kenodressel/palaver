@@ -467,7 +467,8 @@ def _cmd_coach(args: argparse.Namespace) -> int:
     previous = signal.signal(signal.SIGTERM, lambda signum, frame: stop.set())
     try:
         coach = live_coach.LiveCoach(folder, enabled=live_coach.settings_switches(),
-                                     context=lambda: _coach_context(cfg))
+                                     context=lambda: _coach_context(cfg),
+                                     on_nudge=live_coach.nudge_notifier(folder))
         return live_coach.run_coach(folder, coach=coach, stop=stop)
     finally:
         signal.signal(signal.SIGTERM, previous)

@@ -336,6 +336,7 @@ class _FakeTokenizer:
     def __init__(self, thinking_switch: bool):
         self.thinking_switch = thinking_switch
         self.calls = []
+        self.loads = []
 
     def apply_chat_template(self, messages, **kw):
         if "enable_thinking" in kw and not self.thinking_switch:
@@ -349,7 +350,7 @@ def _fake_mlx(monkeypatch, tokenizer, answers):
     import types
 
     mlx_lm = types.ModuleType("mlx_lm")
-    mlx_lm.load = lambda repo: ("MODEL", tokenizer)
+    mlx_lm.load = lambda repo, **kw: tokenizer.loads.append((repo, kw)) or ("MODEL", tokenizer)
     mlx_lm.generate = lambda model, tok, prompt, max_tokens, sampler: answers.pop(0)
     sample_utils = types.ModuleType("mlx_lm.sample_utils")
     sample_utils.make_sampler = lambda temp: None
@@ -376,6 +377,76 @@ def test_local_runner_system_message_without_a_description(monkeypatch):
     _fake_mlx(monkeypatch, tokenizer, ["no json", json.dumps({"ok": 1})])
     assert REAL_LOCAL_RUNNER("repo/y", parse=json.loads)("PROMPT", {"type": "object"}) == {"ok": 1}
     assert tokenizer.calls[-1][0][0]["content"].startswith("Answer with a single JSON object")
+
+
+def test_local_runner_loads_the_pinned_revision(monkeypatch):
+    """#8: the notes run loads the revision the setup assistant downloaded; it
+    never fetches a newer upload of the model next to the old one."""
+    from palaver import onboarding
+
+    monkeypatch.setattr(onboarding, "_hub_cache", lambda: Path("/nonexistent-hub"))
+    tokenizer = _FakeTokenizer(thinking_switch=True)
+    _fake_mlx(monkeypatch, tokenizer, [json.dumps({"ok": 1})])
+    REAL_LOCAL_RUNNER(notes.DEFAULT_LOCAL_MODEL, parse=json.loads)("PROMPT", {"type": "object"})
+    assert tokenizer.loads == [(notes.DEFAULT_LOCAL_MODEL,
+                                {"revision": notes.MODEL_REVISIONS[notes.DEFAULT_LOCAL_MODEL]})]
+    tokenizer.loads.clear()
+    _fake_mlx(monkeypatch, tokenizer, [json.dumps({"ok": 1})])
+    REAL_LOCAL_RUNNER("someone/else", parse=json.loads)("PROMPT", {"type": "object"})
+    assert tokenizer.loads == [("someone/else", {"revision": None})]  # a model config.toml names: as before
+
+
+def _snapshot(onboarding, repo: str, rev: str, shards: tuple[str, ...]) -> None:
+    """A snapshot as huggingface_hub leaves it: blobs, files linked in once whole."""
+    import os
+
+    base = onboarding._cache_dir(repo)
+    (base / "blobs").mkdir(parents=True, exist_ok=True)
+    snap = base / "snapshots" / rev
+    snap.mkdir(parents=True)
+    index = {"weight_map": {"a": "model-00001-of-00002.safetensors", "b": "model-00002-of-00002.safetensors"}}
+    for name, data in [("config.json", b"{}"), ("model.safetensors.index.json", json.dumps(index).encode()),
+                       *((s, rev.encode() + s.encode()) for s in shards)]:
+        blob = base / "blobs" / f"{rev[:8]}-{name}"
+        blob.write_bytes(data)
+        (snap / name).symlink_to(os.path.relpath(blob, snap))
+
+
+ALL_SHARDS = ("model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors")
+
+
+def test_an_older_download_loads_as_before(tmp_path, monkeypatch):
+    """Downloaded before the pin: that snapshot loads (offline too); nothing
+    here yet or the pinned one complete: the pinned revision."""
+    from palaver import onboarding
+
+    monkeypatch.setattr(onboarding, "_hub_cache", lambda: tmp_path)
+    repo = notes.DEFAULT_LOCAL_MODEL
+    pin = notes.MODEL_REVISIONS[repo]
+    assert notes.model_revision(repo) == pin
+    old = "0" * 40
+    _snapshot(onboarding, repo, old, ALL_SHARDS)
+    assert notes.model_revision(repo) == old
+    _snapshot(onboarding, repo, pin, ALL_SHARDS)
+    assert notes.model_revision(repo) == pin
+
+
+def test_a_pinned_download_cut_short_keeps_the_older_one(tmp_path, monkeypatch):
+    """A re-download of the pin interrupted after one shard: the complete older
+    snapshot loads (offline notes keep working), not the partial pin."""
+    from palaver import onboarding
+
+    monkeypatch.setattr(onboarding, "_hub_cache", lambda: tmp_path)
+    repo = notes.DEFAULT_LOCAL_MODEL
+    pin = notes.MODEL_REVISIONS[repo]
+    old = "0" * 40
+    _snapshot(onboarding, repo, old, ALL_SHARDS)
+    _snapshot(onboarding, repo, pin, ALL_SHARDS[:1])
+    assert not onboarding.snapshot_complete(repo, pin) and onboarding.snapshot_complete(repo, old)
+    assert notes.model_revision(repo) == old
+    blob = onboarding._cache_dir(repo) / "blobs" / f"{old[:8]}-{ALL_SHARDS[1]}"
+    blob.unlink()  # the older one lost a blob too: nothing complete, the pin downloads
+    assert notes.model_revision(repo) == pin
 
 
 def test_name_from_a_garbled_first_line_is_not_backed():

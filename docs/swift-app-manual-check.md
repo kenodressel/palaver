@@ -119,3 +119,30 @@ one meeting.
 3. Remove the file and restart. You should be back on the Swift app.
 4. Also try `PALAVER_LEGACY_APP=1 ~/Applications/Palaver.app/Contents/MacOS/Palaver`
    from a terminal.
+
+## 8. Tester feedback (#19, #20, #22, #23)
+
+1. First start (#20): in a fresh home (or with `"setup"` removed from
+   `settings.json` and no meetings), open Palaver. The window should open
+   with the setup assistant. Close it without Finish or Skip, quit, open
+   Palaver again: it stays in the menu bar (it opens by itself only once;
+   `window-offered` in Application Support). Log out and in (login item):
+   it stays quiet.
+2. With Palaver running and its window closed, open it again from the
+   Finder, Launchpad or Spotlight. The window should come to the front,
+   on the page it showed last. Minimize the window, then click the Dock
+   icon: it is restored.
+3. A call recording (#23): when a Teams call starts recording, a
+   notification "Recording the Teams call" appears, without sound, and goes
+   away by itself; a click opens the meeting. With the window open, its
+   title reads "Palaver — 🔴 Recording the Teams call" and the Dock icon
+   has a "REC" badge; both go away when the call ends.
+4. Live coach (#19): in a call, talk alone for over 3 minutes (the mic
+   only). A "Live coach" notification "3-min monologue" should appear, no
+   sound, at most one every 3 minutes. A quiet invitee shows as "Someone
+   invited hasn't spoken yet" (no name in a notification). The meeting's `session.log` gets a
+   `coach_nudge` line (kind and time only). With "Show nudges as
+   notifications" off in Settings → Live coach, none appears.
+5. Voice samples (#22): on a meeting with unnamed speakers, click a voice's
+   ▶. It turns into a stop button; a click, Escape, or another voice's ▶
+   stops it.

@@ -73,6 +73,29 @@ public enum MenuText {
         return ""
     }
 
+    // MARK: - a recording, where the menu bar icon may be out of sight (#23)
+
+    /// The notification as a recording starts: (title, message). A click on it opens the meeting.
+    public static func recordingStarted(trigger: String?) -> (title: String, message: String) {
+        switch trigger {
+        case "teams": return ("Recording the Teams call", "Palaver records until the call ends.")
+        case "slack": return ("Recording the Slack huddle", "Palaver records until the huddle ends.")
+        default: return ("Recording started", "Palaver records until you stop it.")
+        }
+    }
+
+    /// The window's title: "Palaver", and what records while something does.
+    public static func windowTitle(_ status: JSONValue) -> String {
+        guard status["state"]?.stringValue == "recording" else { return WindowPage.title }
+        let what = status["why"]?["trigger"]?.stringValue.flatMap { callNames[$0] }.map { "Recording the \($0)" } ?? "Recording"
+        return "\(WindowPage.title) — 🔴 \(what)"
+    }
+
+    /// The Dock icon's badge (shown while the window is open, as is the icon): "REC" while recording.
+    public static func dockBadge(_ status: JSONValue) -> String? {
+        status["state"]?.stringValue == "recording" ? "REC" : nil
+    }
+
     // MARK: - the start/stop item
 
     /// The start/stop item: it asks to stop when a manual recording ran on after its call ended or went silent (#52).

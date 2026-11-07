@@ -42,6 +42,18 @@ MODEL_MEMORY_GB = {
     "mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit": 20.0,
 }
 NOTES_MEMORY_GB = 20.0
+# #8: the revision of each local model Palaver downloads and loads. Without a
+# revision every notes run asks Hugging Face for the newest one and, after an
+# upload of new weights, downloads them next to the old (twice the space).
+MODEL_REVISIONS = {
+    "mlx-community/gemma-4-12B-it-OptiQ-4bit": "de9e183868050b34bf6b4272518500ffcebf15b3",
+    "mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit": "e9675aa3ca5f900ccef55267914466d55ab325fa",
+}
+# The files mlx_lm reads (its DEFAULT_ALLOW_PATTERNS): the setup assistant
+# downloads only these, not a repo's README or extra weights (Gemma's vision
+# sidecar). A test keeps the two lists the same.
+MODEL_FILES = ("*.json", "model*.safetensors", "*.py", "tokenizer.model", "*.tiktoken", "tiktoken.model",
+               "*.txt", "*.jsonl", "*.jinja")
 LOCAL_MAX_TOKENS = 4096
 
 SCHEMA: dict[str, Any] = {
@@ -216,8 +228,9 @@ def transcript_for_prompt(utterances: list[Utterance]) -> str:
 
 
 def _is_mic(u: Utterance) -> bool:
-    """A line of the user's microphone: no diarization label, named or not."""
-    return u.label is None and not re.fullmatch(r"SPEAKER_\d+", u.speaker)
+    """A line of the user's microphone: no diarization label, named or not;
+    not a line the user said is a person's (#12)."""
+    return u.label is None and u.said_by is None and not re.fullmatch(r"SPEAKER_\d+", u.speaker)
 
 
 def shared_lanes(utterances: list[Utterance], shared: dict[str, str], mic: str | None = None) -> list[str]:
@@ -513,6 +526,26 @@ def _decision(decision: Any) -> str:
     return _object_text(decision, "decision")
 
 
+def model_revision(repo: str) -> str | None:
+    """The revision to load ``repo`` at (#8): the pinned one once it is fully
+    here. Otherwise a complete older download (before the pin, or next to a
+    pinned one cut short) loads, so notes still work offline; with none, the
+    pin (downloaded on first use)."""
+    pin = MODEL_REVISIONS.get(repo)
+    if pin is None:
+        return None
+    from .onboarding import _cache_dir, snapshot_complete
+
+    if snapshot_complete(repo, pin):
+        return pin
+    try:
+        older = sorted((p for p in (_cache_dir(repo) / "snapshots").iterdir() if p.name != pin),
+                       key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        older = []
+    return next((p.name for p in older if snapshot_complete(repo, p.name)), pin)
+
+
 # repo → (model, tokenizer): loaded once per process.
 _LOADED: dict[str, tuple] = {}
 
@@ -533,7 +566,7 @@ def local_runner(
         from mlx_lm.sample_utils import make_sampler
 
         if repo not in _LOADED:
-            _LOADED[repo] = load_model(repo)
+            _LOADED[repo] = load_model(repo, revision=model_revision(repo))
         model, tokenizer = _LOADED[repo]
         system = ("Answer with a single JSON object that follows this "
                   "JSON schema, and nothing else:\n" + json.dumps(schema))

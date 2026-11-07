@@ -5,6 +5,7 @@ import { $, h, toast, remember, history as undoHistory, commands, isEditable, bu
 import { meetingCommands, nextAfter, laneCommands, laneLines, linesText, namingText, withName, clock, roomText, roomNameText,
   unknownText,
   lineCommands, lineMarks, fixableWord, lineBefore, lineEditedText, cutKind,
+  lineSpeakerChoices, nextLineOfSpeaker, lineSpeakerText,
   withProject, projectChange, projectCommands, renameText, voicesText, notesEstimate,
   personCommands, voiceCommands, termCommands, termChangeText, projectEditText,
   placeOf, hashOf, historyStep, navStart, navPush, navArrive, keyNav, mouseNav, inlinePlay,
@@ -1410,7 +1411,7 @@ function renderRibbon(m, color) {
       });
       // Hearing the voice is how to tell who it is: its play button stays in sight until the name is sure.
       who = h("div", { class: "who" }, avatar(s.name), input,
-        inlinePlay(s) ? playVoiceButton(`Play voice of ${s.display}`, () => playVoice(s)) : null,
+        inlinePlay(s) ? playVoiceButton(`Play voice of ${s.display}`, () => playVoice(s), speakerKey(m.id, s)) : null,
         othersOrg(s.org, m) ? h("span", { class: `org${s.org_link?.unsure ? " unsure-link" : ""}`,
           title: linkTitle(s.org_link) || s.org }, s.org) : null,
         byVoice ? h("span", { class: `named-by${s.link?.unsure ? " unsure-link" : ""}`, title: linkTitle(s.link) || byVoice },
@@ -1496,10 +1497,23 @@ function addRibbonCut(ribbon, m, duration) {
   addEventListener("resize", () => { cut.hidden = true; }, { passive: true });  // its place is stale then
 }
 
-// The round ▶ beside a name field: plays a few seconds of the voice.
-function playVoiceButton(label, onPlay) {
-  return h("button", { type: "button", class: "icon-btn voice-play", title: "Play voice", "aria-label": label, onclick: onPlay },
-    h("span", { class: "mini-play" }));
+// The round ▶ beside a name field: plays a few seconds of the voice. While that sample plays it is a
+// stop button (#22); `key` says which sample is this button's (speakerKey, clipKey).
+function playVoiceButton(label, onPlay, key) {
+  const button = h("button", { type: "button", class: "icon-btn voice-play", "data-voice-key": key, "data-label": label,
+    onclick: () => (voicePlaying(key) ? stopVoice() : onPlay()) });
+  showVoiceButton(button);
+  return button;
+}
+
+function showVoiceButton(button) {
+  const playing = voicePlaying(button.dataset.voiceKey);
+  if (button.dataset.playing === String(playing)) return;
+  button.dataset.playing = String(playing);
+  button.classList.toggle("playing", playing);
+  button.title = playing ? "Stop" : "Play voice";
+  button.setAttribute("aria-label", playing ? button.dataset.label.replace(/^Play\b/, "Stop") : button.dataset.label);
+  button.replaceChildren(h("span", { class: playing ? "mini-stop" : "mini-play" }));
 }
 
 // A lane's ⋯: Rename, Play Voice, Merge Into…, Not <Name>, Don't Know Who This Is, and Not a Speaker in red.
@@ -1879,6 +1893,7 @@ function renderTranscript(m, color) {
   }
   let last = null;
   const canCut = m.status === "ready" && !m.live;
+  const choosable = canCut && state.view !== "review";  // a line's speaker can be corrected (#12)
   const orgOf = new Map(m.speakers.filter((s) => othersOrg(s.org, m)).map((s) => [s.name || s.display, s.org]));
   const people = meetingPeople(m);
   if (canCut && m.neighbours?.next && state.cutAt == null) {
@@ -1915,10 +1930,20 @@ function renderTranscript(m, color) {
       oncontextmenu: (e) => lineMenu(e, turn, m, t, i) },
     h("span", { class: "t" }, clock(t.start)),
     h("span", { class: "bar" }),
-    h("div", { class: "said" }, showName ? h("span", { class: "speaker" }, t.speaker,
+    h("div", { class: "said" }, showName ? h("span", choosable ? {
+      class: "speaker choosable", role: "button", tabindex: "0", title: "This line is…", "aria-haspopup": "menu",
+      onclick: (e) => { e.stopPropagation(); askLineSpeaker(m, t, turn); },
+      onkeydown: (e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        e.stopPropagation();
+        askLineSpeaker(m, t, turn);
+      },
+    } : { class: "speaker" }, t.speaker,
       orgOf.get(t.speaker) ? h("span", { class: "org" }, ` · ${orgOf.get(t.speaker)}`) : null) : null,
     state.editAt === t.start ? lineEditor(m, t) : lineText(t, people),
-    t.edited && state.editAt !== t.start ? h("span", { class: "edited", title: `Heard: “${t.heard}”` }, "edited") : null));
+    t.edited && state.editAt !== t.start ? h("span", { class: "edited", title: `Heard: “${t.heard}”` }, "edited") : null,
+    t.fixed ? h("span", { class: "edited speaker-fixed", title: `Was ${t.fixed.was}` }, "speaker corrected") : null));
     into.append(turn);
   });
   into.append(...gapsBefore(m.gaps, m.transcript, m.transcript.length).map(pause));
@@ -2128,6 +2153,7 @@ function lineText(t, people = null) {
 const LINE_ICONS = {
   play: ICONS.play,
   edit: "M4 20h4L19 9l-4-4L4 16zM14 6l4 4",
+  speaker: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 20c0-4 4-6 8-6s8 2 8 6",
   fixSpelling: "M3 18l5-12 5 12M5 14h6M14.5 15l2.5 2.5L21.5 12",
   copy: "M9 9h11v11H9zM5 15H4V4h11v1",
   split: ICONS.split,
@@ -2146,6 +2172,7 @@ const LINE_ACTIONS = tracked("line", {
     if (found) respellForm(found);
     else toast("Select the words to fix first, then choose Fix spelling.");
   },
+  speaker: (m, t, turn) => askLineSpeaker(m, t, turn),
   copy: (m, t) => copyLine(t),
   split: (m, t) => openCut(t.start),
 });
@@ -2157,7 +2184,7 @@ function addLineTools(turn, m, t, i) {
   if (!turn.querySelector(".line-tools")) {
     turn.append(h("div", { class: "line-tools", role: "toolbar", "aria-label": `Line at ${clock(t.start)}`,
       onclick: (e) => e.stopPropagation() },
-    lineCommands(m, i, true).map((c) => h("button", {
+    lineCommands(m, i, true, { review: state.view === "review" }).map((c) => h("button", {
       type: "button", class: "line-tool", title: c.label, "aria-label": c.label, "data-name": c.name,
       onmousedown: (e) => e.preventDefault(),  // the selected words stay selected, for Fix spelling
       onclick: (e) => { e.stopPropagation(); LINE_ACTIONS[c.name](m, t, turn); },
@@ -2184,7 +2211,7 @@ function lineMenu(e, turn, m, t, i) {
   }
   const found = respellTarget(turn, t);
   closeRespell();
-  menu(lineCommands(m, i, !!found).map((c) => ({
+  menu(lineCommands(m, i, !!found, { review: state.view === "review" }).map((c) => ({
     label: c.label, icon: icon(LINE_ICONS[c.name]), disabled: !c.enabled,
     run: () => LINE_ACTIONS[c.name](m, t, turn, found),
   })), at);
@@ -2217,6 +2244,51 @@ async function copyLine(t) {
     return;
   }
   toast("Copied", { short: true });
+}
+
+// --- transcript lines: who said it (#12) -------------------------------------------
+
+// "This line is…": the meeting's people and Me, by the line's speaker.
+function askLineSpeaker(m, t, turn) {
+  if (state.meeting !== m || m.status !== "ready" || m.live || state.view === "review" || !turn?.isConnected) return;
+  const anchor = turn.querySelector(".said .speaker") || turn.querySelector(".said") || turn;
+  turn.classList.add("line-asking");
+  menu(lineSpeakerChoices(m, t).map((c) => c && { label: c.label, run: () => setLineSpeaker(m.id, t, c) }), anchor,
+    { title: "This line is…", onClose: () => turn.classList.remove("line-asking") });
+}
+
+// Saves who said line ``t``, then asks the same about the next line of the
+// voice it was heard as, so they can be gone through one after another (Esc stops).
+async function setLineSpeaker(id, t, choice) {
+  let m;
+  try {
+    m = await api(`/api/meetings/${encodeURIComponent(id)}/line-speaker`, { start: t.start, track: t.track, to: choice.to });
+  } catch (err) {
+    errorToast(`The line's speaker was not changed: ${err.message}`,
+      { action: { label: "Try again", run: () => setLineSpeaker(id, t, choice) } });
+    return;
+  }
+  const token = m.undo;
+  remember(lineSpeakerText(t, choice.to == null ? null : choice.label, t.fixed?.was),
+    () => lineSpeakerBack(id, token, t.start));
+  if (state.meeting?.id !== id) return;
+  state.meeting = m;
+  if (!onPage(id)) return;
+  renderMeeting();
+  const next = choice.to == null ? null : nextLineOfSpeaker(m, t.start, t.label);
+  const turn = next && document.querySelector(`#main .turn[data-start="${next.start}"]`);
+  if (!turn) {
+    focusLine(t.start);
+    return;
+  }
+  turn.scrollIntoView({ block: "nearest" });
+  await new Promise((done) => requestAnimationFrame(done));  // its scroll would close the menu
+  if (state.meeting === m && turn.isConnected) askLineSpeaker(m, next, turn);
+}
+
+async function lineSpeakerBack(id, token, start) {
+  await api("/api/undo", { token });
+  showLine(id, await api(`/api/meetings/${encodeURIComponent(id)}`), start, true);
 }
 
 // --- transcript lines: editing -----------------------------------------------------
@@ -2627,7 +2699,7 @@ function renderPeople() {
             "aria-label": "Name for this voice",
             onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); },
             onchange: (e) => e.target.value.trim() && nameVoices(voices, e.target.value) }),
-          clip ? playVoiceButton("Play this voice", () => playClip(clip.id, clip.clip)) : null],
+          clip ? playVoiceButton("Play this voice", () => playClip(clip.id, clip.clip), clipKey(clip.id, clip.clip)) : null],
         g.voices, { talk: g.talk_seconds, label: "this voice" }, moreButton(() => voiceItems(g, voices), "Actions for this voice")));
     });
   }
@@ -4030,28 +4102,49 @@ function seek(t, andPlay) {
 
 // Play/Pause of the meeting: the button, Space, the native menu.
 function playPause() {
-  if (audio.paused) play(audio);
+  if (audio.paused) { voice.pause(); play(audio); }
   else audio.pause();
 }
+
+// The voice sample playing (or last played): its key, so its button shows Stop also after a re-render.
+let voiceKey = null;
+const speakerKey = (meetingId, s) => `speaker:${meetingId}:${s.label}`;
+const clipKey = (meetingId, clip) => `clip:${meetingId}:${clip.start}`;
+const voicePlaying = (key) => key != null && key === voiceKey && !voice.paused;
 
 let clipIndex = new Map();
 function playVoice(s) {
   const i = clipIndex.get(s.label) || 0;
   clipIndex.set(s.label, i + 1);
-  playClip(state.meeting.id, s.clips[i % s.clips.length]);
+  playClip(state.meeting.id, s.clips[i % s.clips.length], speakerKey(state.meeting.id, s));
 }
 
-function playClip(meetingId, clip) {
+// Starting a sample ends the one playing (one element plays them all).
+function playClip(meetingId, clip, key = clipKey(meetingId, clip)) {
   audio.pause();
   const src = `/api/meetings/${encodeURIComponent(meetingId)}/audio?track=system`;
   if (!voice.src.endsWith(src)) voice.src = src;
+  voiceKey = key;
   voice.currentTime = clip.start;
   voice.dataset.until = clip.end;
   play(voice);
+  showVoiceButtons();
+}
+
+function stopVoice() {
+  voice.pause();
+  showVoiceButtons();
+}
+
+function showVoiceButtons() {
+  document.querySelectorAll(".voice-play").forEach(showVoiceButton);
 }
 voice.addEventListener("timeupdate", () => {
   if (voice.currentTime >= Number(voice.dataset.until)) voice.pause();
 });
+for (const type of ["play", "pause", "ended", "emptied"]) voice.addEventListener(type, showVoiceButtons);
+// Escape stops a sample (whatever else Escape does there goes on).
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !voice.paused) stopVoice(); });
 
 function speakingAt(t) {
   const m = state.meeting;
@@ -4328,7 +4421,8 @@ function settingsContent(pane) {
         h("p", { class: "meta" }, "Applies from the next recording.")),
       h("h2", {}, "Live coach"),
       h("div", { class: "gloss-card settings-card" },
-        h("p", { class: "meta" }, "Quiet nudges while you record a call: next to the clock in the menu bar and on the meeting's page. At most one every 3 minutes; nothing pops up."),
+        h("p", { class: "meta" }, "Quiet nudges while you record a call: as a notification from Palaver (no sound; it goes away by itself), in Palaver's menu and on the meeting's page. At most one every 3 minutes."),
+        settingSwitch("nudge_notify", "Show nudges as notifications"),
         settingSwitch("nudge_talk_share", "When you have talked much more than usual"),
         settingSwitch("nudge_monologue", "Long monologues (3 minutes and more)"),
         settingSwitch("nudge_quiet_invitee", "Invitees who haven't said anything yet"),
@@ -5824,7 +5918,8 @@ function needAnswers(card, meeting, item) {
   const go = (label, run) => h("button", { type: "button", class: "btn btn-quiet small", onclick: run }, label);
   switch (item.kind) {
     case "unnamed": return [
-      item.clip ? playVoiceButton(`Play voice of ${item.display}`, () => playClip(meeting.id, item.clip)) : null,
+      item.clip ? playVoiceButton(`Play voice of ${item.display}`, () => playClip(meeting.id, item.clip),
+        clipKey(meeting.id, item.clip)) : null,
       ...(item.guesses || []).map((name) => answer(person(name), () => nameNeed(meeting, item, name), "chip need-chip person-chip")),
       h("input", { class: "name-input need-name", list: "names", placeholder: "Name", spellcheck: "false",
         "aria-label": `Name for ${item.display}`,

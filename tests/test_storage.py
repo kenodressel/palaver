@@ -231,3 +231,28 @@ def test_retention_removes_the_live_diarizers_scratch(tmp_path):
     scratch.write_bytes(b"\0" * 500)
     assert storage.drop_old_audio(tmp_path, 7, now=NOW) == (1, 3500)
     assert not scratch.exists()
+
+
+def test_the_old_whisper_model_is_listed_and_kept_while_config_uses_it(tmp_path, monkeypatch):
+    """#8: Whisper (the default transcriber until October) stayed in the Hugging
+    Face cache unseen. Listed now; deletable once the engine did a meeting's work,
+    never while config.toml's transcriber is mlx-whisper, never by itself."""
+    from types import SimpleNamespace
+
+    from palaver import install_layout, onboarding
+
+    monkeypatch.setattr(storage.Path, "home", classmethod(lambda cls: tmp_path / "home"))
+    monkeypatch.setattr(onboarding, "_hub_cache", lambda: tmp_path / "hub")
+    whisper = onboarding._cache_dir("mlx-community/whisper-large-v3-turbo")
+    (whisper / "blobs").mkdir(parents=True)
+    (whisper / "blobs" / "w").write_bytes(b"\0" * 1600)
+    rows = {m["id"]: m for m in storage.models()}
+    assert rows["whisper"]["bytes"] == 1600 and not rows["whisper"]["deletable"]
+    assert storage.drop_retired(None) == 0 and whisper.exists()
+    install_layout.engine_proven_marker().write_text("1")
+    uses = SimpleNamespace(transcriber="mlx-whisper", notes_local_model=onboarding.GEMMA)
+    assert not {m["id"]: m for m in storage.models(uses)}["whisper"]["deletable"]
+    with pytest.raises(ValueError):
+        storage.delete_model(uses, "whisper")
+    assert {m["id"]: m for m in storage.models()}["whisper"]["deletable"]
+    assert storage.delete_model(None, "whisper") == 1600 and not whisper.exists()

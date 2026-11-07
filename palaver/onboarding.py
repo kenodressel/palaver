@@ -25,6 +25,7 @@ memory; multilingual-e5-small 470 MB.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import re
 import shutil
@@ -74,6 +75,7 @@ class Model:
     hosted: bool = False  # a release carries a copy (model_store)
     local_folder: str = ""  # a folder of Application Support/palaver/models that holds it (or an old copy of it)
     manual: bool = False  # retired, but never dropped at start: Settings → Storage offers to delete it
+    transcriber: str = ""  # config.toml's transcriber that still uses it: kept while chosen
 
 
 # The speech models are one download: palaver-engine's own (Parakeet v3 and the
@@ -112,6 +114,11 @@ RETIRED: dict[str, Model] = {m.id: m for m in (
     Model("pyannote", "pyannote", "telling the speakers apart (replaced by the speech models)",
           "pyannote/speaker-diarization-community-1", "config.yaml", 0.03, "about 1 GB of memory while it runs",
           local_folder="pyannote-community-1", manual=True),
+    # The default transcriber until October 2026 (#8: 1.5 GB nobody saw);
+    # still there for config.toml's transcriber = "mlx-whisper".
+    Model("whisper", "Whisper (MLX)", "transcription (replaced by the speech models)",
+          "mlx-community/whisper-large-v3-turbo", "config.json", 1.5, "used only with transcriber = mlx-whisper",
+          manual=True, transcriber="mlx-whisper"),
 )}
 
 
@@ -942,6 +949,25 @@ def cached_bytes(repo: str) -> int:
         return 0
 
 
+def snapshot_complete(repo: str, revision: str) -> bool:
+    """Whether the snapshot of ``repo`` at ``revision`` has every file an MLX
+    model needs, read from disk only (offline): config.json, no file whose blob
+    is gone, and every weights shard its index names (or one model*.safetensors
+    without an index). A download cut short leaves a snapshot without them:
+    huggingface_hub links a file into it only once the file is complete."""
+    snap = _cache_dir(repo) / "snapshots" / revision
+    try:
+        if not (snap / "config.json").is_file() or any(f.is_symlink() and not f.exists() for f in snap.rglob("*")):
+            return False
+        index = snap / "model.safetensors.index.json"
+        if index.exists():
+            shards = set(json.loads(index.read_text()).get("weight_map", {}).values())
+            return bool(shards) and all((snap / s).is_file() for s in shards)
+        return any(f.is_file() for f in snap.glob("model*.safetensors"))
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def complete(repo: str, probe: str = "config.json") -> bool:
     """Whether ``repo`` is fully downloaded: no partial blob, and a snapshot
     (huggingface_hub's cache scan) with ``probe`` whose every file is there."""
@@ -1182,7 +1208,7 @@ class Downloads:
             elif m.id == "speech":  # not a repo in the cache: what prepare reported
                 got = m.disk_gb * job.get("fraction", 0.0)
             else:
-                got = min(m.disk_gb, self._progress(self._repo_of(m)) / 1e9)
+                got = min(m.disk_gb, self._progress(self._repo_of(m)) / 1024**3)  # disk_gb is GiB
             out.append({"id": mid, "label": m.label, "disk_gb": m.disk_gb, "state": job["state"],
                         "done_gb": round(got, 2), "error": job["error"]})
         return {"running": any(j["state"] in ("queued", "downloading") for j in jobs.values()), "models": out}
@@ -1220,6 +1246,8 @@ def _fetch(model: Model, repo: str) -> None:
     if model.hosted and fetch_hosted(repo):
         return
     env = dict(os.environ)
+    # hf_xet can keep a chunk cache of up to 10 GB next to the models (#8).
+    env.setdefault("HF_XET_CHUNK_CACHE_SIZE_BYTES", "0")
     try:
         from .config import load_config
 
@@ -1418,7 +1446,9 @@ def _main(argv: list[str]) -> int:
             return 0 if embeddings.model_folder(download=True) else 1
         from huggingface_hub import snapshot_download
 
-        snapshot_download(repo, token=os.environ.get("HF_TOKEN"))
+        # Only what mlx_lm loads, at the revision it loads (#8).
+        snapshot_download(repo, revision=notes.MODEL_REVISIONS.get(repo), allow_patterns=list(notes.MODEL_FILES),
+                          token=os.environ.get("HF_TOKEN"))
         return 0
     return 2
 

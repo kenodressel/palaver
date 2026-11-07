@@ -29,8 +29,9 @@ test("clock shows minutes and seconds, hours when there are any", () => {
 
 test("lineCommands: every action on a later line of a finished meeting, in order", () => {
   const items = lineCommands(meeting(), 1, true);
-  assert.deepEqual(names(items), ["play", "edit", "fixSpelling", "copy", "split"]);
-  assert.deepEqual(items.map((x) => x.label), ["Play from here", "Edit", "Fix spelling", "Copy", "Split here"]);
+  assert.deepEqual(names(items), ["play", "edit", "speaker", "fixSpelling", "copy", "split"]);
+  assert.deepEqual(items.map((x) => x.label),
+    ["Play from here", "Edit", "This line is…", "Fix spelling", "Copy", "Split here"]);
   assert.ok(items.every((x) => x.enabled));
 });
 
@@ -38,12 +39,13 @@ test("lineCommands: the first line has no Split here", () => {
   assert.ok(!names(lineCommands(meeting(), 0, true)).includes("split"));
 });
 
-test("lineCommands: live and processing meetings get no Edit and no Split here", () => {
+test("lineCommands: live and processing meetings get no Edit, no This line is… and no Split here", () => {
   for (const m of [meeting({ status: "recording", live: { until: 30 }, has_audio: false }),
     meeting({ status: "processing" })]) {
     const n = names(lineCommands(m, 1, true));
     assert.ok(!n.includes("edit"), m.status);
     assert.ok(!n.includes("split"), m.status);
+    assert.ok(!n.includes("speaker"), m.status);
     assert.ok(n.includes("copy") && n.includes("fixSpelling"), m.status);
   }
 });

@@ -37,6 +37,29 @@ private typealias Levels = [(label: String, db: Double?, silentFor: Double)]
         #expect(MenuText.title(rec(), update: true) == "🔴")  // what happens now wins
     }
 
+    // #23: when the menu bar icon is hidden (the notch), the start says so in a notification, and
+    // the window's title and the Dock icon show the recording while the window is open.
+    @Test func theStartOfARecordingIsSaidInWords() {
+        #expect(MenuText.recordingStarted(trigger: "teams") == ("Recording the Teams call", "Palaver records until the call ends."))
+        #expect(MenuText.recordingStarted(trigger: "slack") == ("Recording the Slack huddle", "Palaver records until the huddle ends."))
+        #expect(MenuText.recordingStarted(trigger: "manual") == ("Recording started", "Palaver records until you stop it."))
+        #expect(MenuText.recordingStarted(trigger: nil) == ("Recording started", "Palaver records until you stop it."))
+    }
+
+    @Test func theWindowAndTheDockShowARecording() {
+        #expect(MenuText.windowTitle(status()) == "Palaver")
+        #expect(MenuText.windowTitle(status([("transcribing", .bool(true))])) == "Palaver")
+        #expect(MenuText.windowTitle(status([("state", .string("paused"))])) == "Palaver")
+        let teams = rec([("why", .object([("trigger", .string("teams"))]))])
+        #expect(MenuText.windowTitle(teams) == "Palaver — 🔴 Recording the Teams call")
+        let slack = rec([("why", .object([("trigger", .string("slack"))]))])
+        #expect(MenuText.windowTitle(slack) == "Palaver — 🔴 Recording the Slack huddle")
+        #expect(MenuText.windowTitle(rec([("manual", .bool(true))])) == "Palaver — 🔴 Recording")
+        #expect(MenuText.dockBadge(status()) == nil)
+        #expect(MenuText.dockBadge(status([("transcribing", .bool(true))])) == nil)
+        #expect(MenuText.dockBadge(teams) == "REC")
+    }
+
     @Test func startStopItemDoesWhatItSaid() {
         #expect(MenuText.manualAction(shown: MenuText.startTitle, recording: false) == .start)
         #expect(MenuText.manualAction(shown: MenuText.stopTitle, recording: true) == .stop)

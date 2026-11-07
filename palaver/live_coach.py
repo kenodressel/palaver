@@ -15,9 +15,11 @@
   track, stay.
 
 At most one nudge every NUDGE_EVERY seconds, shown for NUDGE_SHOWN seconds
-as a quiet line (the menu bar, the live page); nothing pops up. A nudge
-does not come again until what it said stopped being true. Each kind can
-be switched off in Settings.
+as a quiet line (the menu, the live page) and, once, as a notification
+without sound (#19: the menu bar icon may be hidden behind the notch; a
+switch in Settings). A nudge does not come again until what it said
+stopped being true. Each kind can be switched off in Settings. Each nudge's
+kind and time (not its text) go to the meeting's session.log.
 """
 
 from __future__ import annotations
@@ -129,10 +131,12 @@ class Nudges:
         self._last_at: float | None = None
         self._armed = {k: True for k in KINDS}
         self._told: set[str] = set()  # invitees already said to be quiet
+        self.fresh: dict | None = None  # the nudge the last update chose (new then), else None
 
     def update(self, talk: dict | None, *, speech: dict | None = None, quiet: list[str] = (),
                enabled: dict[str, bool] | None = None) -> dict | None:
         now = self._clock()
+        self.fresh = None
         due = self._due(talk or {}, speech, list(quiet))
         if self._current and now - self._current["shown_at"] > NUDGE_SHOWN:
             self._current = None
@@ -147,6 +151,7 @@ class Nudges:
                     self._current = {"kind": kind, "text": text, "shown_at": now,
                                      "at": (talk or {}).get("until")}
                     self._last_at = now
+                    self.fresh = {k: v for k, v in self._current.items() if k != "shown_at"}
                     break
         return {k: v for k, v in self._current.items() if k != "shown_at"} if self._current else None
 
@@ -254,8 +259,10 @@ class LiveCoach:
     def __init__(self, folder: Path, *, enabled: Callable[[], dict[str, bool]] = lambda: {},
                  context: Callable[[], dict] = lambda: {}, clock: Callable[[], float] = time.monotonic,
                  monitor: Callable[..., VoiceMonitor] = VoiceMonitor,
-                 names: Callable[[Any, list[str]], tuple[dict, dict]] = live_names):
+                 names: Callable[[Any, list[str]], tuple[dict, dict]] = live_names,
+                 on_nudge: Callable[[dict], None] | None = None):
         self._enabled = enabled
+        self._on_nudge = on_nudge  # each new nudge, once (nudge_notifier)
         self._context_fn = context
         self._clock = clock
         self._names = names
@@ -324,6 +331,12 @@ class LiveCoach:
         nudge = self.nudges.update(talk, speech=speech, quiet=self._quiet, enabled=self._enabled())
         with self._lock:
             self._nudge = nudge
+        fresh = self.nudges.fresh
+        if fresh is not None and self._on_nudge is not None:
+            try:
+                self._on_nudge(dict(fresh))
+            except Exception:
+                LOGGER.debug("could not tell the nudge", exc_info=True)
 
     def status(self) -> dict[str, Any]:
         talk = self.monitor.snapshot()
@@ -362,6 +375,64 @@ def settings_switches(ttl: float = SETTINGS_CHECK_SECONDS, clock: Callable[[], f
         return state["value"]
 
     return switches
+
+
+def notify_switch(ttl: float = SETTINGS_CHECK_SECONDS, clock: Callable[[], float] = time.monotonic
+                  ) -> Callable[[], bool]:
+    """Whether nudges show as notifications (settings.json's nudge_notify), read
+    again every ``ttl`` seconds."""
+    from . import settings
+
+    state: dict[str, Any] = {"at": -1e9, "value": settings.Settings().nudge_notify}
+
+    def show() -> bool:
+        now = clock()
+        if now - state["at"] >= ttl:
+            state["at"] = now
+            try:
+                state["value"] = bool(settings.load().nudge_notify)
+            except Exception:
+                LOGGER.debug("could not read the nudge notification switch", exc_info=True)
+        return state["value"]
+
+    return show
+
+
+NUDGE_TITLE = "Live coach"
+# A banner is seen by everyone when the whole screen is shared and stays in Notification Center:
+# a nudge that names people says so without names there (the menu and the live page name them).
+NOTIFICATION_TEXT = {"quiet_invitee": "Someone invited hasn't spoken yet"}
+
+
+def nudge_notifier(folder: Path, *, show: Callable[[], bool] | None = None,
+                   send: Callable[[str, str, str | None], None] | None = None) -> Callable[[dict], None]:
+    """What the coach does with each new nudge (#19): a line in the meeting's
+    session.log (its kind and when in the call, not the words), and a
+    notification (Palaver's, no sound, never a person's name: NOTIFICATION_TEXT;
+    a click opens the meeting) while
+    ``show()`` (the switch in Settings → Live coach). The coach itself keeps
+    them rare: one every NUDGE_EVERY seconds at most."""
+    from datetime import datetime
+
+    from . import notify
+
+    folder = Path(folder)
+    show = show or notify_switch()
+    send = send or notify.notify
+
+    def tell(nudge: dict) -> None:
+        row = {"ts": datetime.now().astimezone().isoformat(), "level": "INFO", "logger": __name__,
+               "event": "coach_nudge", "kind": nudge.get("kind"), "at": nudge.get("at")}
+        try:
+            with open(folder / "session.log", "a", encoding="utf-8") as f:
+                f.write(json.dumps(row) + "\n")
+        except OSError:
+            LOGGER.debug("could not log the nudge", exc_info=True)
+        if show():
+            kind = nudge.get("kind")
+            send(NUDGE_TITLE, NOTIFICATION_TEXT.get(kind) or nudge.get("text") or "", folder.name)
+
+    return tell
 
 
 def write_status(folder: Path, status: dict[str, Any]) -> None:

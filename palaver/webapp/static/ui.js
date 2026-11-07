@@ -301,12 +301,15 @@ function closeMenu() {
 // A popover menu below the anchor's right edge, or at a point (right-click).
 // items: {label, icon?, shortcut?, danger?, disabled?, run} or null for a
 // separator; the caller puts dangerous items last, after a null.
-export function menu(items, anchor) {
+// ``title``: a heading over the items (the menu's name); ``onClose``: called
+// when the menu goes, however it goes.
+export function menu(items, anchor, { title = null, onClose = null } = {}) {
   closeMenu();
   const isPoint = !(anchor instanceof Element);
   const returnTo = isPoint ? document.activeElement : anchor;
-  const name = isPoint ? "Actions" : anchor.getAttribute("aria-label") || anchor.textContent.trim() || "Actions";
+  const name = title || (isPoint ? "Actions" : anchor.getAttribute("aria-label") || anchor.textContent.trim() || "Actions");
   const el = h("div", { class: "menu", role: "menu", "aria-label": name, tabindex: "-1" });
+  if (title) el.append(h("div", { class: "menu-title", "aria-hidden": "true" }, title));
   const icons = items.some((item) => item?.icon);  // then every label lines up after an icon column
   for (const item of items) {
     if (!item) {
@@ -359,6 +362,7 @@ export function menu(items, anchor) {
     window.removeEventListener("blur", onBlur);
     if (!isPoint) anchor.setAttribute("aria-expanded", "false");
     if (refocus && returnTo?.isConnected) returnTo.focus();
+    onClose?.();
   }
 
   el.addEventListener("keydown", onKey);

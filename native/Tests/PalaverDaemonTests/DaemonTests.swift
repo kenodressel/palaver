@@ -14,8 +14,10 @@ extension DaemonTicks {
             await h.run { $0 > 760 }
             #expect(h.sessions.count == 1 && h.sessions[0].started && h.sessions[0].stopped)
             #expect(p(h.launched) == [h.rec(0).path])
-            #expect(h.titles == ["Recording meeting", "Meeting recorded"])
-            #expect(h.notifications.map { [$0.message, $0.open ?? ""] } == [["rec0", "rec0"], ["10 min — transcribing in the background", "rec0"]])
+            // #23: said plainly, for when the menu bar icon is out of sight; a click opens the meeting.
+            #expect(h.titles == ["Recording the Teams call", "Meeting recorded"])
+            #expect(h.notifications.map { [$0.message, $0.open ?? ""] }
+                    == [["Palaver records until the call ends.", "rec0"], ["10 min — transcribing in the background", "rec0"]])
             #expect(h.state()["state"]?.stringValue == "idle")
         }
 

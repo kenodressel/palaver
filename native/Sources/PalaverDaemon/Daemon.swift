@@ -623,7 +623,8 @@ public final class Daemon {
             if continued {
                 deps.notify("Recording continued", "Palaver restarted during the call; it stays one meeting.", name(parts[0]))
             } else {
-                deps.notify("Recording meeting", name(folder), name(folder))
+                let said = MenuText.recordingStarted(trigger: triggerName)
+                deps.notify(said.title, said.message, name(folder))
             }
         }
     }
@@ -717,7 +718,8 @@ public final class Daemon {
         if let first = missing.first {
             deps.notify("Recording without the \(first)", "Check Privacy & Security settings, then run `palaver doctor`.", name(folder))
         } else if candidate == nil {
-            deps.notify("Recording meeting", name(folder), name(folder))
+            let said = MenuText.recordingStarted(trigger: trig)
+            deps.notify(said.title, said.message, name(folder))
         }
         if let candidate {
             cut = nil

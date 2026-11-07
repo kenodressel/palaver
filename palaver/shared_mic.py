@@ -276,8 +276,10 @@ def mic_lines(utterances: list, display_name: str | None, labels: set[str]) -> l
         return utterances
     from .models import Utterance
 
-    return [Utterance(display_name, u.start, u.end, u.text, label=None, heard=u.heard, unsure=u.unsure)
-            if u.label is None and u.speaker not in labels else u for u in utterances]
+    return [Utterance(display_name, u.start, u.end, u.text, label=None, heard=u.heard, unsure=u.unsure,
+                      heard_as=getattr(u, "heard_as", None))
+            if u.label is None and getattr(u, "said_by", None) is None and u.speaker not in labels else u
+            for u in utterances]
 
 
 # --- a recurring event remembered -------------------------------------------------

@@ -386,6 +386,14 @@ def _handler(app: App, port: int, key: str | None = None) -> type[BaseHTTPReques
                                   text=None if text is None else str(text))
                     return self._json(api.get_meeting(app.output_dir, m.group(1), user_name=app.user_name,
                                                       calendar=app.calendar))
+                m = re.fullmatch(r"/api/meetings/([^/]+)/line-speaker", self.path)
+                if m:
+                    track = body.get("track")
+                    token = api.set_line_speaker(app.output_dir, m.group(1), start=float(body["start"]),
+                                                 to=body.get("to"), user_name=app.user_name,
+                                                 track=None if track is None else str(track))
+                    return self._json({**api.get_meeting(app.output_dir, m.group(1), user_name=app.user_name,
+                                                         calendar=app.calendar), "undo": token})
                 m = re.fullmatch(r"/api/meetings/([^/]+)/title", self.path)
                 if m:
                     token = api.set_title(app.output_dir, m.group(1), body["title"])

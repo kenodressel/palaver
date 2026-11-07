@@ -64,7 +64,7 @@ def enabled() -> bool:
 
 
 def _sources(paths: RecordingPaths) -> list[Path]:
-    return [paths.transcript_json, paths.notes, paths.speakers_ignored]
+    return [paths.transcript_json, paths.notes, paths.speakers_ignored, paths.speakers_lines]
 
 
 def _signature(paths: RecordingPaths) -> dict[str, int | None]:

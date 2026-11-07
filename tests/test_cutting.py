@@ -58,6 +58,25 @@ def test_split_cuts_audio_data_and_names_at_the_moment(tmp_path):
     assert json.loads(tail.meta.read_text())["start_time"] == (T0 + timedelta(seconds=40)).isoformat()
 
 
+def test_split_takes_the_corrected_lines_along(tmp_path):
+    """#12: what was said about a line's speaker stays with the line."""
+    a = _recording(tmp_path, T0, 60, [("SPEAKER_00", 1, 30, ANNA), ("SPEAKER_01", 41, 59, BEN)])
+    a.speakers_lines.write_text(json.dumps([
+        {"start": 1.0, "end": 30.0, "from": "SPEAKER_00", "name": "Timo Strauß"},
+        {"start": 41.0, "end": 59.0, "from": "SPEAKER_01", "me": True, "name": "Timo"},
+        {"start": "soon", "name": "a broken entry is left out"}, 7,
+    ]))
+    tail = cutting.split(a, 40)
+    assert json.loads(a.speakers_lines.read_text()) == [
+        {"start": 1.0, "end": 30.0, "from": "SPEAKER_00", "name": "Timo Strauß"}]
+    assert json.loads(tail.speakers_lines.read_text()) == [
+        {"start": 1.0, "end": 19.0, "from": "SPEAKER_01", "me": True, "name": "Timo"}]
+    b = _recording(tmp_path, T0 + timedelta(seconds=62), 30, [("SPEAKER_00", 2, 28, [0.05, 1.0, 0.0])])
+    kept = cutting.join(tail, b)
+    assert json.loads(kept.speakers_lines.read_text()) == [
+        {"start": 1.0, "end": 19.0, "from": "SPEAKER_01", "me": True, "name": "Timo"}]
+
+
 def test_join_puts_the_tail_in_front_of_the_next_meeting_and_merges_the_same_voice(tmp_path):
     a = _recording(tmp_path, T0, 60, [("SPEAKER_00", 1, 30, ANNA), ("SPEAKER_01", 41, 59, BEN)])
     b = _recording(tmp_path, T0 + timedelta(seconds=62), 30, [("SPEAKER_00", 2, 28, [0.05, 1.0, 0.0])],

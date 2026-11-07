@@ -31,7 +31,10 @@ from ..paths import RecordingPaths, is_recording_folder_name, recording_folder_t
 from ..readable import readable
 from ..speakers import (
     apply_speaker_names,
+    is_mic_line,
+    line_track,
     load_inferred_names,
+    load_line_speakers,
     load_merges,
     load_recognized_names,
     load_rejected_names,
@@ -44,6 +47,7 @@ from ..speakers import (
     names_in_effect,
     save_speaker_names,
     set_ignored,
+    set_line_speaker as save_line_speaker,
     set_rejected_name,
     set_unknown as mark_unknown,
     talk_seconds,
@@ -294,8 +298,8 @@ _LIST_CACHE: dict[str, tuple[tuple, dict[str, Any]]] = {}
 def _signature(paths: RecordingPaths) -> tuple:
     files = (paths.meta, paths.transcript_json, paths.calendar, paths.title, paths.speakers, paths.speakers_auto,
              paths.speakers_merged, paths.speakers_ignored, paths.speakers_inferred, paths.speakers_rejected,
-             paths.speakers_shared, paths.speakers_unknown, paths.system_turns, paths.imported, paths.review,
-             paths.notes, paths.my_notes, paths.my_notes_images, glossary._default_path())
+             paths.speakers_shared, paths.speakers_unknown, paths.speakers_lines, paths.system_turns, paths.imported,
+             paths.review, paths.notes, paths.my_notes, paths.my_notes_images, glossary._default_path())
     return tuple(f.stat().st_mtime_ns if f.exists() else 0 for f in files)
 
 
@@ -773,6 +777,15 @@ def _meeting(output_dir: Path, paths: RecordingPaths, meeting_id: str, *, user_n
     event = calendar_events.load(paths)
     stale = notes.stale_reason(paths, raw) if raw and meeting_notes is not None else None
     mic = shared_mic.mic_display(paths)  # the room's, while several people sat at the microphone (#56)
+
+    def fixed(u: Utterance) -> dict[str, Any] | None:
+        """The voice a corrected line was heard as (#12): its lane (None: the
+        user's microphone) and what that shows."""
+        if u.heard_as is None:
+            return None
+        heard = None if u.heard_as[1] is None else merges.get(u.heard_as[1], u.heard_as[1])
+        return {"was": (mic or user_name) if heard is None else display.get(heard) or _label_display(heard),
+                "from": heard}
     title, title_from = titles.resolve(paths, event=event, meeting_notes=meeting_notes)
     status = _status(paths)
     return {
@@ -799,7 +812,8 @@ def _meeting(output_dir: Path, paths: RecordingPaths, meeting_id: str, *, user_n
             {"speaker": mic if mic and lane(u) is None else u.speaker, "label": lane(u),
              "start": round(u.start, 2), "end": round(u.end, 2), "text": u.text, "glossed": _glossed(u),
              "edited": u.heard is not None, "heard": u.heard,
-             "unsure": [] if u.heard is not None else list(u.unsure)}
+             "unsure": [] if u.heard is not None else list(u.unsure),
+             "fixed": fixed(u), "track": u.heard_as[0] if u.heard_as else "mic" if lane(u) is None else "others"}
             for u in utterances
         ],
         "has_audio": paths.system_wav.exists(),
@@ -1009,6 +1023,14 @@ def undo_change(output_dir: Path, token: str, *, user_name: str) -> list[str]:
             return _undo_shared(output_dir, token, user_name=user_name)
     if undo.label(output_dir, token) in ("title", "unknown"):  # nothing depends on them but what reads them
         return _undo_own_file(output_dir, token)
+    if undo.label(output_dir, token) == "line speaker":  # and transcript.md, made from it
+        with _PROJECTS_LOCK:
+            ids = _undo_own_file(output_dir, token)
+            for meeting_id in ids:
+                paths = RecordingPaths(output_dir / meeting_id)
+                if paths.system_turns.exists() and paths.transcript_json.exists() and paths.meta.exists():
+                    save_speaker_names(paths, load_speaker_names(paths), learn=False)
+        return ids
     imported = undo.created_ids(output_dir, token) if undo.label(output_dir, token) == "import" else []
     with _PROJECTS_LOCK, _GLOSSARY_LOCK:
         glossary_back = glossary._default_path() in undo.stores(output_dir, token)
@@ -1094,6 +1116,79 @@ def edit_line(output_dir: Path, meeting_id: str, *, start: float, text: str | No
     tmp.write_text(json.dumps(lines, indent=2, ensure_ascii=False))
     tmp.replace(paths.transcript_json)
     _rerender(output_dir, [meeting_id])
+
+
+def set_line_speaker(output_dir: Path, meeting_id: str, *, start: float, to: Any, user_name: str,
+                     track: str | None = None) -> str:
+    """Who said one transcript line, found by when it starts and its track
+    ("mic" or "others"; either, when not given) (#12): another
+    voice (``{"label": …}``), a person without a voice of their own
+    (``{"name": …}``), the user (``{"me": true}``), or None: the voice it was
+    heard as. Returns the undo token."""
+    paths = meeting_paths(output_dir, meeting_id)
+    if _status(paths) != "ready":
+        raise Refused("A line's speaker can be corrected once the meeting is transcribed.")
+    if track not in (None, "mic", "others"):
+        raise ValueError("'track' is \"mic\" or \"others\"")
+    found = [u for u in _utterances(paths) if abs(u.start - start) < 0.01 and track in (None, line_track(u))]
+    if not found:
+        raise NotFound(f"{meeting_id} at {start}")
+    if len(found) > 1:
+        raise ValueError("lines on both tracks start then: say which ('track')")
+    line = found[0]
+    # Names and voices change under this lock (naming, Not Tom): transcript.md is written from them.
+    with _PROJECTS_LOCK:
+        target = _line_target(paths, to, user_name)
+        merges = load_merges(paths)
+        heard = None if is_mic_line(line) else merges.get(line.label or line.speaker, line.label or line.speaker)
+        if target is not None and (target.get("me") and heard is None or "label" in target and heard is not None
+                                   and merges.get(target["label"], target["label"]) == heard):
+            target = None  # the voice it was heard as: nothing to correct
+        with _undoable(output_dir, "line speaker", stores=[paths.speakers_lines]) as token:
+            save_line_speaker(paths, line, target)
+            save_speaker_names(paths, load_speaker_names(paths), learn=False)  # transcript.md
+            undo.note(output_dir, token, {"meeting": meeting_id})
+    return token
+
+
+def _line_target(paths: RecordingPaths, to: Any, user_name: str) -> dict[str, Any] | None:
+    """``to`` as speakers_lines.json keeps it; a name a voice of the meeting
+    has is that voice, the user's own name is the user."""
+    if to is None:
+        return None
+    if not isinstance(to, dict) or len(to) != 1:
+        raise ValueError("'to' is {\"label\": …}, {\"name\": …}, {\"me\": true} or null")
+    if "me" in to:
+        if to["me"] is not True:
+            raise ValueError("'me' is true")
+        return {"me": True, "name": user_name}
+    merges, ignored = load_merges(paths), load_ignored(paths)
+
+    def removed(label: str) -> None:
+        if merges.get(label, label) in ignored:
+            raise Refused(f"{_label_display(merges.get(label, label))} was removed as not a speaker. "
+                          "Restore it first to give it lines.")
+
+    if "label" in to:
+        label = str(to["label"])
+        if label not in {d["speaker"] for d in _read_json(paths.system_turns, [])}:
+            raise NotFound(label)
+        removed(label)
+        return {"label": label}
+    if "name" in to:
+        name = " ".join(str(to["name"]).split())
+        if not name:
+            raise ValueError("a name is needed")
+        if len(name) > 200:
+            raise ValueError("that name is too long")
+        if user_name and name.casefold() == user_name.casefold():
+            return {"me": True, "name": user_name}
+        for label, known in sorted(names_in_effect(paths).items()):
+            if label not in merges and known.casefold() == name.casefold():
+                removed(label)
+                return {"label": label}
+        return {"name": name}
+    raise ValueError("'to' is {\"label\": …}, {\"name\": …}, {\"me\": true} or null")
 
 
 def trash_meeting(output_dir: Path, meeting_id: str, *, user_name: str) -> str:
@@ -2203,8 +2298,8 @@ def _rerender(output_dir: Path, meetings: list[str]) -> None:
         meta = _read_json(paths.meta, {})
         if meta.get("start_time") and meta.get("duration_seconds") is not None and paths.transcript_md.exists():
             paths.transcript_md.write_text(render_markdown(
-                _utterances(paths), datetime.fromisoformat(meta["start_time"]), float(meta["duration_seconds"]),
-                meta.get("gaps")))
+                shared_mic.shown(paths, without_ignored(paths, _utterances(paths))),
+                datetime.fromisoformat(meta["start_time"]), float(meta["duration_seconds"]), meta.get("gaps")))
 
 
 def _respelled(before: glossary.Glossary, after: glossary.Glossary, text: str) -> int:

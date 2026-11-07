@@ -816,3 +816,70 @@ def test_analyze_reports_levels(tmp_path, monkeypatch, capsys):
     assert cli.main(["onboarding", "analyze", str(mic), "--system", str(system), "--checks"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert [c["name"] for c in out["checks"]] == ["Microphone", "System audio"]
+
+
+# --- #8: only what Palaver loads, at one revision -----------------------------------------------------
+
+def test_the_notes_model_download_takes_only_the_files_mlx_loads(monkeypatch):
+    """The helper process asks Hugging Face for the files mlx_lm reads (not the
+    README or Gemma's vision sidecar) at the pinned revision, so the notes run
+    later finds exactly that snapshot and downloads nothing more."""
+    import sys
+    import types
+
+    from palaver import notes
+
+    calls = []
+    hub = types.ModuleType("huggingface_hub")
+    hub.snapshot_download = lambda repo, **kw: calls.append((repo, kw))
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+    monkeypatch.setenv("HF_TOKEN", "t0k")
+    assert ob._main(["download", "gemma", ob.GEMMA]) == 0
+    (repo, kw), = calls
+    assert repo == ob.GEMMA and kw["token"] == "t0k"
+    assert kw["revision"] == notes.MODEL_REVISIONS[ob.GEMMA]
+    assert tuple(kw["allow_patterns"]) == notes.MODEL_FILES
+
+
+def test_the_model_files_are_mlx_lms_own():
+    """mlx_lm downloads (and checks) these patterns itself: the same list, or a
+    notes run would fetch what the setup assistant left out."""
+    utils = pytest.importorskip("mlx_lm.utils")
+    from palaver import notes
+
+    assert tuple(utils.DEFAULT_ALLOW_PATTERNS) == notes.MODEL_FILES
+
+
+def test_every_offered_notes_model_is_pinned():
+    from palaver import notes
+
+    for repo in ob.NOTES_MODELS:
+        assert len(notes.MODEL_REVISIONS[repo]) == 40
+
+
+def test_the_download_helper_keeps_no_xet_chunk_cache(monkeypatch):
+    """hf_xet may keep a chunk cache of up to 10 GB next to the models: off for
+    Palaver's downloads, unless the user set it."""
+    import subprocess
+
+    from palaver import config
+
+    seen = []
+    monkeypatch.setattr(config, "load_config", lambda: (_ for _ in ()).throw(OSError()))
+    monkeypatch.delenv("HF_XET_CHUNK_CACHE_SIZE_BYTES", raising=False)
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: seen.append(kw["env"]) or
+                        subprocess.CompletedProcess(cmd, 0, "", ""))
+    ob._fetch(ob.MODELS["gemma"], ob.GEMMA)
+    assert seen[-1]["HF_XET_CHUNK_CACHE_SIZE_BYTES"] == "0"
+    monkeypatch.setenv("HF_XET_CHUNK_CACHE_SIZE_BYTES", "123")
+    ob._fetch(ob.MODELS["gemma"], ob.GEMMA)
+    assert seen[-1]["HF_XET_CHUNK_CACHE_SIZE_BYTES"] == "123"
+
+
+def test_download_progress_counts_in_the_units_of_the_model_size():
+    """disk_gb is in GiB (as free disk and Settings → Storage): progress too, so
+    a download isn't shown complete before its last 7 %."""
+    gib = 1024**3
+    d = ob.Downloads(fetch=lambda m: None, progress=lambda repo: 4 * gib, done=lambda m: True)
+    d._jobs["gemma"] = {"state": "downloading", "error": None}
+    assert d.status()["models"][0]["done_gb"] == 4.0

@@ -126,6 +126,19 @@ def test_a_provider_card_saves_its_key_with_one_save(page, app_server, fake_keyc
     assert "soniox-key" in fake_keychain.values()
 
 
+def test_the_live_coach_settings_say_where_nudges_show(page, app_server):
+    """#19: nudges come as notifications (a switch, on by default), not next to the clock."""
+    goto(page, app_server, "#/settings/recording")
+    card = page.locator(".settings-card", has=page.get_by_role("switch", name="Long monologues (3 minutes and more)"))
+    expect(card).to_contain_text("as a notification")
+    expect(card).not_to_contain_text("next to the clock")
+    switch = page.get_by_role("switch", name="Show nudges as notifications")
+    expect(switch).to_be_checked()
+    page.locator("label.switch-row", has_text="Show nudges as notifications").click()
+    expect(switch).not_to_be_checked()
+    assert app_server.api("/api/settings")["nudge_notify"] is False
+
+
 def test_settings_say_how_palaver_updates_and_uninstalling_asks_first(page, app_server):
     """#60: a checkout has no updates; "Uninstall Palaver…" asks, and Cancel
     changes nothing."""

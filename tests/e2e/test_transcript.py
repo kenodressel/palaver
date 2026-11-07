@@ -33,7 +33,7 @@ def test_the_line_menu(page, shared_server):
     open_meeting(page, shared_server, A, tab="Transcript")
     line(page, 15).click(button="right", position={"x": 4, "y": 4})  # beside the words: a right-click selects one
     labels = page.locator(".menu .menu-label").all_text_contents()
-    assert labels == ["Play from here", "Edit", "Fix spelling", "Copy", "Split here"]
+    assert labels == ["Play from here", "Edit", "This line is…", "Fix spelling", "Copy", "Split here"]
     expect(menu_item(page, "Fix spelling")).to_be_disabled()  # nothing marked or selected in this line
     page.keyboard.press("Escape")
     line(page, 4).click(button="right")
@@ -47,7 +47,7 @@ def test_no_split_here_on_the_first_line(page, shared_server):
     expect(menu_item(page, "Split here")).to_have_count(0)
     page.keyboard.press("Escape")
     line(page, 0).hover()
-    expect(line(page, 0).locator(".line-tool")).to_have_count(4)
+    expect(line(page, 0).locator(".line-tool")).to_have_count(5)
     expect(line_tool(page, 0, "split")).to_have_count(0)
 
 

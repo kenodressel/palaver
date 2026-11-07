@@ -68,7 +68,8 @@ def test_meeting_has_clean_transcript_speakers_and_named_notes(tmp_path: Path):
     m = api.get_meeting(tmp_path, MEETING, user_name="Timo")
 
     assert m["transcript"][0] == {"speaker": "Timo", "label": None, "start": 0.0, "end": 1.0, "text": "Hi Rico welcome.",
-                                  "edited": False, "heard": None, "unsure": [], "glossed": []}
+                                  "edited": False, "heard": None, "unsure": [], "glossed": [], "fixed": None,
+                                  "track": "mic"}
     assert [s["label"] for s in m["speakers"]] == [None, "SPEAKER_00", "SPEAKER_01"]
     rico = m["speakers"][1]
     assert rico["name"] is None and rico["display"] == "Speaker 1" and rico["guesses"] == [{"name": "Rico", "evidence": "Hi Rico"}]
@@ -853,7 +854,7 @@ def test_set_settings_writes_only_what_changed(tmp_path: Path):
     assert api.set_settings({"record_teams": False}, no_slack) == {
         "realtime": False, "record_teams": False, "record_slack": False, "search_meaning": True,
         "live_processing": True, "nudge_talk_share": True, "nudge_monologue": True, "nudge_quiet_invitee": True,
-        "nudge_pace": False, "nudge_fillers": False, "check_updates": True}
+        "nudge_pace": False, "nudge_fillers": False, "nudge_notify": True, "check_updates": True}
     assert json.loads(settings.path().read_text()) == {"realtime": False, "future": 1, "record_teams": False}
     settings.path().write_text("[broken")
     api.set_settings({"record_slack": True}, no_slack)

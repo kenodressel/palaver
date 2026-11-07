@@ -48,6 +48,13 @@ public final class Settings: @unchecked Sendable {
     public var nudgePace: Bool { bool("nudge_pace", false) }
     public var nudgeFillers: Bool { bool("nudge_fillers", false) }
 
+    /// The setup assistant was finished or skipped (the window's finish_setup writes
+    /// `"setup": {"done"|"skipped": <time>, "hardware": …}`).
+    public var setupFinished: Bool {
+        guard let setup = data()["setup"] as? [String: Any] else { return false }
+        return setup["done"] is String || setup["skipped"] is String
+    }
+
     /// How long a transcribed meeting keeps its audio, in days; 0: always.
     public var audioDays: Int {
         if let n = data()["audio_days"] as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(),

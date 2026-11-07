@@ -102,10 +102,19 @@ class Utterance:
     # Where the glossary respelled ``text`` for showing it: (start, end, the
     # variant heard). Worked out by ``readable``, never stored.
     glossed: tuple[tuple[int, int, str], ...] = ()
+    # Who the user said said this line, when it is a person without a voice
+    # of their own (speakers_lines.json, #12): it is no microphone line then,
+    # though it has no label. Worked out when the transcript is read, never stored.
+    said_by: str | None = None
+    # A corrected line's track and voice as heard: ("mic", None) or
+    # ("others", label) (#12). Worked out when the transcript is read, never stored.
+    heard_as: tuple[str, str | None] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         del d["glossed"]
+        del d["said_by"]
+        del d["heard_as"]
         for key in ("label", "heard"):
             if d[key] is None:
                 del d[key]

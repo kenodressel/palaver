@@ -505,6 +505,9 @@ h1 {
   border-width: 5px 0 5px 8px;
   border-color: transparent transparent transparent currentColor;
 }
+/* While its sample plays (#22): a square stop. */
+.voice-play.playing { background: var(--c, var(--ink-2)); color: var(--on-color); }
+.mini-stop { display: inline-block; width: 8px; height: 8px; background: currentColor; border-radius: 1px; }
 
 .track { position: relative; height: 20px; cursor: pointer; }
 .track::before {
@@ -791,6 +794,12 @@ button.mn-time:hover, button.mn-time:focus-visible { background: var(--selected)
 .speaker { display: block; color: color-mix(in srgb, var(--c) 80%, var(--ink)); font-weight: 650; font-size: 13px; }
 .speaker .org { color: var(--ink-3); font-weight: 500; }
 .said { max-width: 72ch; }
+/* A line's speaker, to say who it really was (#12); the line being asked about. */
+.speaker.choosable { width: fit-content; border-radius: 4px; cursor: pointer; }
+.speaker.choosable:hover { text-decoration: underline; text-underline-offset: 2px; }
+.speaker.choosable:focus { outline: none; }
+.speaker.choosable:focus-visible { box-shadow: 0 0 0 2px var(--focus); }
+.turn.line-asking { background: var(--hover); }
 /* The live stream's tail: the other side's draft is not settled yet, so it is grey and slanted. */
 .stream-tail .turn { cursor: default; }
 .stream-tail .turn:hover { background: none; }
@@ -1443,6 +1452,7 @@ button.variant.drop:hover .x, button.variant.drop:focus-visible .x { color: var(
 .menu-label { flex: 1; min-width: 0; }
 .menu kbd { margin-left: auto; padding-left: 16px; color: var(--ink-3); font: 12px var(--sans); }
 .menu:focus { outline: none; }
+.menu-title { padding: 4px 12px 6px; color: var(--ink-3); font-size: 12px; }
 .menu hr { border: 0; border-top: 1px solid var(--rule); margin: 4px 4px; }
 @keyframes menu-in { from { opacity: 0; transform: scale(0.96); } }
 

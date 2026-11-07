@@ -205,6 +205,24 @@ final class PalaverApp: NSObject, NSApplicationDelegate {
         app.run()
     }
 
+    // MARK: opening
+
+    /// The first start opens the window with the setup assistant (#20), once; later starts (at
+    /// login, after an update, after closing it mid-setup) stay in the menu bar.
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        guard StartWindow.claimAtStart(settings: settings, outputDir: config.outputDir,
+                                       marker: setup.paths.windowOfferedMarker) else { return }
+        setup.log.info("setup is not finished: opening the window")
+        openWindow(nil, lookForUpdate: false)
+    }
+
+    /// Opened again from the Finder, Launchpad, Spotlight or the Dock while it runs: the window
+    /// comes to the front instead of nothing happening (#20), restored when it was minimized.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        openWindow(nil)  // as the menu's Open Meetings: the page stays where it was
+        return false
+    }
+
     // MARK: quitting
 
     /// The menu's Quit and ⌘Q: "by_you" (processed now); a signal or an update: "restart".
@@ -262,6 +280,7 @@ final class PalaverApp: NSObject, NSApplicationDelegate {
         let levels = (core.daemon.levels?.readings ?? []).map { (label: $0.label, db: $0.db, silentFor: $0.silentFor) }
         menu?.refresh(MenuSnapshot(status: status, levels: levels, now: Date(), progress: progress,
                                    update: extras.updates.status()))
+        window.showRecording(title: MenuText.windowTitle(status), badge: MenuText.dockBadge(status))
         if let said = extras.updates.pendingNotification() { notify(said.title, said.body, said.meeting) }
     }
 

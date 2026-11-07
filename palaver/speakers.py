@@ -5,13 +5,27 @@
 speakers, ``merge_speakers`` folds one label into another
 (``speakers_merged.json``): it shows and is named as the other from then on.
 ``process`` applies both, so names and merges survive reprocessing.
+
+A single line diarization gave to the wrong voice ("Speaker 2" holds two
+people) is said to be someone else's in ``speakers_lines.json``: a list of
+``{"start", "end", "from", ...}`` where ``from`` is the voice it was heard
+as (None: the user's microphone) and the rest says who said it: another
+voice (``"label"``), a person without a voice of their own (``"name"``) or
+the user (``"me": true`` and the user's name then). It is applied whenever
+the transcript is shown, searched, summarized or exported, never written
+into ``transcript.json``; a line is found by its time, so the correction
+stays when the meeting is processed again. Kept as heard, so the voices
+can later learn from it.
 """
 
 from __future__ import annotations
 
 import json
+import os
+import re
 import subprocess
 import tempfile
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -42,7 +56,7 @@ def apply_speaker_names(
         name = names.get(label)
         out.append(
             Utterance(name or label, u.start, u.end, u.text, label=label if name else None, heard=u.heard,
-                      unsure=u.unsure)
+                      unsure=u.unsure, said_by=u.said_by, heard_as=u.heard_as)
         )
     return out
 
@@ -101,7 +115,10 @@ def set_unknown(paths: RecordingPaths, label: str, unknown: bool = True) -> None
 
 
 def without_ignored(paths: RecordingPaths, utterances: list[Utterance]) -> list[Utterance]:
-    """``utterances`` without the lines of removed voices."""
+    """``utterances`` as the user corrected them: single lines with the
+    speaker they were said to be (speakers_lines.json), then without the
+    lines of removed voices."""
+    utterances = with_line_speakers(paths, utterances)
     ignored = load_ignored(paths)
     if not ignored:
         return utterances
@@ -306,11 +323,7 @@ def save_speaker_names(
     enrolled = _remember_voices(paths, {label: n for label, n in names.items()
                                         if label not in merges and label not in ignored and label not in shared},
                                 talk_seconds(turns), bank or VoiceBank()) if learn else 0
-    effective = load_inferred_names(paths)
-    effective.update({label: name for label, (name, _) in load_recognized_names(paths).items()})
-    effective.update(names)
-    effective = follow_merges(effective, merges)
-    effective.update(shared)
+    effective = transcript_names(paths, names)
     utterances = [Utterance.from_dict(d) for d in json.loads(paths.transcript_json.read_text())]
     renamed = apply_speaker_names(utterances, effective)
     paths.transcript_json.write_text(json.dumps([u.to_dict() for u in renamed], indent=2))
@@ -324,6 +337,18 @@ def save_speaker_names(
         )
     )
     return enrolled
+
+
+def transcript_names(paths: RecordingPaths, names: dict[str, str] | None = None) -> dict[str, str]:
+    """label → the name transcript.json gives its lines: inferred, recognized
+    by voice, given by hand (``names``, else speakers.json), merged labels
+    as their person, rooms as the room (#56)."""
+    effective = load_inferred_names(paths)
+    effective.update({label: name for label, (name, _) in load_recognized_names(paths).items()})
+    effective.update(load_speaker_names(paths) if names is None else names)
+    effective = follow_merges(effective, load_merges(paths))
+    effective.update(shared_mic.display(paths))
+    return effective
 
 
 def _remember_voices(
@@ -410,3 +435,117 @@ def adopt_live_names(paths: RecordingPaths) -> dict[str, str]:
         paths.speakers.write_text(json.dumps({**names, **adopted}, indent=2, ensure_ascii=False))
     paths.speakers_live.unlink(missing_ok=True)
     return adopted
+
+
+# --- the speaker of single lines (#12) ------------------------------------------
+
+_DIARIZED = re.compile(r"SPEAKER_\d+")
+# A correction is a line's when it covers at least this much of it.
+LINE_COVERED = 0.5
+
+
+def is_mic_line(u: Utterance) -> bool:
+    """A line of the user's microphone, as transcript.json has it: no
+    diarization label, named or not, and not a line said to be a person's (#12)."""
+    return u.label is None and u.said_by is None and not _DIARIZED.fullmatch(u.speaker)
+
+
+def load_line_speakers(paths: RecordingPaths) -> list[dict]:
+    """The corrections of single lines, by time."""
+    try:
+        data = json.loads(paths.speakers_lines.read_text())
+    except (OSError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    number = (int, float)
+    return [d for d in data if isinstance(d, dict) and isinstance(d.get("start"), number)
+            and isinstance(d.get("end"), number) and not isinstance(d.get("start"), bool)]
+
+
+def _save_line_speakers(paths: RecordingPaths, fixes: list[dict]) -> None:
+    if not fixes:
+        paths.speakers_lines.unlink(missing_ok=True)
+        return
+    tmp = paths.speakers_lines.with_name(paths.speakers_lines.name + ".tmp")
+    tmp.write_text(json.dumps(sorted(fixes, key=lambda d: (d["start"], d["end"])), indent=2, ensure_ascii=False))
+    os.replace(tmp, paths.speakers_lines)
+
+
+def line_track(u: Utterance) -> str:
+    """"mic" or "others": the track a line of transcript.json is on."""
+    return "mic" if is_mic_line(u) else "others"
+
+
+def line_fix(u: Utterance, fixes: list[dict]) -> dict | None:
+    """The correction of line ``u``: one of its track (the microphone, or the
+    others) covering most of it; transcribed again, a line's times move a
+    little and its voice may get another label."""
+    mic = is_mic_line(u)
+    length = max(u.end - u.start, 0.0)
+    best, covered = None, 0.0
+    for f in fixes:
+        if (f.get("from") is None) != mic:
+            continue
+        if abs(f["start"] - u.start) < 0.01 and abs(f["end"] - u.end) < 0.01:
+            return f
+        overlap = min(u.end, f["end"]) - max(u.start, f["start"])
+        if length == 0.0:
+            overlap = 1.0 if f["start"] <= u.start <= f["end"] else 0.0
+            length = 1.0
+        if overlap >= LINE_COVERED * length and overlap > covered:
+            best, covered = f, overlap
+    return best
+
+
+def _said_by(u: Utterance, fix: dict, names: dict[str, str], me: str | None) -> Utterance:
+    if fix.get("me"):
+        return replace(u, speaker=me or str(fix.get("name") or "Me"), label=None)
+    label = fix.get("label")
+    if isinstance(label, str):
+        name = names.get(label)
+        return replace(u, speaker=name, label=label) if name else replace(u, speaker=label, label=None)
+    name = str(fix.get("name") or "").strip()
+    return replace(u, speaker=name, label=None, said_by=name) if name else u
+
+
+def corrected_lines(utterances: list[Utterance], fixes: list[dict], names: dict[str, str],
+                    me: str | None = None) -> list[Utterance]:
+    """``utterances`` (as transcript.json has them) with each corrected line
+    said by whom the user said: a voice as its name in ``names`` (label →
+    name), a person by name, the user as ``me`` (by default the name on the
+    microphone's lines)."""
+    if not fixes:
+        return utterances
+    if me is None:
+        me = next((u.speaker for u in utterances if is_mic_line(u)), None)
+    out = []
+    for u in utterances:
+        fix = line_fix(u, fixes)
+        if fix is None:
+            out.append(u)
+        else:
+            heard_as = ("mic", None) if is_mic_line(u) else ("others", u.label or u.speaker)
+            out.append(replace(_said_by(u, fix, names, me), heard_as=heard_as))
+    return out
+
+
+def with_line_speakers(paths: RecordingPaths, utterances: list[Utterance]) -> list[Utterance]:
+    """``utterances`` with the corrections of speakers_lines.json."""
+    fixes = load_line_speakers(paths)
+    if not fixes:
+        return utterances
+    return corrected_lines(utterances, fixes, transcript_names(paths))
+
+
+def set_line_speaker(paths: RecordingPaths, line: Utterance, to: dict | None) -> None:
+    """Say who said ``line`` (as transcript.json has it): ``{"label": …}``,
+    ``{"name": …}`` or ``{"me": True, "name": …}``; None: the voice it was
+    heard as. One correction per line: a new one replaces the old."""
+    fixes = load_line_speakers(paths)
+    current = line_fix(line, fixes)
+    fixes = [f for f in fixes if f is not current]
+    if to is not None:
+        fixes.append({"start": round(line.start, 3), "end": round(line.end, 3),
+                      "from": None if is_mic_line(line) else (line.label or line.speaker), **to})
+    _save_line_speakers(paths, fixes)

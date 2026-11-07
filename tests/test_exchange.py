@@ -141,6 +141,28 @@ def test_the_exporters_microphone_becomes_a_lane_named_after_them(exported):
     assert {"speaker": "SPEAKER_04", "start": 50.0, "end": 55.0} in turns
 
 
+def test_lines_said_to_be_someone_elses_travel_with_their_speaker(tmp_path):
+    """#12: a line given to a speaker, to a person without a voice of their
+    own, or to the exporter goes out as theirs."""
+    paths = make_meeting(tmp_path)
+    paths.speakers_lines.write_text(json.dumps([
+        {"start": 0.0, "end": 2.0, "from": None, "label": "SPEAKER_00"},
+        {"start": 21.0, "end": 40.0, "from": "SPEAKER_01", "name": "Timo Strauß"},
+        {"start": 41.0, "end": 44.0, "from": "SPEAKER_02", "me": True, "name": "Anna Berg"},
+    ]))
+    exported = export(paths, tmp_path / "out.zip")
+    transcript = doc(exported, "meeting/transcript.json")
+    assert [(t["start"], t["label"], t["speaker"]) for t in transcript] == [
+        (0.0, "SPEAKER_00", "Tom"), (2.0, "SPEAKER_00", "Tom"), (21.0, "SPEAKER_05", "Timo Strauß"),
+        (41.0, "SPEAKER_04", "Anna Berg"), (50.0, "SPEAKER_04", "Anna Berg")]
+    speakers = {s["label"]: s for s in doc(exported, "meeting/speakers.json")}
+    assert speakers["SPEAKER_05"] == {"label": "SPEAKER_05", "name": "Timo Strauß", "how": "hand"}
+    turns = doc(exported, "meeting/turns.json")
+    assert {"speaker": "SPEAKER_05", "start": 21.0, "end": 40.0} in turns
+    assert {"speaker": "SPEAKER_04", "start": 41.0, "end": 44.0} in turns
+    assert "speakers_lines" not in " ".join(names_in(exported))  # applied, not sent along
+
+
 def test_own_notes_coach_review_and_indexes_never_leave(exported):
     with zipfile.ZipFile(exported) as zf:
         everything = b"".join(zf.read(n) for n in zf.namelist())

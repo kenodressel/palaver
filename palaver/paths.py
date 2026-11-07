@@ -154,6 +154,12 @@ class RecordingPaths:
         return self.folder / "speakers_merged.json"
 
     @property
+    def speakers_lines(self) -> Path:
+        """Single lines said to be someone else's (#12): start, end, the
+        voice they were heard as, and who said them."""
+        return self.folder / "speakers_lines.json"
+
+    @property
     def speakers_shared(self) -> Path:
         """Voices that can't be told apart: the whole meeting, or lanes that
         are a room of several people (#56)."""
