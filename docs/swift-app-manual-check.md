@@ -146,3 +146,32 @@ one meeting.
 5. Voice samples (#22): on a meeting with unnamed speakers, click a voice's
    ▶. It turns into a stop button; a click, Escape, or another voice's ▶
    stops it.
+
+## 9. palaver-server and palaver-worker (phase 3, Task 67)
+
+Only when `palaver daemon status` says idle (no recording, nothing
+transcribing). The installed Palaver must be quit first: two apps never run
+at once.
+
+1. From the checkout (development build): `make app-swift server worker`,
+   then start `native/.build/release/Palaver` from a terminal. A left-click
+   on the icon opens the window with your meetings.
+   - `pgrep -fl palaver-server` shows one process with
+     `--listen-fd … --ready-fd … --app-socket … --python … --static …/palaver/webapp/static`;
+     `pgrep -fl webapp-serve` shows none.
+   - `palaver app restart-web` reloads the window in place, with a new
+     palaver-server pid.
+2. In the installed release (after section 0): the same, with
+   `Contents/MacOS/palaver-server` and `--static
+   …/Contents/Resources/python/palaver/webapp/static`.
+3. After a recording, `pgrep -fl palaver-worker` shows the `live`, `stream`
+   and `coach` workers during the call and `process <folder> --no-notes` (or
+   `run`) after it; `notes` is still `palaver-python -m palaver notes`.
+   The meeting's `session.log` has `process_start` with `"swift": true`. The menu's memory line counts the worker (and a
+   `cloud-transcribe` helper under it, when a cloud service is chosen).
+4. The fallback: `touch ~/Library/Application\ Support/palaver/legacy-server`,
+   quit and open Palaver. `app.log` says "the window's server and the workers
+   run in Python …"; `pgrep -fl webapp-serve` shows the Python server and the
+   next recording runs `palaver-python -m palaver process`. Remove the file
+   and restart: back on palaver-server and palaver-worker. Also try
+   `PALAVER_LEGACY_SERVER=1 ~/Applications/Palaver.app/Contents/MacOS/Palaver`.

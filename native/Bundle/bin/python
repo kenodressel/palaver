@@ -1,0 +1,26 @@
+#!/bin/sh
+# Palaver.app/Contents/Resources/bin/python, for one release (0.6): Palaver has no Python any more. Claude Code's and
+# Claude Desktop's MCP entries of older versions start `bin/python -m palaver [options] mcp`; this starts the Swift
+# server in its place, `bin/palaver [options] mcp`. The app rewrites those entries at every start (McpSetup.migrate),
+# so this covers only one it has not reached yet. Anything else is refused. A later release removes this file.
+here=$(dirname "$(readlink -f "$0")")
+
+# The global options of an old entry, then `mcp` last.
+mcp_args() {
+  while [ $# -gt 1 ]; do
+    case $1 in
+      --config | --dictionary) [ $# -gt 2 ] || return 1; shift 2 ;;
+      --config=* | --dictionary=* | --no-notify) shift ;;
+      *) return 1 ;;
+    esac
+  done
+  [ "$1" = mcp ]
+}
+
+if [ "$1" = -m ] && [ "$2" = palaver ]; then
+  shift 2
+  if mcp_args "$@"; then exec "$here/palaver" "$@"; fi
+fi
+echo "Palaver no longer includes Python: $0 only starts Claude's MCP server (-m palaver [--config FILE] mcp)." >&2
+echo "Use $here/palaver instead." >&2
+exit 2

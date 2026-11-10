@@ -1,6 +1,6 @@
 // tests/test_updater.py's state-machine tests (the Updater class and menubar.update_busy), against the Swift
-// `Updates` with the Python commands faked. The disk half of test_updater.py (staging, unpacking, swap.sh,
-// runtimes) stays Python: tests/test_updater.py and tests/test_app_update.py.
+// `Updates` with its backend faked. The disk half (staging, unpacking, swap.sh, uninstall, the old runtime's
+// cleanup) is UpdaterTests.swift.
 import Foundation
 import Testing
 import PalaverCore

@@ -1,0 +1,41 @@
+{
+ "replacements": {
+  "kay pee eye": "KPI",
+  "kay pee": "KP",
+  "oh kay are": "OKR",
+  "strasse": "Straße",
+  "ÄH": "",
+  "a.b": "a\\\\b",
+  "x": "[\\g<0>]"
+ },
+ "cases": [
+  [
+   "Our Kay Pee Eye is great, Kay Pee too",
+   "Our KPI is great, KP too"
+  ],
+  [
+   "OH KAY ARE and oh kay are",
+   "OKR and OKR"
+  ],
+  [
+   "Straße, STRASSE, strasse",
+   "Straße, Straße, Straße"
+  ],
+  [
+   "äh, Äh und ÄH",
+   ",  und "
+  ],
+  [
+   "a.b but not axb; x marks the spot",
+   "a\\b but not a[x]b; [x] marks the spot"
+  ],
+  [
+   "nothing to replace here",
+   "nothing to replace here"
+  ],
+  [
+   "",
+   ""
+  ]
+ ]
+}

@@ -11,74 +11,8 @@ import Darwin
 import Foundation
 import PalaverCore
 
-public enum MemoryRules {
-    public static let gb = 1_073_741_824.0
-    /// A worker must stay over its budget this long, and this many samples, before it is acted on.
-    public static let overSeconds = 10.0
-    public static let overSamples = 3
-    public static let maxRestarts = 2
-    public static let maxRequeues = 2
-    /// The Mac is low on memory below this much free: only then are notes, `process` and the index stopped.
-    public static let pressureGB = 1.5
-    public static let tries = maxRequeues + 1
-    public static let defaultLiveGB = 2.0
-    public static let defaultStreamGB = 1.5
-    public static let defaultProcessGB = 4.0
-    public static let defaultNotesGB = 14.0
-    public static let defaultIndexGB = 1.0
-    /// Notes written by a cloud model: the model runs elsewhere.
-    public static let cloudNotesGB = 2.0
-    public static let labels: [String: String] = [
-        "live": "Live transcription", "stream": "Realtime transcription", "process": "Transcription",
-        "notes": "Notes", "index": "Search index", "question": "Best next question"]
-    /// The index worker is about no one meeting.
-    public static let indexFolder = "search index"
-}
-
-// MARK: - budgets
-
-/// GB of phys_footprint each kind of worker may use.
-public struct MemoryBudgets: Equatable, Sendable {
-    public var live = MemoryRules.defaultLiveGB
-    public var stream = MemoryRules.defaultStreamGB
-    public var process = MemoryRules.defaultProcessGB
-    public var notes = MemoryRules.defaultNotesGB
-    public var index = MemoryRules.defaultIndexGB
-
-    public init() {}
-
-    /// `[memory]` of config.toml (Config.memory: `live_gb` ... in GB); `notes` is what the notes
-    /// model needs (`budgets_for`: 0 for a cloud model → 2 GB), used unless `notes_gb` is set.
-    public init(config: [String: Double], notes need: Double? = nil) {
-        if let need { notes = need > 0 ? need : MemoryRules.cloudNotesGB }
-        for (key, value) in config where value > 0 {
-            switch key {
-            case "live_gb": live = value
-            case "stream_gb": stream = value
-            case "process_gb": process = value
-            case "notes_gb": notes = value
-            case "index_gb": index = value
-            default: break
-            }
-        }
-    }
-
-    /// The best next question (#41) runs the notes' model: the notes' budget.
-    public func of(_ kind: String) -> Double {
-        switch kind {
-        case "live": return live
-        case "stream": return stream
-        case "process": return process
-        case "index": return index
-        default: return notes
-        }
-    }
-
-    var json: JSONValue {
-        .object([("live", .double(live)), ("stream", .double(stream)), ("process", .double(process)),
-                 ("notes", .double(notes)), ("index", .double(index))])
-    }
-}
+// `MemoryRules` and `MemoryBudgets` are in PalaverCore (MemoryBudgets.swift): `palaver doctor` and the problem report
+// read them too.
 
 /// The budgets that depend on the meeting (`budget_hook`): the notes' follows the model chosen for
 /// it (unless `notes_gb` is set); with the Notion upload on, `run` writes the notes too, so its
@@ -133,12 +67,7 @@ public enum MemoryMeasure {
     }
 
     /// "5.4 GB", "12 GB", "317 MB", "—".
-    public static func sizeText(_ used: Double?) -> String {
-        guard let used else { return "—" }
-        if used < MemoryRules.gb { return String(format: "%.0f MB", used / 1_048_576) }
-        let gb = used / MemoryRules.gb
-        return gb >= 10 || abs(gb - gb.rounded()) < 0.05 ? String(format: "%.0f GB", gb) : String(format: "%.1f GB", gb)
-    }
+    public static func sizeText(_ used: Double?) -> String { MemoryRules.sizeText(used) }
 
     /// "Palaver 5.4 GB", for the recording status line.
     public static func costText(total: Int?) -> String? { total.map { "Palaver \(sizeText(Double($0)))" } }

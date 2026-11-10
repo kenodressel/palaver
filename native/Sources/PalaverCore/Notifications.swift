@@ -1,6 +1,8 @@
 // Notifications: the notify socket and the permission state file, as the ObjC launcher did
 // (app_bundle.py). Processes under the app find the socket through $PALAVER_NOTIFY and send one
-// datagram JSON {title, message, open}; palaver/notify.py speaks exactly that. The state file
+// datagram JSON {title, message, open}; palaver/notify.py speaks exactly that. palaver-worker's
+// live coach adds `quiet: true` (no sound, not lighting up the screen) and `expires` (seconds, then
+// the notification is taken away again) for its nudges (#19). The state file
 // ($PALAVER_NOTIFY_STATE) says allowed|denied|not_asked, refreshed every 10 s.
 // A click is handled in-process: the opener gets the meeting id/route (no PALAVER_LAUNCHER_FD).
 // No AppKit here: the center, the opener and the osascript fallback are injected.
@@ -14,9 +16,18 @@ public enum NotifyPermission: String, Sendable {
 /// What UNUserNotificationCenter offers, as far as Palaver needs it. The real adapter lives in the
 /// app target; tests use a fake.
 public protocol NotificationCenterLike: AnyObject, Sendable {
-    func post(title: String, body: String, userInfo: [String: String], completion: @escaping @Sendable (Error?) -> Void)
+    /// `quiet`: passive, never a sound; `expires`: removed from Notification Center after that many seconds.
+    func post(title: String, body: String, userInfo: [String: String], quiet: Bool, expires: Double?,
+              completion: @escaping @Sendable (Error?) -> Void)
     func authorizationStatus(completion: @escaping @Sendable (NotifyPermission) -> Void)
     func requestAuthorization(completion: @escaping @Sendable (Bool) -> Void)
+}
+
+extension NotificationCenterLike {
+    /// An ordinary notification: not quiet, never taken away.
+    public func post(title: String, body: String, userInfo: [String: String], completion: @escaping @Sendable (Error?) -> Void) {
+        post(title: title, body: body, userInfo: userInfo, quiet: false, expires: nil, completion: completion)
+    }
 }
 
 public final class Notifications: @unchecked Sendable {
@@ -106,13 +117,19 @@ public final class Notifications: @unchecked Sendable {
         return true
     }
 
-    /// One datagram: JSON {title, message, open}. Anything else is ignored.
+    /// One datagram: JSON {title, message, open}, optionally `quiet` (a bool) and `expires` (seconds, a
+    /// positive number). Anything else is ignored.
     public func handleDatagram(_ data: Data) {
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         let title = (obj["title"] as? String) ?? ""
         let body = (obj["message"] as? String) ?? ""
         let open = (obj["open"] as? String) ?? ""
-        center.post(title: title, body: body, userInfo: ["open": open]) { [weak self] error in
+        // JSONSerialization makes NSNumber of true/false and of numbers alike: tell them apart.
+        func isBool(_ v: Any?) -> Bool { (v as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() } ?? false }
+        let quiet = isBool(obj["quiet"]) && (obj["quiet"] as? Bool) == true
+        var expires: Double?
+        if let n = obj["expires"] as? NSNumber, !isBool(n), n.doubleValue > 0, n.doubleValue.isFinite { expires = n.doubleValue }
+        center.post(title: title, body: body, userInfo: ["open": open], quiet: quiet, expires: expires) { [weak self] error in
             guard let self, let error else { return }
             // macOS doesn't let this app notify (a managed Mac may refuse every app it doesn't know):
             // said once in the log, then shown through osascript; better than none.

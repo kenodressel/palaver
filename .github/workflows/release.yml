@@ -57,14 +57,18 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: make models
 
+      - name: Metal toolchain (MLX's shaders in palaver-lm)
+        # make lm compiles them with xcodebuild; newer Xcodes ship the Metal compiler as a separate download.
+        run: xcrun --find metal >/dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
+
       - name: Build release assets
-        # The same recipe as on a Mac (#60): the app (with the wheel's code
-        # and the AEC library), the runtime (python-build-standalone + the
-        # lock), the models packed above, manifest.json, install.sh.
+        # The same recipe as on a Mac (#60): the app (the Swift programs,
+        # no Python), the placeholder runtime the updaters before 0.6 need,
+        # manifest.json, install.sh.
         run: make release
 
       - name: Smoke-install the assets
         # install.sh into a throwaway HOME under sandbox-exec, exactly as
-        # users run it; imports, pyannote without a token, two updates
-        # without the runtime.
+        # users run it; no Python anywhere, updates with install.sh and the
+        # Swift updater, and from 0.3.14 and 0.5.0rc6 with their own.
         run: make smoke-install

@@ -11,6 +11,10 @@ Needs PALAVER_EVAL_DIR with a local eval.json (never committed):
   diar_baseline_pyannote ({id: {confusion_pct, clusters, people}}),
   voice_meetings (ids).
 Writes $PALAVER_EVAL_DIR/engine-gate.md.
+
+`--worker PATH` (or env PALAVER_EVAL_WORKER): the same gate through `PATH engine-serve`, palaver-worker's
+in-process engine, with palaver-engine's reply shapes (`make eval-engine-worker`); it writes
+engine-gate-worker.md, so both runs' numbers stay side by side.
 """
 from __future__ import annotations
 
@@ -19,7 +23,9 @@ import difflib
 import json
 import os
 import re
+import stat
 import sys
+import tempfile
 import unicodedata
 from pathlib import Path
 
@@ -289,9 +295,32 @@ def run_gate(cfg: dict, engine, meetings_root: Path, log=lambda *_: None) -> tup
     return rows, passed
 
 
-def render(rows: list[str], passed: bool) -> str:
-    return "\n".join(["# Engine gate", "", f"Result: {'PASS' if passed else 'FAIL'}", "",
+def render(rows: list[str], passed: bool, title: str = "Engine gate") -> str:
+    return "\n".join([f"# {title}", "", f"Result: {'PASS' if passed else 'FAIL'}", "",
                       "| check | result | numbers |", "|---|---|---|", *rows, ""])
+
+
+def worker_engine(worker: Path, scratch: Path):
+    """palaver.engine.Engine over ``worker engine-serve``: a one-line launcher in ``scratch`` stands in for the
+    palaver-engine binary, so the same client (and its reply handling) talks to the worker."""
+    from palaver.engine import Engine
+
+    launcher = scratch / "palaver-engine"
+    launcher.write_text(f"#!/bin/sh\nexec {_sh_quote(str(worker))} engine-serve \"$@\"\n")
+    launcher.chmod(launcher.stat().st_mode | stat.S_IXUSR)
+    return Engine(path=launcher)
+
+
+def _sh_quote(text: str) -> str:
+    return "'" + text.replace("'", "'\\''") + "'"
+
+
+def _worker_from(argv: list[str], env) -> Path | None:
+    if "--worker" in argv:
+        i = argv.index("--worker")
+        if i + 1 < len(argv):
+            return Path(argv[i + 1]).expanduser()
+    return Path(env["PALAVER_EVAL_WORKER"]).expanduser() if env.get("PALAVER_EVAL_WORKER") else None
 
 
 def main(argv: list[str] | None = None, env=None) -> int:
@@ -302,21 +331,26 @@ def main(argv: list[str] | None = None, env=None) -> int:
         print("eval-engine needs PALAVER_EVAL_DIR: a folder with the local eval.json "
               "(gold clips, meeting ids, baselines). Not set up here.", file=sys.stderr)
         return 2
+    worker = _worker_from(list(argv or []), env)
+    if worker is not None and not worker.is_file():
+        print(f"--worker {worker}: no such file (make eval-engine-worker builds it)", file=sys.stderr)
+        return 2
     sys.path.insert(0, str(ROOT))
     from palaver.engine import Engine
 
     cfg = json.loads(cfg_path.read_text())
-    engine = Engine()
-    try:
-        rows, passed = run_gate(cfg, engine, Path.home() / "Meetings" / "Recordings",
-                                log=lambda m: print(m, file=sys.stderr, flush=True))
-    finally:
-        engine.close()
-    text = render(rows, passed)
-    (cfg_path.parent / "engine-gate.md").write_text(text)
+    with tempfile.TemporaryDirectory(prefix="eval-worker-") as scratch:
+        engine = worker_engine(worker, Path(scratch)) if worker is not None else Engine()
+        try:
+            rows, passed = run_gate(cfg, engine, Path.home() / "Meetings" / "Recordings",
+                                    log=lambda m: print(m, file=sys.stderr, flush=True))
+        finally:
+            engine.close()
+    text = render(rows, passed, "Engine gate (palaver-worker engine-serve)" if worker is not None else "Engine gate")
+    (cfg_path.parent / ("engine-gate-worker.md" if worker is not None else "engine-gate.md")).write_text(text)
     print(text)
     return 0 if passed else 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

@@ -6,6 +6,7 @@
 import AppKit
 import Foundation
 import PalaverCapture
+import PalaverCloud
 import PalaverCore
 import PalaverDaemon
 
@@ -32,7 +33,16 @@ struct AppSetup {
     let location: AppLocation
     let options: AppOptions
     let version: String
+    /// The developer's fallback Python (a checkout's .venv); LegacyServer.NO_PYTHON in a release, where the
+    /// programs below are never nil and nothing starts it.
     let python: String
+    /// palaver-server and palaver-worker; nil: Python's command (a development build's legacy-server fallback).
+    let server: String?
+    let worker: String?
+    /// palaver-lm (notes, projects); nil: Python's command (a development build's legacy-server fallback).
+    let lm: String?
+    /// The legacy-server fallback runs.
+    let legacyServer: Bool
     let log: AppLog
     /// What every child gets on top of the app's environment (PALAVER_APP, PALAVER_NOTIFY, …).
     var childEnv: [String: String]
@@ -69,20 +79,22 @@ final class PalaverApp: NSObject, NSApplicationDelegate {
         let log = setup.log
         let paths = setup.paths
         let cliOptions = setup.cliOptions
-        let config = Config.load(setup.options.config.map { URL(fileURLWithPath: NSString(string: $0).expandingTildeInPath) }
-                                 ?? paths.configToml)
+        let configURL = setup.options.config.map { URL(fileURLWithPath: NSString(string: $0).expandingTildeInPath) }
+            ?? paths.configToml
+        let config = Config.load(configURL)
         let settings = Settings(url: paths.settingsJson, defaults: config)
         self.config = config
         self.settings = settings
         usage = UsageLog(url: paths.support.appendingPathComponent("usage.jsonl"))
         bundleWatch = BundleWatch(bundle: setup.location.bundle)
 
-        let launcher = WorkerLauncher(python: setup.python, cliOptions: cliOptions, log: paths.daemonLog, env: setup.childEnv)
-        let facts = PythonFacts(python: setup.python, cliOptions: cliOptions, env: setup.childEnv, log: { log.warning($0) })
-        // Built at once with the last answer (or config.toml's view); Python is asked in the background.
+        let launcher = WorkerLauncher(python: setup.python, worker: setup.worker, lm: setup.lm, cliOptions: cliOptions,
+                                      log: paths.daemonLog, env: setup.childEnv)
+        let facts = Self.facts(setup: setup, configURL: configURL)
+        // Built at once with the last answer (or config.toml's view), then worked out in the background.
         let notion = AutoSyncAnswer(cache: paths.support.appendingPathComponent("notion-auto-sync.json"),
                                     fallback: .init(autoSync: config.notionAutoSync, notes: config.notesEnabled))
-        Self.askNotion(notion, setup: setup)
+        Self.workOutNotion(notion, config: config, configURL: configURL, env: setup.childEnv)
         let detector = CallDetector(lister: CoreAudioProcessLister(), teams: { settings.recordTeams },
                                     slack: { settings.recordSlack }, log: { log.line("INFO", $0, logger: "palaver.teams_detector") })
 
@@ -92,8 +104,9 @@ final class PalaverApp: NSObject, NSApplicationDelegate {
         let testRecorder = TestRecorder.live(
             sources: { CaptureSources.live(excludedPIDs: { pids.daemon?.excludedPIDs() ?? [getpid()] },
                                            log: { log.line("INFO", $0, logger: "palaver.onboarding") }) },
-            python: setup.python, cliOptions: cliOptions, env: setup.childEnv)
-        let helpers = HelperJobs(outputDir: { config.outputDir }, python: setup.python, cliOptions: cliOptions, env: setup.childEnv)
+            worker: setup.worker, python: setup.python, cliOptions: cliOptions, env: setup.childEnv)
+        let helpers = HelperJobs(outputDir: { config.outputDir }, python: setup.python, lm: setup.lm, cliOptions: cliOptions,
+                                 env: setup.childEnv)
 
         let later = Later()  // the menu and the window's server exist only after the daemon
         core = try AppCore.build(
@@ -107,12 +120,11 @@ final class PalaverApp: NSObject, NSApplicationDelegate {
         pids.daemon = core.daemon
         let daemon = core.daemon
 
-        extras = AppExtras(paths: paths, config: { config }, settings: { settings }, python: setup.python,
-                           cliOptions: cliOptions, env: setup.childEnv, launcher: launcher,
+        extras = AppExtras(paths: paths, config: { config }, settings: { settings }, launcher: launcher,
                            daemonStatus: { daemon.status() },  // asked on the main tick, as in Python
                            testState: { testRecorder.status()["state"] as? String },
                            transcribing: { daemon.status()["transcribing"]?.truthy ?? false },
-                           bundleVersion: setup.location.releaseVersion(),
+                           bundleVersion: setup.location.releaseVersion(), bundle: setup.location.bundle,
                            log: { log.line("INFO", $0, logger: "palaver.updater") })
 
         let main = MainRunner()
@@ -121,7 +133,8 @@ final class PalaverApp: NSObject, NSApplicationDelegate {
                               log: { log.warning($0) })
         let window = self.window
         web = AppPart.optional("the window's server", log: { log.warning($0) }) {
-            try startWebServer(window: window, python: setup.python, cliOptions: cliOptions, appSocket: paths.appSock,
+            try startWebServer(window: window, python: setup.python, server: setup.server, staticDir: setup.location.staticDir(),
+                               cliOptions: cliOptions, appSocket: paths.appSock,
                                env: WebSupervisor.childEnv(ProcessInfo.processInfo.environment.merging(setup.childEnv) { $1 }),
                                log: { log.line("INFO", $0, logger: "palaver.webapp") })
         }
@@ -139,13 +152,21 @@ final class PalaverApp: NSObject, NSApplicationDelegate {
         if !appSocket.start() { log.warning("app.sock could not be bound at \(paths.appSock.path)") }
     }
 
-    /// `notion-auto-sync` from Python (the token may be in the Keychain, which only Python reads), on a
-    /// thread of its own until it answers; the daemon reads `notion` as each worker starts.
-    private static func askNotion(_ notion: AutoSyncAnswer, setup: AppSetup) {
-        let python = setup.python, options = setup.cliOptions, env = setup.childEnv, log = setup.log
+    /// The facts the daemon waits on: `missing-models`, `index-stale`, `notes-memory` and `event-key` from the
+    /// domain in this process (also in the legacy-server fallback: the same stores either way).
+    private static func facts(setup: AppSetup, configURL: URL) -> PythonFacts {
+        let log = setup.log
+        return PythonFacts(query: PythonFacts.query(config: { Config.load(configURL) }, calendar: PythonFacts.eventKitCalendar),
+                           log: { log.warning($0) })
+    }
+
+    /// `notion-auto-sync`: the Notion token may be in the Keychain, looked up by its attributes only (no
+    /// prompt), on a thread of its own; the daemon reads `notion` as each worker starts.
+    private static func workOutNotion(_ notion: AutoSyncAnswer, config: Config, configURL: URL, env: [String: String]) {
+        let environment = ProcessInfo.processInfo.environment.merging(env) { $1 }
         Thread.detachNewThread {
-            notion.askUntilAnswered(ask: { PythonFacts.notionAutoSyncNow(python: python, cliOptions: options, env: env) },
-                                    log: { log.warning($0) })
+            notion.set(AutoSyncAnswer.current(config: config, configToml: configURL, env: environment,
+                                              keys: KeyStores.make(env: environment)))
         }
     }
 
@@ -181,7 +202,7 @@ final class PalaverApp: NSObject, NSApplicationDelegate {
             closeSocket: { appSocket.stop() },
             stopNotifications: { notifications?.stop() }))
 
-        // Asks Python until it answers (the updater is off until then); started-ok does not wait for it.
+        // What runs and what the last start left in update.json (the updater is off until then); started-ok does not wait.
         Thread.detachNewThread { extras.updates.loadUntilAnswered() }
         extras.housekeeping.atStart()
         extras.calendarAttach.check()  // connecting looks everything up first

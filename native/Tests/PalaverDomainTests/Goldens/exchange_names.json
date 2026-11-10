@@ -1,0 +1,194 @@
+{
+ "file_name": [
+  [
+   "2026-10-29T10:00:00+01:00",
+   "Q3: budget / plan?",
+   "2026-10-29 Q3 budget plan.zip"
+  ],
+  [
+   "2026-10-29T10:00:00+01:00",
+   null,
+   "2026-10-29 Meeting.zip"
+  ],
+  [
+   "2026-10-29T10:00:00+01:00",
+   "   ",
+   "2026-10-29 Meeting.zip"
+  ],
+  [
+   "2026-10-29T23:30:00-05:00",
+   "Late call",
+   "2026-10-30 Late call.zip"
+  ],
+  [
+   "2026-10-29T22:30:00Z",
+   "Zulu",
+   "2026-10-29 Zulu.zip"
+  ],
+  [
+   "2026-10-29T10:00:00",
+   "Naive start",
+   "2026-10-29 Naive start.zip"
+  ],
+  [
+   "2026-03-29T01:30:00+00:00",
+   "Clocks change",
+   "2026-03-29 Clocks change.zip"
+  ],
+  [
+   "not a time",
+   "Contoso kickoff",
+   "Contoso kickoff.zip"
+  ],
+  [
+   5,
+   "A number",
+   "A number.zip"
+  ],
+  [
+   null,
+   "Null start",
+   "Null start.zip"
+  ],
+  [
+   {
+    "absent": true
+   },
+   "No meta",
+   "No meta.zip"
+  ],
+  [
+   "2026-10-29T10:00:00+01:00",
+   "Tabs\tand\nnewlines\u0001\u001f here",
+   "2026-10-29 Tabs and newlines here.zip"
+  ],
+  [
+   "2026-10-29T10:00:00+01:00",
+   "All of them: \\ / : * ? \" < > | done",
+   "2026-10-29 All of them done.zip"
+  ],
+  [
+   "2026-10-29T10:00:00+01:00",
+   "...Northwind...",
+   "2026-10-29 Northwind.zip"
+  ],
+  [
+   "2026-10-29T10:00:00+01:00",
+   ". . .",
+   "2026-10-29 Meeting.zip"
+  ],
+  [
+   "2026-10-29T10:00:00+01:00",
+   "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx .yyyyyyyyyy",
+   "2026-10-29 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.zip"
+  ],
+  [
+   "2026-10-29T10:00:00+01:00",
+   "Valerie und Timo Strauß Valerie und Timo Strauß Valerie und Timo Strauß Valerie und Timo Strauß Valerie und Timo Strauß Valerie und Timo Strauß ",
+   "2026-10-29 Valerie und Timo Strauß Valerie und Timo Strauß Valerie und Timo Strauß Valerie.zip"
+  ],
+  [
+   "2026-10-29T10:00:00+01:00",
+   "Zoë  wide　space nbsp",
+   "2026-10-29 Zoë wide space nbsp.zip"
+  ],
+  [
+   "2026-10-29T10:00:00+01:00",
+   "éééééééééééééééééééééééééééééééééééééééééééééééééé",
+   "2026-10-29 éééééééééééééééééééééééééééééééééééééééé.zip"
+  ],
+  [
+   "2026-10-29T10:00:00+01:00",
+   "😀 Contoso 😀",
+   "2026-10-29 😀 Contoso 😀.zip"
+  ],
+  [
+   "2026-10-29T10:00:00+01:00",
+   " del and  next line",
+   "2026-10-29  del and next line.zip"
+  ]
+ ],
+ "free_name": [
+  [
+   [],
+   "2026-10-29 Budget.zip",
+   "2026-10-29 Budget.zip"
+  ],
+  [
+   [
+    "2026-10-29 Budget.zip"
+   ],
+   "2026-10-29 Budget.zip",
+   "2026-10-29 Budget 2.zip"
+  ],
+  [
+   [
+    "2026-10-29 Budget.zip",
+    "2026-10-29 Budget 2.zip",
+    "2026-10-29 Budget 3.zip"
+   ],
+   "2026-10-29 Budget.zip",
+   "2026-10-29 Budget 4.zip"
+  ],
+  [
+   [
+    "2026-10-29 Budget.zip",
+    "2026-10-29 Budget 3.zip"
+   ],
+   "2026-10-29 Budget.zip",
+   "2026-10-29 Budget 2.zip"
+  ],
+  [
+   [
+    "notes"
+   ],
+   "notes",
+   "notes 2"
+  ],
+  [
+   [
+    "notes",
+    "notes 2"
+   ],
+   "notes",
+   "notes 3"
+  ],
+  [
+   [
+    ".zip"
+   ],
+   ".zip",
+   " 2.zip"
+  ],
+  [
+   [
+    "a.ZIP"
+   ],
+   "a.ZIP",
+   "a.ZIP 2"
+  ],
+  [
+   [
+    "Zoë.zip"
+   ],
+   "Zoë.zip",
+   "Zoë 2.zip"
+  ],
+  [
+   [
+    {
+     "link": "gone.zip"
+    }
+   ],
+   "gone.zip",
+   "gone.zip"
+  ],
+  [
+   [
+    "؀.zip"
+   ],
+   "؀.zip",
+   "؀ 2.zip"
+  ]
+ ]
+}

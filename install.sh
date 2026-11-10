@@ -7,21 +7,21 @@ set -eu
 #   curl -fsSL .../install.sh | sh -s -- --autostart --cli
 #
 # Installs the latest release into your home folder, nothing else:
-#   ~/Applications/Palaver.app                               the app (Palaver's code)
-#   ~/Library/Application Support/palaver/runtime/<id>/      its Python and libraries (~1.5 GB),
-#                                                            downloaded again only when they change
-# No Homebrew, no system Python, no PATH or shell changes. The models
-# (speech, speakers, notes) are downloaded by the app's setup assistant,
-# with your OK and with progress.
+#   ~/Applications/Palaver.app                               the app, all of it (no Python since 0.6)
+# No Homebrew, no Python, no PATH or shell changes. The models (speech,
+# speakers, notes) are downloaded by the app's setup assistant, with your OK
+# and with progress. The Python runtime of a version before 0.6
+# (~/Library/Application Support/palaver/runtime/) is deleted by the app
+# itself after its first good start.
 #
 # Options:
 #   --autostart    start Palaver at login
 #   --cli          link the `palaver` command into ~/.local/bin (when that is on your PATH)
-#   --uninstall    remove the app, its runtime, the login item and the command;
+#   --uninstall    remove the app, an old runtime, the login item and the command;
 #                  recordings, settings and models stay (add --models to remove the models too)
 #
 # Environment:
-#   PALAVER_VERSION=0.2.0     install that release instead of the latest
+#   PALAVER_VERSION=0.6.0     install that release instead of the latest (0.6 or later)
 #   PALAVER_ASSETS_DIR=dist   install from local release assets (no download; for testing)
 
 REPO="kenodressel/palaver"
@@ -85,7 +85,8 @@ OPEN_COMMAND="${PALAVER_OPEN_COMMAND:-open}"
 WAS_RUNNING=0
 
 # The app itself, never one of its workers: the Swift app (Contents/MacOS/Palaver, run without
-# arguments) or, up to 0.4, the launcher. Workers run as palaver-python (up to 0.4: "Palaver -m palaver").
+# arguments) or, up to 0.4, the launcher. Workers run as palaver-worker or palaver-python (up to 0.4:
+# "Palaver -m palaver").
 APP_PROCESS="${APP}/Contents/MacOS/(palaver-launcher|Palaver)\$"
 app_running() {
   pgrep -f "${APP_PROCESS}" >/dev/null 2>&1 \
@@ -105,7 +106,7 @@ busy_reason() {
   fi
   # A transcription or notes helper of the app (the menu bar app, the window's
   # server and the search index stop with it).
-  if pgrep -lf "${APP}/Contents/MacOS/(palaver-python|Palaver) -m palaver" 2>/dev/null \
+  if pgrep -lf "${APP}/Contents/MacOS/((palaver-python|Palaver) -m palaver|palaver-worker) " 2>/dev/null \
       | grep -vqE ' (menubar|webapp-serve|index|coach)( |$)'; then
     echo "processing a meeting"
   fi
@@ -168,18 +169,6 @@ sweep_stale() {
   done
 }
 
-# A link in the unpacked runtime that points out of it; nothing when all stay inside.
-link_out_of() {
-  root="$(readlink -f "$1")"  # as readlink spells the targets: the case on disk ("Palaver")
-  find "$1" -type l | while IFS= read -r link; do
-    target="$(readlink -f "${link}" 2>/dev/null || true)"
-    case "${target}" in
-      "${root}"/*) ;;
-      *) echo "${link}"; break ;;
-    esac
-  done
-}
-
 # --- uninstall ---------------------------------------------------------------------------------
 
 uninstall() {
@@ -234,36 +223,22 @@ MACOS="$(sw_vers -productVersion)"
   || error "Palaver ${NEW_VERSION} needs macOS ${MIN_MACOS} or later (this Mac has ${MACOS})."
 
 OLD_VERSION="$(json "${APP}/Contents/Resources/runtime.json" version || true)"
-OLD_RUNTIME="$(json "${APP}/Contents/Resources/runtime.json" runtime || true)"
 if [ -n "${OLD_VERSION}" ]; then
   info "Updating Palaver ${OLD_VERSION} to ${NEW_VERSION}"
 else
   info "Installing Palaver ${NEW_VERSION}"
 fi
 
-# --- the runtime: only when this release needs another one ---------------------------------------
+# --- the runtime: none since 0.6 ---------------------------------------------------------------
+# The manifest still names a runtime: a placeholder of a few hundred bytes that the updaters of the
+# versions before 0.6 need to take the app. This installer downloads no runtime. A release before
+# 0.6 needs its Python runtime: its own installer (attached to that release) installs it.
 
 RUNTIME_ID="$(json "${M}" runtime.id)"
-case "${RUNTIME_ID}" in ""|*/*|.*) error "The release names no valid runtime." ;; esac
-if [ -x "${RUNTIMES}/${RUNTIME_ID}/bin/python3" ]; then
-  info "Its runtime ${RUNTIME_ID} is here already: not downloaded again."
-else
-  NAME="$(json "${M}" runtime.name)"
-  SIZE="$(json "${M}" runtime.size)"
-  info "Downloading its runtime (Python and libraries, $((SIZE / 1000000)) MB; once, until they change)..."
-  fetch "${NAME}" "$(json "${M}" runtime.url)" "$(json "${M}" runtime.sha256)"
-  mkdir -p "${RUNTIMES}"
-  STAGE="$(mktemp -d "${RUNTIMES}/.${RUNTIME_ID}.XXXXXX")"
-  info "Unpacking the runtime..."
-  tar -xf "${TMP}/${NAME}" -C "${STAGE}" || { rm -rf "${STAGE}"; error "The runtime archive can't be unpacked."; }
-  rm -f "${TMP}/${NAME}"
-  [ -x "${STAGE}/${RUNTIME_ID}/bin/python3" ] || { rm -rf "${STAGE}"; error "The runtime archive is incomplete."; }
-  OUT="$(link_out_of "${STAGE}/${RUNTIME_ID}")"
-  [ -z "${OUT}" ] || { rm -rf "${STAGE}"; error "The runtime archive has a link out of its folder (${OUT##*/}); nothing was changed."; }
-  rm -rf "${RUNTIMES:?}/${RUNTIME_ID}"
-  mv "${STAGE}/${RUNTIME_ID}" "${RUNTIMES}/${RUNTIME_ID}"
-  rm -rf "${STAGE}"
-fi
+case "${RUNTIME_ID}" in
+  no-python-*) ;;
+  *) error "Palaver ${NEW_VERSION} needs a Python runtime, which this installer no longer installs: use the installer of that release, ${RELEASES}/download/v${NEW_VERSION}/install.sh (with PALAVER_VERSION=${NEW_VERSION})." ;;
+esac
 
 # --- the app ---------------------------------------------------------------------------------
 
@@ -271,7 +246,9 @@ NAME="$(json "${M}" app.name)"
 fetch "${NAME}" "$(json "${M}" app.url)" "$(json "${M}" app.sha256)"
 ditto -xk "${TMP}/${NAME}" "${TMP}/app" || error "The app archive can't be unpacked."
 [ "$(json "${TMP}/app/Palaver.app/Contents/Resources/runtime.json" runtime)" = "${RUNTIME_ID}" ] \
-  || error "The app in this release does not match its runtime."
+  || error "The app in this release does not match its manifest."
+[ "$(json "${TMP}/app/Palaver.app/Contents/Resources/runtime.json" version)" = "${NEW_VERSION}" ] \
+  || error "The app in this release is not Palaver ${NEW_VERSION}."
 xattr -dr com.apple.quarantine "${TMP}/app/Palaver.app" 2>/dev/null || true
 
 quit_app
@@ -293,19 +270,9 @@ rm -rf "${OLD_APP}"
 # A new build is a new signature to macOS: Palaver asks for its permissions at its next start, not mid-call.
 rm -f "${SUPPORT}/permissions-requested"
 
-# The runtime in use and the one before it (to go back with PALAVER_VERSION) stay; older ones go.
-if [ -n "${OLD_RUNTIME}" ] && [ "${OLD_RUNTIME}" != "${RUNTIME_ID}" ]; then
-  printf '%s\n' "${OLD_RUNTIME}" > "${RUNTIMES}/.previous"
-fi
-PREVIOUS="$(cat "${RUNTIMES}/.previous" 2>/dev/null || true)"
-for dir in "${RUNTIMES}"/*; do
-  [ -d "${dir}" ] || continue
-  id="$(basename "${dir}")"
-  if [ "${id}" != "${RUNTIME_ID}" ] && [ "${id}" != "${PREVIOUS}" ]; then
-    rm -rf "${dir}"
-  fi
-done
-# The installer before this one made a venv (and a command into it) with uv; the runtime replaces it.
+# An old runtime (a version before 0.6) stays until the new app has started all the way: the app
+# deletes it then (an update that does not start can still go back to it).
+# The installer before the runtime made a venv (and a command into it) with uv; the app replaces it.
 rm -rf "${SUPPORT}/venv" "${HOME}/Library/Application Support/meeting-transcribe/venv"
 if [ -L "${BIN_DIR}/meeting-transcribe" ]; then rm -f "${BIN_DIR}/meeting-transcribe"; fi
 

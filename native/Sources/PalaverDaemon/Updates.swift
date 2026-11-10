@@ -1,14 +1,15 @@
 // Updates from inside the app (updater.py's Updater state machine and menubar.py's Updates class, #60).
 // The state machine, the timing, the idle gate and update.json are here; the network, the staging and
-// the text of swap.sh are the Python commands behind `UpdateBackend` (palaver/app_update.py), faked in
-// tests. Checks and downloads run off the main thread (`background`), the swap on the main thread's tick:
+// the text of swap.sh are behind `UpdateBackend` (SwiftUpdateBackend; Python's app_update.py before 0.6),
+// faked in tests. Checks and downloads run off the main thread (`background`), the swap on the main thread's tick:
 // `tick()` says when the app must quit for it. The idle gate is asked right before the swap script
 // starts; the app quits in that same tick, so no recording can start while an update installs. A call
 // that began before is recorded and the update waits: recording wins.
 import Foundation
 import PalaverCore
 
-/// What an update downloads (updater.Plan, as `app update check` reports it).
+/// What an update downloads (updater.Plan). Since 0.6 only the app: `runtime` and `models` stay in update.json
+/// for its readers, always false and empty.
 public struct UpdatePlan: Equatable, Sendable {
     public var version: String
     public var notes: String?
@@ -33,8 +34,8 @@ public struct UpdateInstalled: Equatable, Sendable {
     public init(version: String, runtime: String? = nil) { self.version = version; self.runtime = runtime }
 }
 
-/// The Python side of updating. Every call blocks (it starts a process): never on the main thread,
-/// except `commit`/`prepare` in the swap's tick, as the Python app did.
+/// The work of updating. Every call may block (network, disk, ditto): never on the main thread, except
+/// `commit`/`prepare` in the swap's tick, as the Python app did.
 public protocol UpdateBackend: Sendable {
     /// nil: a checkout, nothing to update. `previous`: update.json from before this start.
     func status() throws -> (installed: UpdateInstalled?, previous: JSONValue?)
@@ -47,7 +48,7 @@ public protocol UpdateBackend: Sendable {
     func commit() throws
     /// Runs swap.sh on its own (`/bin/sh`, a session of its own: it outlives the app).
     func spawnSwap(script: String) throws
-    /// Writes and starts uninstall.py's script, which waits for `waitFor` to quit; what it removes.
+    /// Writes and starts the uninstall script (Uninstall), which waits for `waitFor` to quit; what it removes.
     func uninstallStart(models: Bool, recordings: Bool, waitFor: [Int32]) throws -> [String]
 }
 
@@ -111,8 +112,8 @@ public final class Updates: @unchecked Sendable {
         /// What must have quit before the app is replaced: this process.
         public var appPids: @Sendable () -> [Int32]
         public var startedOk: URL
-        /// The bundle's own version (AppLocation.releaseVersion: runtime.json, what `app update status`
-        /// reports too): started-ok is written from it even when Python never answers. nil: a development build.
+        /// The bundle's own version (AppLocation.releaseVersion: runtime.json, what the backend reports
+        /// too): started-ok is written from it even before load(). nil: a development build.
         public var bundleVersion: String?
         public var log: @Sendable (String) -> Void
         public init(backend: UpdateBackend, busy: @escaping @Sendable () -> String? = { nil },
@@ -156,8 +157,8 @@ public final class Updates: @unchecked Sendable {
 
     // MARK: - start
 
-    /// Asks the Python side what runs and what the last start left in update.json (on a worker: it
-    /// starts a process). Until then nothing is due. A swap that failed says so again. false: no answer.
+    /// Asks the backend what runs and what the last start left in update.json (on a worker). Until then
+    /// nothing is due. A swap that failed says so again. false: no answer.
     @discardableResult
     public func load() -> Bool {
         let status: (installed: UpdateInstalled?, previous: JSONValue?)
@@ -181,7 +182,7 @@ public final class Updates: @unchecked Sendable {
         return true
     }
 
-    /// `load()` until Python answers, waiting 2 s, 4 s, 8 s … up to `maxDelay` between tries (a worker
+    /// `load()` until the backend answers, waiting 2 s, 4 s, 8 s … up to `maxDelay` between tries (a worker
     /// thread: it blocks). The updater stays off until then; started-ok does not wait for it.
     public func loadUntilAnswered(sleep: (Double) -> Void = { Thread.sleep(forTimeInterval: $0) }, maxDelay: Double = 300) {
         var delay = 2.0
@@ -413,7 +414,7 @@ public final class Updates: @unchecked Sendable {
         return nil
     }
 
-    /// `uninstall` (app.sock): start uninstall.py's script, then the app quits at the next tick.
+    /// `uninstall` (app.sock): start the uninstall script, then the app quits at the next tick.
     public func uninstall(models: Bool, recordings: Bool) throws -> [String: Any] {
         let removing = try deps.backend.uninstallStart(models: models, recordings: recordings, waitFor: deps.appPids())
         lock.lock(); quitNow = true; lock.unlock()

@@ -1,0 +1,53 @@
+{
+  "name": "server-exchange",
+  "steps": [
+    {"http": {"method": "GET", "path": "/api/meetings/2026-10-28T14-00-00/my-notes"}},
+    {"http": {"method": "POST", "path": "/api/meetings/2026-10-28T14-00-00/my-notes/clear", "body": {}}},
+    {"http": {"method": "POST", "path": "/api/meetings/2026-10-28T14-00-00/my-notes", "body": {"paragraphs": [
+      {"text": "Ask Timo Strauß about the **budget** 😀", "at": null}, {"text": "- go-live **March**", "at": 312.4567, "extra": "dropped"},
+      {"text": "   ", "at": 3900}], "revision": ""}}},
+    {"http": {"method": "GET", "path": "/api/meetings/2026-10-28T14-00-00/my-notes"}},
+    {"http": {"method": "POST", "path": "/api/meetings/2026-10-28T14-00-00/my-notes", "body": {"paragraphs": [{"text": "stale", "at": null}], "revision": "stale"}}},
+    {"http": {"method": "POST", "path": "/api/meetings/2026-10-28T14-00-00/my-notes", "body": {"paragraphs": []}}},
+    {"http": {"method": "POST", "path": "/api/meetings/2026-10-28T14-00-00/my-notes", "body": {"revision": ""}}},
+    {"http": {"method": "POST", "path": "/api/meetings/2026-10-28T14-00-00/my-notes", "body": {"paragraphs": "x", "revision": ""}}},
+    {"http": {"method": "POST", "path": "/api/meetings/2026-10-28T14-00-00/my-notes", "body": {"paragraphs": [{"text": "", "at": null, "image": "../meta.json"}], "revision": ""}}},
+    {"http": {"method": "POST", "path": "/api/meetings/2026-01-01T00-00-00/my-notes", "body": {"paragraphs": [], "revision": ""}}},
+    {"http": {"method": "POST", "path": "/api/meetings/2026-10-28T14-00-00/my-notes/images", "body": {"data": "not base64 !!"}}},
+    {"http": {"method": "POST", "path": "/api/meetings/2026-10-28T14-00-00/my-notes/images", "body": {"data": "PHN2Zy8+"}}},
+    {"http": {"method": "POST", "path": "/api/meetings/2026-10-28T14-00-00/my-notes/images", "body": {"data": "abc"}}},
+    {"http": {"method": "POST", "path": "/api/meetings/2026-10-28T14-00-00/my-notes/images", "body": {}}},
+    {"http": {"method": "GET", "path": "/api/meetings/2026-10-28T14-00-00/my-notes/images/img-0123456789ab.png"}},
+    {"http": {"method": "GET", "path": "/api/meetings/2026-10-28T14-00-00/my-notes/images/..%2Fmeta.json"}},
+    {"http": {"method": "GET", "path": "/api/meetings/2026-10-28T14-00-00/my-notes/clear"}},
+    {"http": {"method": "POST", "path": "/api/meetings/2026-10-28T14-00-00/my-notes/images/img-0123456789ab.png/delete", "body": {}}},
+    {"http": {"method": "POST", "path": "/api/meetings/2026-10-28T14-00-00/my-notes/clear/x", "body": {}}},
+    {"http": {"method": "POST", "path": "/api/meetings/2026-10-28T14-00-00/my-notes/clear", "body": {}}},
+    {"http": {"method": "POST", "path": "/api/meetings/2026-10-28T14-00-00/my-notes", "body": {"paragraphs": [{"text": "typed since", "at": 30}], "revision": ""}}},
+    {"http": {"method": "POST", "path": "/api/undo", "body": {"token": "<undo:my-notes clear>"}}},
+    {"http": {"method": "GET", "path": "/api/meetings/2026-10-28T14-00-00/my-notes"}},
+    {"http": {"method": "GET", "path": "/api/upcoming/nope%7C2026-10-28/my-notes"}},
+    {"http": {"method": "POST", "path": "/api/upcoming/nope%7C2026-10-28/my-notes", "body": {"paragraphs": [], "revision": ""}}},
+
+    {"http": {"method": "POST", "path": "/api/meetings/2026-10-30T16-00-00/export", "body": {}}},
+    {"http": {"method": "POST", "path": "/api/meetings/2026-01-01T00-00-00/export", "body": {}}},
+    {"op": "cutting", "args": {"action": "plant", "folder": "2026-10-28T14-00-00", "files": {"local_only.json": {}}}},
+    {"http": {"method": "POST", "path": "/api/meetings/2026-10-28T14-00-00/export", "body": {"voices": true}}},
+    {"op": "cutting", "args": {"action": "plant", "folder": "2026-10-28T14-00-00", "files": {
+      "speakers.json": {"SPEAKER_00": "Timo Strauß"}, "speakers_merged.json": {"SPEAKER_02": "SPEAKER_00"}}}},
+    {"op": "exchange", "args": {"action": "export", "folder": "2026-10-28T14-00-00", "dest": "exports/rollout.zip",
+                                "voices": true, "confirm_local": true, "user_name": "Valerie"}},
+
+    {"http": {"method": "POST", "path": "/api/import", "body": {"file": "x"}}},
+    {"http": {"method": "POST", "path": "/api/import", "raw": "not a zip", "content_type": "application/octet-stream"}},
+    {"http": {"method": "POST", "path": "/api/import", "raw_file": "exports/rollout.zip", "content_type": "application/octet-stream"}},
+    {"http": {"method": "POST", "path": "/api/import?separate=1", "raw_file": "exports/rollout.zip", "content_type": "application/octet-stream"}},
+    {"http": {"method": "GET", "path": "/api/meetings/2026-10-28T14-00-00-2"}},
+    {"http": {"method": "POST", "path": "/api/meetings/2026-10-28T14-00-00-2/imported-voices", "body": {"add": true}}},
+    {"http": {"method": "POST", "path": "/api/import?separate=1", "raw_file": "exports/rollout.zip", "content_type": "application/octet-stream"}},
+    {"http": {"method": "POST", "path": "/api/undo", "body": {"token": "<undo:import>"}}}
+  ],
+  "compare": ["Recordings", "config", "events.json"],
+  "rules": {"Recordings/.trash/.undo/*/manifest.json": "undo_all_fingerprints"},
+  "result": true
+}

@@ -66,6 +66,7 @@ public final class SessionLog: @unchecked Sendable {
 public enum JSONLines {
     public static func value(_ v: Any) -> String {
         switch v {
+        case let j as JSONValue: return j.encoded(indent: nil)
         case let s as String: return string(s)
         case let b as Bool: return b ? "true" : "false"
         case let i as Int: return String(i)

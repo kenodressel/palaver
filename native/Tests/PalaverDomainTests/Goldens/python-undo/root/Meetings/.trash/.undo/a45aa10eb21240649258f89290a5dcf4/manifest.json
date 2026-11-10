@@ -1,0 +1,34 @@
+{
+  "label": "my-notes clear",
+  "time": "2026-11-04T22:10:33.668234+01:00",
+  "meetings": {},
+  "stores": [
+    {
+      "path": "/PALAVER-UNDO-ROOT/root/Meetings/2026-10-20T14-35-17/my-notes/img-0123456789ab.png",
+      "index": 0,
+      "existed": true,
+      "dir": false,
+      "fingerprint": ""
+    },
+    {
+      "path": "/PALAVER-UNDO-ROOT/root/Meetings/2026-10-20T14-35-17/my-notes/img-0123456789ab.png.txt",
+      "index": 1,
+      "existed": true,
+      "dir": false,
+      "fingerprint": ""
+    }
+  ],
+  "moves": [],
+  "created": [],
+  "extra": {
+    "folder": "/PALAVER-UNDO-ROOT/root/Meetings/2026-10-20T14-35-17",
+    "paragraphs": [
+      {
+        "text": "",
+        "at": null,
+        "image": "img-0123456789ab.png"
+      }
+    ]
+  },
+  "created_fingerprints": {}
+}

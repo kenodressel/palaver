@@ -1,0 +1,22 @@
+{
+  "label": "trash",
+  "time": "2026-11-04T22:10:33.651225+01:00",
+  "meetings": {},
+  "stores": [
+    {
+      "path": "/PALAVER-UNDO-ROOT/root/config/palaver/projects.json",
+      "index": 0,
+      "existed": true,
+      "dir": false,
+      "fingerprint": "file:b7ff32707f8f8b9a0d2e798dbcd9ef801b0fd689c93f4826b0a7ed41b88d7fa6"
+    }
+  ],
+  "moves": [
+    [
+      "/PALAVER-UNDO-ROOT/root/Meetings/2026-10-21T09-00-00",
+      "/PALAVER-UNDO-ROOT/root/Meetings/.trash/2026-10-21T09-00-00"
+    ]
+  ],
+  "created": [],
+  "created_fingerprints": {}
+}

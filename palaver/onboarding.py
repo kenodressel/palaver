@@ -1436,9 +1436,18 @@ class Calendar:
 
 def _main(argv: list[str]) -> int:
     """`python -m palaver.onboarding download <id> [repo]`: a model from Hugging Face
-    (the notes models, search). The speech models come from the engine instead."""
+    (the notes models, search). The speech models come from the engine instead.
+    `fetch <id> <repo>`: one model as Downloads fetches it (`_fetch`), for the Swift
+    window server; a failure is one line on stderr, which the page shows."""
     what, arg = argv[0], argv[1]
     repo = argv[2] if len(argv) > 2 else (MODELS[arg].repo if arg in MODELS else "")
+    if what == "fetch":
+        try:
+            _fetch(MODELS[arg], repo)
+        except Exception as exc:
+            print(" ".join(str(exc).split()) or type(exc).__name__, file=sys.stderr)
+            return 1
+        return 0
     if what == "download":
         if arg == "e5":
             from . import embeddings

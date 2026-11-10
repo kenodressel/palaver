@@ -368,6 +368,41 @@ private func fakeTaskpolicy() throws -> String {
         #expect(w.dog.status()!["workers"] == .array([]))
     }
 
+    @Test func watchdogCountsPalaverWorkerAsTheWorkerKind() throws {
+        // The daemon starts `process` as palaver-worker: what it watches is the kind it launched, judged by that kind's
+        // budget, whatever program runs it; and its command line is still one of Palaver's processes (a `process` from
+        // before a restart is found by it).
+        let b = try build(autoSync: false, worker: WORKER)
+        let rec = URL(fileURLWithPath: "/r/m1", isDirectory: true)
+        let started = try b.daemon.deps.launchProcessing(rec)
+        let argv = b.spawned.calls[0].args
+        #expect(argv[0] == WORKER && argv.contains("process"))
+        #expect(Processes.matches(Processes.palaverWord, argv.joined(separator: " ")))
+        let w = Watch()
+        w.used[started.pid] = 5.0  // over the 4 GB `process` budget
+        #expect(w.sustain(DaemonWorker(kind: "process", folder: rec.path, process: started)) == ["warn|process|m1"])
+        #expect(w.last[0].limit == MemoryRules.defaultProcessGB)
+    }
+
+    @Test func aHelperChildCountsInTheProcessBudget() {
+        // palaver-worker process (pid 60) runs a helper (pid 61, in the worker's process group; the notes helper until
+        // phase 4 batch 5): each alone is under the 4 GB budget, together they are over it.
+        let sizes: [Int32: Double] = [60: 2.5, 61: 2.0]
+        let kids: [Int32: [Int32]] = [60: [61], 61: []]
+        let tree: (Int32) -> Int? = { pid in
+            MemoryMeasure.tree(pid, sample: { sizes[$0].map { Int($0 * GB) } }, children: { kids[$0] ?? [] })
+        }
+        #expect(tree(60) == Int(2.5 * GB) + Int(2.0 * GB))
+        var actions: [MemoryAction] = []
+        let dog = Watchdog(MemoryBudgets(), sample: tree, own: { 0 }, others: { _ in 0 }, freeGB: { 30 })
+        let proc = DaemonWorker(kind: "process", folder: "/r/m1", process: Proc(60))
+        let step = MemoryRules.overSeconds / Double(MemoryRules.overSamples - 1)
+        for n in 0..<MemoryRules.overSamples { actions = dog.check([proc], now: Double(n) * step) }
+        #expect(actions.map(\.what) == ["warn"] && actions[0].used == tree(60)!)
+        #expect(Double(actions[0].used) / GB > dog.budget("process", "/r/m1"))
+        #expect(dog.status()?["workers"]?.arrayValue?.count == 1)  // the helper is no worker of its own
+    }
+
     @Test func theSearchIndexHasASmallBudgetEnforcedOnlyWhenTheMacRunsLow() {
         let b = MemoryBudgets(config: ["index_gb": 2])
         #expect(MemoryBudgets().index == 1.0 && b.index == 2.0)

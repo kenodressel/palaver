@@ -56,6 +56,7 @@ import soundfile as sf
 from . import __version__, calendar_events, notes as notes_mod, shared_mic, titles
 from .attribution import Link
 from .models import SpeakerTurn, Utterance
+from .store_lock import meeting_lock
 from .paths import RecordingPaths, is_recording_folder_name
 from .speakers import (line_fix, load_ignored, load_inferred_names, load_line_speakers, load_merges,
                        load_recognized_names, load_rejected_names, load_speaker_names, names_in_effect,
@@ -1095,7 +1096,8 @@ def _write_meeting(paths: RecordingPaths, package: Package, *, user_name: str, c
     # The names are hints: stored as inferred names (inference.refresh keeps them), confirmed by the user.
     hinted = hints(paths)
     if hinted:
-        paths.speakers_inferred.write_text(json.dumps(hinted, indent=2, ensure_ascii=False))
+        with meeting_lock(paths.folder):
+            paths.speakers_inferred.write_text(json.dumps(hinted, indent=2, ensure_ascii=False))
     linked = None
     if beside is not None:  # beside the user's own: the event as it is linked there
         there = RecordingPaths(output_dir / beside.id)

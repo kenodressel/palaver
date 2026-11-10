@@ -1,0 +1,27 @@
+{
+  "projects": {
+    "4e6f7274": {
+      "name": "Northwind rollout"
+    }
+  },
+  "meetings": {
+    "2026-10-21T09-00-00": {
+      "assigned": {
+        "4e6f7274": {
+          "by": "you",
+          "why": ""
+        }
+      },
+      "rejected": []
+    },
+    "2026-10-22T10-00-00": {
+      "assigned": {
+        "4e6f7274": {
+          "by": "auto",
+          "why": "Northwind"
+        }
+      },
+      "rejected": []
+    }
+  }
+}

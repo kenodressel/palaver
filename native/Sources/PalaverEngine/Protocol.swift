@@ -40,7 +40,8 @@ public final class Emitter: @unchecked Sendable {
     private let id: Int
     private let output: FileHandle
     private let lock = NSLock()
-    init(id: Int, output: FileHandle) { self.id = id; self.output = output }
+    /// `output` gets the progress lines (an in-process caller that wants none passes `FileHandle.nullDevice`).
+    public init(id: Int, output: FileHandle) { self.id = id; self.output = output }
 
     private var last: (phase: String, fraction: Double)?
 

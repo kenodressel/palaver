@@ -3,6 +3,7 @@
 // update status, they return the exact strings. No AppKit: the status item in the app target only binds them.
 import Foundation
 import PalaverCore
+import PalaverDomain
 import PalaverCapture
 
 public enum MenuText {

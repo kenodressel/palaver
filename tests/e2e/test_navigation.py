@@ -5,7 +5,7 @@ import pytest
 
 from playwright.sync_api import expect  # noqa: E402
 
-from .helpers import cmd, goto, hash_of, heading, list_item, open_meeting, show_tab, unfocus  # noqa: E402
+from .helpers import cmd, goto, hash_of, heading, list_item, open_meeting, reload, show_tab, unfocus  # noqa: E402
 from .recordings import A, B, LIVE  # noqa: E402
 
 pytestmark = pytest.mark.e2e
@@ -86,7 +86,7 @@ def test_a_reload_stays_on_the_page_and_tab(page, shared_server):
     list_item(page, B).click()
     expect(heading(page)).to_have_text("Design review")
     show_tab(page, "Transcript")
-    page.reload()
+    reload(page)
     expect(heading(page)).to_have_text("Design review")
     expect(_tab(page, "Transcript")).to_have_attribute("aria-selected", "true")
     assert page.evaluate("window.palaver.command('back')")  # the history is still there (a swipe, ⌘[ or the menu)

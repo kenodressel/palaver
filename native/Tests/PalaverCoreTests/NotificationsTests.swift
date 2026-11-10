@@ -5,11 +5,14 @@ import Testing
 final class FakeCenter: NotificationCenterLike, @unchecked Sendable {
     let lock = NSLock()
     var posts: [(String, String, [String: String])] = []
+    /// (quiet, expires) of each post.
+    var manner: [(Bool, Double?)] = []
     var status: NotifyPermission = .notAsked
     var postError: Error?
     var requested = 0
-    func post(title: String, body: String, userInfo: [String: String], completion: @escaping @Sendable (Error?) -> Void) {
-        lock.lock(); posts.append((title, body, userInfo)); lock.unlock()
+    func post(title: String, body: String, userInfo: [String: String], quiet: Bool, expires: Double?,
+              completion: @escaping @Sendable (Error?) -> Void) {
+        lock.lock(); posts.append((title, body, userInfo)); manner.append((quiet, expires)); lock.unlock()
         completion(postError)
     }
     func authorizationStatus(completion: @escaping @Sendable (NotifyPermission) -> Void) { completion(status) }
@@ -44,6 +47,18 @@ private func shortTmp() -> String {
         #expect(c.posts.count == 1)
         #expect(c.posts[0].0 == "Done" && c.posts[0].1 == "Notes are ready")
         #expect(c.posts[0].2 == ["open": "2026-10-21T16-29-29"])
+    }
+
+    @Test func quietDatagramPostsWithoutSoundAndExpires() {
+        // #19: a nudge comes quiet (no sound, passive) and goes away by itself after `expires` seconds.
+        let c = FakeCenter()
+        let n = make(c, dir: shortTmp())
+        n.handleDatagram(Data(#"{"title":"Live coach","message":"3-min monologue","open":"m","quiet":true,"expires":120}"#.utf8))
+        n.handleDatagram(Data(#"{"title":"Done","message":"Notes are ready","open":"m"}"#.utf8))
+        n.handleDatagram(Data(#"{"title":"T","quiet":"yes","expires":"soon"}"#.utf8))  // not a bool, not a number
+        #expect(c.posts.map(\.0) == ["Live coach", "Done", "T"])
+        #expect(c.manner.map(\.0) == [true, false, false])
+        #expect(c.manner.map(\.1) == [120.0, nil, nil])
     }
 
     @Test func garbageIsIgnoredAndMissingFieldsDefault() {

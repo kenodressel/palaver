@@ -105,9 +105,21 @@ public func sentences(_ tokens: [TokenTiming], gap: Double = 1.0, maxDuration: D
 /// Where the models live and whether each is ready. The one source of truth
 /// for `hello` and `prepare`.
 public struct ModelStore: Sendable {
+    /// `<home>/Library/Application Support/palaver/models/fluidaudio`, the home being `PALAVER_HOME` when it is set
+    /// (as every Swift executable takes it). In a debug test process PALAVER_HOME is required, so a test never
+    /// reaches the user's real models folder (PalaverCore's TestIsolation; this target does not depend on it).
     public static var defaultDirectory: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/palaver/models/fluidaudio")
+        let env = ProcessInfo.processInfo.environment
+        #if DEBUG
+        let name = ProcessInfo.processInfo.processName
+        let testing = name == "swiftpm-testing-helper" || name == "xctest" || Bundle.allBundles.contains { $0.bundlePath.hasSuffix(".xctest") }
+        if testing && (env["PALAVER_HOME"] ?? "").isEmpty {
+            fatalError("ModelStore.defaultDirectory: PALAVER_HOME is not set in a test; run make engine-test or make swift-test")
+        }
+        #endif
+        let home = env["PALAVER_HOME"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? FileManager.default.homeDirectoryForCurrentUser
+        return home.appendingPathComponent("Library/Application Support/palaver/models/fluidaudio")
     }
 
     public let directory: URL

@@ -4,15 +4,25 @@
 import Darwin
 import Foundation
 import PalaverCapture
+import PalaverCloud
 import PalaverCore
+import PalaverDomain
 
 // MARK: - workers
 
 /// `taskpolicy -c <qos> <python> -m palaver [--config …] [--dictionary …] [--no-notify] <cmd> [folder] [extra…]`,
-/// in a session of its own, stdout and stderr appended to daemon.log.
+/// in a session of its own, stdout and stderr appended to daemon.log, only in a development build's legacy-server
+/// fallback. Else, with `worker`, the pipeline's commands run as `palaver-worker [options] <cmd> [folder] [extra…]`,
+/// and with `lm` the notes as `palaver-lm [options] notes <folder>`.
 public struct WorkerLauncher {
-    /// The bundle's `palaver-python` (Task 14), or a venv's python in development.
+    /// The developer's fallback Python (a checkout's .venv; never started in a release: `worker` and `lm` are set).
     public var python: String
+    /// palaver-worker (`AppLocation.binary`); nil: every command is Python's (the fallback, or it is missing).
+    public var worker: String?
+    /// palaver-lm; nil: the notes are Python's (the fallback, or it is missing).
+    public var lm: String?
+    /// The commands palaver-worker runs; `notes` is palaver-lm's (housekeeping runs in the app itself).
+    public static let workerCommands: Set<String> = ["process", "run", "live", "stream", "coach", "index", "calendar-attach"]
     /// The global options the app got: `--config <abs>`, `--dictionary <abs>`, `--no-notify`.
     public var cliOptions: [String]
     public var log: URL
@@ -22,9 +32,11 @@ public struct WorkerLauncher {
     /// Runs the argv (after taskpolicy's options); tests record instead.
     public var spawn: (_ args: [String], _ qos: QoS) throws -> WorkerProcess
 
-    public init(python: String, cliOptions: [String], log: URL, env: [String: String],
+    public init(python: String, worker: String? = nil, lm: String? = nil, cliOptions: [String], log: URL, env: [String: String],
                 spawn: ((_ args: [String], _ qos: QoS) throws -> WorkerProcess)? = nil) {
         self.python = python
+        self.worker = worker
+        self.lm = lm
         self.cliOptions = cliOptions
         self.log = log
         self.env = env
@@ -32,9 +44,16 @@ public struct WorkerLauncher {
         self.spawn = spawn ?? { args, qos in try spawnWorker(args, qos: qos, env: env, log: log, taskpolicy: taskpolicy) }
     }
 
-    /// The command after taskpolicy's options (daemon.py `_command`).
+    /// The command after taskpolicy's options (daemon.py `_command`). `calendar-attach` is Python's
+    /// `calendar attach`.
     public func argv(_ cmd: String, _ folder: URL?, extra: [String] = []) -> [String] {
-        [python, "-m", "palaver"] + cliOptions + [cmd] + (folder.map { [$0.path] } ?? []) + extra
+        let tail = (folder.map { [$0.path] } ?? []) + extra
+        if let worker, Self.workerCommands.contains(cmd) {
+            return [worker] + cliOptions + [cmd] + tail
+        }
+        if let lm, cmd == "notes" { return [lm] + cliOptions + [cmd] + tail }
+        let command = cmd == "calendar-attach" ? ["calendar", "attach"] : [cmd]
+        return [python, "-m", "palaver"] + cliOptions + command + tail
     }
 
     public func launch(_ cmd: String, _ folder: URL?, qos: QoS = .utility, extra: [String] = []) throws -> WorkerProcess {
@@ -92,10 +111,32 @@ public final class PythonFacts: @unchecked Sendable {
         self.log = log
     }
 
-    /// Through `pythonQuery` with the forwarded options.
-    public convenience init(python: String, cliOptions: [String], env: [String: String] = [:],
-                            log: @escaping @Sendable (String) -> Void = { _ in }) {
-        self.init(query: { what in try pythonQueryBlocking(what, python: python, extraArgs: cliOptions, env: env) }, log: log)
+    /// The questions the domain answers in this process (`Queries`); `python` gets only others.
+    public static let inProcess: Set<String> = ["missing-models", "index-stale", "notes-memory", "event-key"]
+
+    /// `missing-models`, `index-stale`, `notes-memory` and `event-key` from `Queries` in this process
+    /// (config.toml read again for each, as each Python query did; `calendar`: the events, nil when the
+    /// calendar is off or not allowed); anything else through `python` (none: an error).
+    public static func query(config: @escaping @Sendable () -> Config,
+                             calendar: @escaping @Sendable (Config) -> CalendarProvider?,
+                             python: Query? = nil) -> Query {
+        { what in
+            guard let first = what.first, inProcess.contains(first) else {
+                guard let python else { throw Queries.QueryError(what.first ?? "") }
+                return try python(what)
+            }
+            let cfg = config()
+            let answer = try Queries.answer(first, args: Array(what.dropFirst()), config: cfg, calendar: calendar(cfg))
+            return answer.anyValue as? [String: Any] ?? [:]
+        }
+    }
+
+    /// The calendar `event-key` reads: this Mac's (EventKit) when [calendar].enabled and access is given.
+    @Sendable public static func eventKitCalendar(_ config: Config) -> CalendarProvider? {
+        guard config.calendarEnabled else { return nil }
+        let kit = EventKitCalendar()
+        guard kit.hasAccess() else { return nil }
+        return { try kit.eventsBetween($0, $1) }
     }
 
     /// The fresh answer to `what`, or nil while it is being asked. A failed query answers nil in
@@ -178,29 +219,14 @@ public final class PythonFacts: @unchecked Sendable {
         let (value, known) = ask(["event-key", WallTime.iso(when, .current)], maxAge: 600)
         return known ? .known(value?["key"] as? String) : .pending
     }
-
-    /// `notion-auto-sync`: whether a recording is uploaded after the call (`run`, the token may be in
-    /// the Keychain, which only Python's Config reads), and whether notes are written.
-    public static func notionAutoSync(python: String, cliOptions: [String], env: [String: String] = [:])
-        async throws -> (autoSync: Bool, notes: Bool) {
-        let a = try await pythonQuery(["notion-auto-sync"], python: python, extraArgs: cliOptions, env: env)
-        return ((a["auto_sync"] as? Bool) ?? false, (a["notes"] as? Bool) ?? true)
-    }
-
-    /// The same, blocking (a worker thread); nil when Python did not answer.
-    public static func notionAutoSyncNow(python: String, cliOptions: [String], env: [String: String] = [:]) -> AutoSyncAnswer.Value? {
-        guard let a = try? pythonQueryBlocking(["notion-auto-sync"], python: python, extraArgs: cliOptions, env: env) else { return nil }
-        return .init(autoSync: (a["auto_sync"] as? Bool) ?? false, notes: (a["notes"] as? Bool) ?? true)
-    }
 }
 
 // MARK: - notion-auto-sync
 
 /// `notion-auto-sync`: whether a recording is uploaded after the call (`run`, which writes its notes
-/// itself) or processed with its notes written apart. Known at once: Python's last answer (kept in
-/// Application Support), else config.toml's view. Python is asked in the background (the token may be
-/// in the Keychain, which only it reads), again after a failure; the daemon reads the answer each time a
-/// worker starts, so a late answer counts from the next recording on.
+/// itself) or processed with its notes written apart. Known at once: the last answer (kept in Application
+/// Support), else config.toml's view; the app then works it out (`current`: the token may be in the
+/// Keychain) and `set`s it. The daemon reads the answer each time a worker starts.
 public final class AutoSyncAnswer: @unchecked Sendable {
     public struct Value: Equatable, Sendable {
         public var autoSync: Bool
@@ -213,13 +239,13 @@ public final class AutoSyncAnswer: @unchecked Sendable {
     private var gotAnswer = false
     private let cache: URL?
 
-    /// A fixed answer (tests, a build without Python).
+    /// A fixed answer (tests).
     public init(autoSync: Bool, notes: Bool) {
         current = Value(autoSync: autoSync, notes: notes)
         cache = nil
     }
 
-    /// The answer Python gave last time (`cache`), else `fallback` (config.toml's view).
+    /// The answer given last time (`cache`), else `fallback` (config.toml's view).
     public init(cache: URL, fallback: Value) {
         self.cache = cache
         if let data = try? Data(contentsOf: cache), let obj = JSONValue.parse(data),
@@ -233,10 +259,10 @@ public final class AutoSyncAnswer: @unchecked Sendable {
     public var value: Value { lock.lock(); defer { lock.unlock() }; return current }
     public var autoSync: Bool { value.autoSync }
     public var notes: Bool { value.notes }
-    /// Python answered during this run.
+    /// An answer was set during this run.
     public var answered: Bool { lock.lock(); defer { lock.unlock() }; return gotAnswer }
 
-    /// Python's answer: used from now on and kept for the next start.
+    /// The answer: used from now on and kept for the next start.
     public func set(_ value: Value) {
         lock.lock()
         current = value
@@ -248,20 +274,13 @@ public final class AutoSyncAnswer: @unchecked Sendable {
         try? text.write(to: cache, atomically: true, encoding: .utf8)
     }
 
-    /// Asks (`ask`: blocking, nil when Python did not answer) until it answers, waiting 5 s, 10 s, …
-    /// up to `maxDelay` between tries. On a worker thread.
-    public func askUntilAnswered(ask: () -> Value?, sleep: (Double) -> Void = { Thread.sleep(forTimeInterval: $0) },
-                                 maxDelay: Double = 300, log: (String) -> Void = { _ in }) {
-        var delay = 5.0
-        while true {
-            if let v = ask() {
-                set(v)
-                return
-            }
-            log("palaver app query notion-auto-sync did not answer; asking again in \(Int(min(delay, maxDelay))) s")
-            sleep(min(delay, maxDelay))
-            delay = min(delay * 2, maxDelay)
-        }
+    /// The answer as it is now (app_query `notion-auto-sync`): a Notion token — the environment, config.toml,
+    /// or the Keychain by its attributes only (never a prompt) — and `[notion].auto_sync` (default true);
+    /// `notes` is `[notes].enabled`.
+    public static func current(config: Config, configToml: URL, env: [String: String] = ProcessInfo.processInfo.environment,
+                               keys: KeyStore) -> Value {
+        let a = Tokens.notionAutoSync(config: config, configToml: configToml, env: env, keys: keys)
+        return Value(autoSync: a.autoSync, notes: a.notes)
     }
 }
 

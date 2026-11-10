@@ -124,6 +124,18 @@ def running(root: Path, *, alive: Callable[[int], bool] = _alive) -> list[dict]:
     return sorted(out, key=lambda j: j.get("started") or 0)
 
 
+def _exit_code_unreaped(pid: int) -> int | None:
+    """Waits for the child to end and gives Popen's returncode for it (−signal when one ended it), leaving it
+    unreaped; None when that cannot be done (not our child, e.g. a test's fake)."""
+    try:
+        info = os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT)
+    except (OSError, AttributeError):
+        return None
+    if info is None:
+        return None
+    return info.si_status if info.si_code == os.CLD_EXITED else -info.si_status
+
+
 def launch(root: Path, kind: str, key: str, argv: list[str], *, popen=subprocess.Popen) -> int:
     """Start the helper ``argv`` in its own process group and record it;
     the pid of the job already running under ``kind``/``key`` instead, if
@@ -140,10 +152,15 @@ def launch(root: Path, kind: str, key: str, argv: list[str], *, popen=subprocess
         write(root, {"kind": kind, "key": key, "pid": proc.pid, "state": "running", "started": time.time()})
 
     def reap():
-        code = proc.wait()
+        # The record says "done" before the helper is reaped: until then its pid stays taken (a zombie), so a
+        # reader never sees a dead pid with the record still "running" and calls a run that just ended stale.
+        code = _exit_code_unreaped(proc.pid)
+        if code is None:
+            code = proc.wait()
         job = read(root, kind, key) or {"kind": kind, "key": key, "pid": proc.pid, "started": None}
         if job.get("pid") == proc.pid:
             write(root, {**job, "state": "done", "returncode": code, "ended": time.time(), "stale": False})
+        proc.wait()
 
     threading.Thread(target=reap, name=f"{kind}-helper", daemon=True).start()
     return proc.pid

@@ -141,6 +141,7 @@ def test_the_model_places_meetings_and_creates_projects(store, tmp_path):
             "descriptions": [{"project": factory, "description": "The Contoso migration foundry."}],
         }
 
+    store.save()  # the callers persist their changes themselves
     added = P.suggest_with_model(tmp_path, store, run, user_name="Timo")
     rtv = store.find("RTV")
     assert sorted(added) == [("2026-10-20T10-00-00", rtv), ("2026-10-21T10-00-00", factory)]
@@ -158,6 +159,7 @@ def test_the_model_never_rewrites_a_description_the_user_wrote(store, tmp_path):
     def run(prompt, schema):
         return {"new_projects": [], "assignments": [], "descriptions": [{"project": pid, "description": "Other."}]}
 
+    store.save()  # the callers persist their changes themselves
     P.suggest_with_model(tmp_path, store, run, user_name="Timo")
     assert store.projects()[pid]["description"] == "My words."
 
@@ -199,6 +201,7 @@ def test_meetings_kept_private_are_never_in_the_prompt(store, tmp_path):
         return {"new_projects": [], "assignments": [], "descriptions": []}
 
     private = {"2026-10-21T10-00-00", "2026-10-22T10-00-00"}
+    store.save()  # the callers persist their changes themselves
     P.suggest_with_model(tmp_path, store, run, user_name="Timo", private=private)
     assert "Kurzsync RTV" in prompts[0]
     # The project's name may show; its private meetings, their people and summaries don't.
@@ -254,6 +257,7 @@ def test_a_project_of_private_meetings_only_is_never_shown_or_rewritten(store, t
                 "assignments": [{"meeting": "2026-10-20T10-00-00", "projects": [secret]}],
                 "descriptions": [{"project": secret, "description": "Rewritten by the cloud."}]}
 
+    store.save()  # the callers persist their changes themselves
     P.suggest_with_model(tmp_path, store, run, user_name="Timo", private={"2026-10-21T10-00-00"})
     assert "Nightjar" not in prompts[0] and "Acme" not in prompts[0] and secret not in prompts[0]
     assert open_pid in prompts[0]

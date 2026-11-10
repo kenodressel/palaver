@@ -1,6 +1,6 @@
 // The language model's helpers the Meetings window has the app start (app.sock `start_helper`;
-// palaver/model_jobs.py `helper_argv` and `launch`): `palaver notes <a meeting> --force` or
-// `palaver projects --no-wait suggest | describe <id>`, recorded in `<recordings>/.jobs/<kind>-<key>.json`
+// palaver/model_jobs.py `helper_argv` and `launch`): `palaver-lm notes <a meeting> --force` or
+// `palaver-lm projects --no-wait suggest | describe <id>` (Python's `palaver …` in the legacy-server fallback), recorded in `<recordings>/.jobs/<kind>-<key>.json`
 // with their pid, and their output in `<kind>-<key>.log`. The app starts them, so they are its
 // descendants (the memory watchdog sees them) and outlive a restart of the window's server, which
 // reads the records. Never two runs of one kind and key.
@@ -10,15 +10,17 @@ import PalaverCore
 
 public final class HelperJobs: @unchecked Sendable {
     public static let kinds = ["notes", "projects"]
-    static let keyPattern = try! NSRegularExpression(pattern: #"^[A-Za-z0-9_.-]{1,80}$"#)
-    static let projectId = try! NSRegularExpression(pattern: #"^[0-9a-f]{1,64}$"#)
-    static let folderName = try! NSRegularExpression(pattern: #"^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(-\d+)?$"#)
+    static let keyPattern = try! NSRegularExpression(pattern: #"\A[A-Za-z0-9_.-]{1,80}\z"#)
+    static let projectId = try! NSRegularExpression(pattern: #"\A[0-9a-f]{1,64}\z"#)
+    static let folderName = try! NSRegularExpression(pattern: #"\A\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(-\d+)?\z"#)
 
     /// Starts argv with its output on the given fd, in a session of its own; the app's environment.
     public typealias Spawn = (_ argv: [String], _ output: Int32) throws -> WorkerProcess
 
     private let outputDir: () -> URL
     private let python: String
+    /// palaver-lm; nil: Python's command (the legacy-server fallback, or it is missing).
+    private let lm: String?
     private let cliOptions: [String]
     private let taskpolicy: String?
     private let spawn: Spawn
@@ -27,12 +29,13 @@ public final class HelperJobs: @unchecked Sendable {
     private let lock = NSLock()
 
     /// `env`: what the app adds for its children (PALAVER_APP, PALAVER_NOTIFY, …).
-    public init(outputDir: @escaping () -> URL, python: String, cliOptions: [String], env: [String: String] = [:],
+    public init(outputDir: @escaping () -> URL, python: String, lm: String? = nil, cliOptions: [String], env: [String: String] = [:],
                 taskpolicy: String? = FileManager.default.fileExists(atPath: "/usr/sbin/taskpolicy") ? "/usr/sbin/taskpolicy" : nil,
                 spawn: Spawn? = nil, now: @escaping () -> Double = { Date().timeIntervalSince1970 },
                 alive: @escaping (Int32) -> Bool = UpdateBusy.pidAlive) {
         self.outputDir = outputDir
         self.python = python
+        self.lm = lm
         self.cliOptions = cliOptions
         self.taskpolicy = taskpolicy
         self.spawn = spawn ?? { argv, output in
@@ -68,7 +71,7 @@ public final class HelperJobs: @unchecked Sendable {
         default:
             throw CallRefused("not a helper: \(kind)")
         }
-        let command = [python, "-m", "palaver"] + cliOptions + ["--no-notify", kind] + args
+        let command = (lm.map { [$0] } ?? [python, "-m", "palaver"]) + cliOptions + ["--no-notify", kind] + args
         return taskpolicy.map { [$0, "-c", "utility"] + command } ?? command
     }
 

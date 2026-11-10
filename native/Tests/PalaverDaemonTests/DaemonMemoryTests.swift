@@ -208,6 +208,41 @@ extension DaemonTicks {
             #expect(given[0].message.contains("Write notes") && given[0].message.contains("3 times"))
         }
 
+        @Test func notesPalaverLMStoppedForLowMemoryAreQueuedAgainThenGivenUp() async throws {
+            let dir = tempDir()
+            let f = folder(dir)
+            let r = try MemRig(dir, activity: { _ in nil }, notesMemory: 14, notesQueued: [f.path])
+            var t = 10.0
+            for stop in 1...3 {
+                await r.run(until: t)
+                let notes = try #require(r.workers["notes"]!.last)
+                #expect(r.workers["notes"]!.count == stop && notes.rc == nil)
+                notes.rc = MemoryRules.lowMemoryExit  // palaver-lm's own watchdog ended it
+                t += 5
+                await r.run(until: t)
+                if stop < 3 {
+                    #expect(r.h.status()["notes_queued"] == .strings([f.path]))
+                    t += 600  // past the backoff
+                }
+            }
+            #expect(r.h.status()["notes_queued"] == .strings([]))
+            #expect(r.sentTitles.filter { $0 == "Notes paused: the Mac is low on memory" }.count == 1)
+            let given = r.h.notifications.filter { $0.title.hasPrefix("Notes not written") }
+            #expect(given.count == 1 && given[0].message.contains("Write notes"))
+            await r.run(until: t + 3600)
+            #expect(r.workers["notes"]!.count == 3)
+        }
+
+        @Test func notesThatFailOtherwiseAreNotQueuedAgain() async throws {
+            let dir = tempDir()
+            let f = folder(dir)
+            let r = try MemRig(dir, activity: { _ in nil }, notesMemory: 14, notesQueued: [f.path])
+            await r.run(until: 10)
+            try #require(r.workers["notes"]!.first).rc = 1
+            await r.run(until: 3600)
+            #expect(r.workers["notes"]!.count == 1 && r.h.status()["notes_queued"] == .strings([]))
+        }
+
         @Test func processOverBudgetWithMemoryToSpareFinishes() async throws {
             let dir = tempDir()
             let f = folder(dir)

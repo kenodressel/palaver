@@ -1,0 +1,6 @@
+{
+  "name": "json-roundtrip",
+  "steps": [{"op": "json-roundtrip", "args": {}}],
+  "compare": ["Recordings", "config", "home", "events.json"],
+  "result": true
+}

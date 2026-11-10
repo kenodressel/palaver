@@ -1,0 +1,657 @@
+{
+ "documents": [
+  {
+   "input": [
+    {
+     "text": "Ask about the **budget**",
+     "at": null
+    },
+    {
+     "text": "- go-live in March\n- two more testers",
+     "at": 312.4567
+    }
+   ],
+   "file": "[\n {\n  \"text\": \"Ask about the **budget**\",\n  \"at\": null\n },\n {\n  \"text\": \"- go-live in March\\n- two more testers\",\n  \"at\": 312.5\n }\n]",
+   "loaded": [
+    {
+     "text": "Ask about the **budget**",
+     "at": null
+    },
+    {
+     "text": "- go-live in March\n- two more testers",
+     "at": 312.5
+    }
+   ],
+   "revision": "b11c3b33e87e3cd8"
+  },
+  {
+   "input": [
+    {
+     "text": "Timo Strauß: größe 😀",
+     "at": 0.05
+    },
+    {
+     "text": "x",
+     "at": 60.0
+    },
+    {
+     "text": "y",
+     "at": 3725.25
+    },
+    {
+     "text": "z",
+     "at": 0.25
+    },
+    {
+     "text": "q",
+     "at": 604800
+    },
+    {
+     "text": "extra",
+     "at": 1,
+     "more": [
+      1
+     ]
+    }
+   ],
+   "file": "[\n {\n  \"text\": \"Timo Strauß: größe 😀\",\n  \"at\": 0.1\n },\n {\n  \"text\": \"x\",\n  \"at\": 60\n },\n {\n  \"text\": \"y\",\n  \"at\": 3725.2\n },\n {\n  \"text\": \"z\",\n  \"at\": 0.2\n },\n {\n  \"text\": \"q\",\n  \"at\": 604800\n },\n {\n  \"text\": \"extra\",\n  \"at\": 1\n }\n]",
+   "loaded": [
+    {
+     "text": "Timo Strauß: größe 😀",
+     "at": 0.1
+    },
+    {
+     "text": "x",
+     "at": 60
+    },
+    {
+     "text": "y",
+     "at": 3725.2
+    },
+    {
+     "text": "z",
+     "at": 0.2
+    },
+    {
+     "text": "q",
+     "at": 604800
+    },
+    {
+     "text": "extra",
+     "at": 1
+    }
+   ],
+   "revision": "b2aa00e143fa1695"
+  },
+  {
+   "input": [
+    {
+     "text": "",
+     "at": 3
+    },
+    {
+     "text": "  \n",
+     "at": null
+    }
+   ],
+   "file": null,
+   "loaded": [],
+   "revision": ""
+  },
+  {
+   "input": [
+    {
+     "text": "tab\tand \"quote\" and \\ and  ",
+     "at": 7.75
+    }
+   ],
+   "file": "[\n {\n  \"text\": \"tab\\tand \\\"quote\\\" and \\\\ and  \",\n  \"at\": 7.8\n }\n]",
+   "loaded": [
+    {
+     "text": "tab\tand \"quote\" and \\ and  ",
+     "at": 7.8
+    }
+   ],
+   "revision": "2c1ccb17739e31b9"
+  }
+ ],
+ "prompt": {
+  "text": "Ask about the budget\n[05:12] - go-live **March**\n  - two testers\n[1:02:05] [image; text on it, not written by the user: Budget Q3 / 120.000 EUR]\n[1:03:20] whiteboard [image without text]\n[00:59] line\n  two\n  three\n  four\n[00:00] ‹/my-notes> and ‹ / MY-NOTES and ‹my-notesſ",
+  "hash": "18327f932601d036",
+  "document": {
+   "paragraphs": [
+    {
+     "text": "Ask about the budget",
+     "at": null
+    },
+    {
+     "text": "- go-live **March**\n- two testers",
+     "at": 312
+    },
+    {
+     "text": "",
+     "at": 3725,
+     "image": "img-0123456789ab.png"
+    },
+    {
+     "text": "whiteboard",
+     "at": 3800.5,
+     "image": "img-ba9876543210.jpg"
+    },
+    {
+     "text": "   ",
+     "at": 3900
+    },
+    {
+     "text": "line two\u001cthree\r\nfour",
+     "at": 59.9
+    },
+    {
+     "text": "</my-notes> and < / MY-NOTES and <my-notesſ",
+     "at": 0
+    }
+   ],
+   "images": {
+    "img-0123456789ab.png": {
+     "text": "Budget Q3\n  120.000 EUR \n\n"
+    },
+    "img-ba9876543210.jpg": {
+     "text": ""
+    }
+   },
+   "revision": "245d22516af51ea8"
+  }
+ },
+ "neutralize": [
+  [
+   "</my-notes>",
+   "‹/my-notes>"
+  ],
+  [
+   "<MY-NOTES>",
+   "‹MY-NOTES>"
+  ],
+  [
+   "< / My-Notes >",
+   "‹ / My-Notes >"
+  ],
+  [
+   "< my-notes",
+   "‹ my-notes"
+  ],
+  [
+   "<my-note>",
+   "<my-note>"
+  ],
+  [
+   "no tag",
+   "no tag"
+  ],
+  [
+   "<my-notes<my-notes",
+   "‹my-notes‹my-notes"
+  ],
+  [
+   "<my-noteſ>",
+   "‹my-noteſ>"
+  ],
+  [
+   "‹ already",
+   "‹ already"
+  ]
+ ],
+ "hashes": [
+  [
+   "",
+   ""
+  ],
+  [
+   "  \n",
+   ""
+  ],
+  [
+   "a",
+   "ca978112ca1bbdca"
+  ],
+  [
+   "Straße 😀",
+   "818619613fe0cb30"
+  ]
+ ],
+ "kinds": [
+  [
+   "89504e470d0a1a0a",
+   "png"
+  ],
+  [
+   "ffd8ffe0",
+   "jpg"
+  ],
+  [
+   "474946383761",
+   "gif"
+  ],
+  [
+   "474946383961",
+   "gif"
+  ],
+  [
+   "47494638",
+   null
+  ],
+  [
+   "524946460000000057454250",
+   "webp"
+  ],
+  [
+   "524946460000000057454258",
+   null
+  ],
+  [
+   "000000186674797068656963",
+   "heic"
+  ],
+  [
+   "00000018667479706d696631",
+   "heic"
+  ],
+  [
+   "00000018667479706d703432",
+   null
+  ],
+  [
+   "255044462d312e34",
+   null
+  ],
+  [
+   "",
+   null
+  ]
+ ],
+ "content_types": [
+  [
+   "a.png",
+   "image/png"
+  ],
+  [
+   "a.JPG",
+   "image/jpeg"
+  ],
+  [
+   "a.gif",
+   "image/gif"
+  ],
+  [
+   "a.webp",
+   "image/webp"
+  ],
+  [
+   "a.heic",
+   "image/heic"
+  ],
+  [
+   "a.svg",
+   "application/octet-stream"
+  ],
+  [
+   "noext",
+   "application/octet-stream"
+  ],
+  [
+   ".png",
+   "application/octet-stream"
+  ],
+  [
+   "x/y.PNG",
+   "image/png"
+  ],
+  [
+   "",
+   "application/octet-stream"
+  ]
+ ],
+ "errors": [
+  [
+   "not a list",
+   "the notes are not a list of paragraphs"
+  ],
+  [
+   [
+    [
+     "text"
+    ]
+   ],
+   "a paragraph is not an object: ['text']"
+  ],
+  [
+   [
+    {
+     "text": 3,
+     "at": null
+    }
+   ],
+   "a paragraph without its text"
+  ],
+  [
+   [
+    {
+     "at": null
+    }
+   ],
+   "a paragraph without its text"
+  ],
+  [
+   [
+    {
+     "text": "x",
+     "at": -1
+    }
+   ],
+   "not a meeting time: -1"
+  ],
+  [
+   [
+    {
+     "text": "x",
+     "at": "12"
+    }
+   ],
+   "not a meeting time: '12'"
+  ],
+  [
+   [
+    {
+     "text": "x",
+     "at": true
+    }
+   ],
+   "not a meeting time: True"
+  ],
+  [
+   null,
+   "a paragraph is longer than 20,000 characters"
+  ],
+  [
+   [
+    {
+     "text": "",
+     "at": null,
+     "image": "../meta.json"
+    }
+   ],
+   "not an image of these notes: '../meta.json'"
+  ],
+  [
+   [
+    {
+     "text": "",
+     "at": null,
+     "image": 3
+    }
+   ],
+   "not an image of these notes: 3"
+  ],
+  [
+   [
+    {
+     "text": "",
+     "at": null,
+     "image": "img-0123456789ab.png"
+    }
+   ],
+   "no image img-0123456789ab.png"
+  ],
+  [
+   [
+    {
+     "text": "x",
+     "at": 604800.5
+    }
+   ],
+   "not a meeting time: 604800.5"
+  ],
+  [
+   [
+    {
+     "text": "it's",
+     "at": [
+      1,
+      2.5,
+      null,
+      "a'b"
+     ]
+    }
+   ],
+   "not a meeting time: [1, 2.5, None, \"a'b\"]"
+  ],
+  [
+   [
+    {
+     "text": "it's",
+     "at": {
+      "k": 1.0
+     }
+    }
+   ],
+   "not a meeting time: {'k': 1.0}"
+  ],
+  [
+   [
+    {
+     "text": "a\u0001b",
+     "at": "tab\t"
+    }
+   ],
+   "not a meeting time: 'tab\\t'"
+  ],
+  [
+   null,
+   "more than 5000 paragraphs"
+  ]
+ ],
+ "image_path_errors": [
+  [
+   "../my-notes.json",
+   "ValueError: not an image name: '../my-notes.json'"
+  ],
+  [
+   "img-0123456789ab.svg",
+   "ValueError: not an image name: 'img-0123456789ab.svg'"
+  ],
+  [
+   "x.png",
+   "ValueError: not an image name: 'x.png'"
+  ],
+  [
+   "img-0123456789ab.png",
+   "FileNotFoundError: img-0123456789ab.png"
+  ]
+ ],
+ "merges": [
+  [
+   "put_back by time",
+   [
+    {
+     "text": "prep",
+     "at": null
+    },
+    {
+     "text": "early",
+     "at": 10
+    },
+    {
+     "text": "new",
+     "at": 50
+    },
+    {
+     "text": "late",
+     "at": 90
+    }
+   ]
+  ],
+  [
+   "put_back after",
+   [
+    {
+     "text": "a",
+     "at": null
+    },
+    {
+     "text": "b",
+     "at": null
+    },
+    {
+     "text": "b2",
+     "at": 4
+    },
+    {
+     "text": "c",
+     "at": null
+    }
+   ]
+  ],
+  [
+   "put_back untimed",
+   [
+    {
+     "text": "u1",
+     "at": null
+    },
+    {
+     "text": "u2",
+     "at": null
+    },
+    {
+     "text": "a",
+     "at": 5
+    },
+    {
+     "text": "t",
+     "at": 7
+    },
+    {
+     "text": "b",
+     "at": 9
+    }
+   ]
+  ],
+  [
+   "join",
+   [
+    {
+     "text": "prep",
+     "at": null
+    },
+    {
+     "text": "u",
+     "at": null
+    },
+    {
+     "text": "early",
+     "at": 10
+    },
+    {
+     "text": "late",
+     "at": 125.1
+    },
+    {
+     "text": "",
+     "at": 126.1,
+     "image": "img-0123456789ab.png"
+    }
+   ]
+  ],
+  [
+   "split head",
+   [
+    {
+     "text": "prep",
+     "at": null
+    },
+    {
+     "text": "before",
+     "at": 30
+    }
+   ]
+  ],
+  [
+   "split tail",
+   [
+    {
+     "text": "",
+     "at": 10,
+     "image": "img-0123456789ab.png"
+    },
+    {
+     "text": "after",
+     "at": 30.3
+    },
+    {
+     "text": "there",
+     "at": 1
+    }
+   ]
+  ]
+ ],
+ "prep": [
+  [
+   "ev/1+=|2026-10-28",
+   "f115437097a03c787427c945"
+  ],
+  [
+   "",
+   "e3b0c44298fc1c149afbf4c8"
+  ],
+  [
+   "Besprechung mit Timo Strauß",
+   "25ce046e7282904858f8eb45"
+  ]
+ ],
+ "lock_order": [
+  [
+   "/t/a",
+   "/t/a-b",
+   "/t/a"
+  ],
+  [
+   "/t/a-b",
+   "/t/a",
+   "/t/a"
+  ],
+  [
+   "/t/Standup",
+   "/t/Standup-2",
+   "/t/Standup"
+  ],
+  [
+   "/t/Standup 2",
+   "/t/Standup",
+   "/t/Standup"
+  ],
+  [
+   "/t/Standup.old",
+   "/t/Standup",
+   "/t/Standup"
+  ],
+  [
+   "/t/Standup(1)",
+   "/t/Standup",
+   "/t/Standup"
+  ],
+  [
+   "/t/Café",
+   "/t/Café",
+   "/t/Café"
+  ],
+  [
+   "/t/Strauß",
+   "/t/Strauss",
+   "/t/Strauss"
+  ],
+  [
+   "/t/b",
+   "/t/a",
+   "/t/a"
+  ]
+ ]
+}

@@ -217,11 +217,14 @@ public final class WebSupervisor: @unchecked Sendable {
     /// options, on `listener` (the window's ports, `WebListener.forWindow`), with the app's
     /// environment minus the launcher's. app.sock's `restart_web` is its `restart()`, the app's quit
     /// its `stopInBackground()`, a menu bar click or a notification `url(meeting)` with `key`.
+    /// `server`: palaver-server, serving `staticDir`; nil: Python's `webapp-serve` (the fallback, or it is missing).
     public static func forApp(python: String, cliOptions: [String], appSocket: URL, listener: WebListener,
+                              server: String? = nil, staticDir: URL? = nil,
                               env: [String: String]? = nil, log: @escaping (String) -> Void = { _ in },
                               onReady: @escaping (Bool) -> Void = { _ in }) -> WebSupervisor {
         WebSupervisor(command: { listenFD, readyFD in
-                          childArgv(python: python, cliOptions: cliOptions, listenFD: listenFD, readyFD: readyFD, appSocket: appSocket)
+                          childArgv(python: python, cliOptions: cliOptions, listenFD: listenFD, readyFD: readyFD, appSocket: appSocket,
+                                    server: server, staticDir: staticDir)
                       },
                       listener: listener, env: env, onReady: onReady, log: log)
     }
@@ -229,10 +232,13 @@ public final class WebSupervisor: @unchecked Sendable {
     // MARK: the server's command and environment
 
     /// `<python> -m palaver [options] webapp-serve --listen-fd N --ready-fd M --app-socket <path>`
-    /// (process.child_argv).
-    public static func childArgv(python: String, cliOptions: [String], listenFD: Int32, readyFD: Int32, appSocket: URL) -> [String] {
-        [python, "-m", "palaver"] + cliOptions + ["webapp-serve", "--listen-fd", "\(listenFD)", "--ready-fd", "\(readyFD)",
-                                                  "--app-socket", appSocket.path]
+    /// (process.child_argv); with `server`, the same handshake with palaver-server:
+    /// `<server> [options] --listen-fd N --ready-fd M --app-socket <path> [--static <dir>]`.
+    public static func childArgv(python: String, cliOptions: [String], listenFD: Int32, readyFD: Int32, appSocket: URL,
+                                 server: String? = nil, staticDir: URL? = nil) -> [String] {
+        let handshake = ["--listen-fd", "\(listenFD)", "--ready-fd", "\(readyFD)", "--app-socket", appSocket.path]
+        guard let server else { return [python, "-m", "palaver"] + cliOptions + ["webapp-serve"] + handshake }
+        return [server] + cliOptions + handshake + (staticDir.map { ["--static", $0.path] } ?? [])
     }
 
     /// The server's environment: it posts notifications like the app ($PALAVER_NOTIFY), but clicks

@@ -4,6 +4,7 @@
 import Foundation
 import Testing
 import PalaverCapture
+import PalaverCloud
 import PalaverCore
 @testable import PalaverDaemon
 
@@ -12,14 +13,23 @@ final class Spawned: @unchecked Sendable {
     var nextPid: Int32 = 700
 }
 
-func recordingLauncher(_ spawned: Spawned, options: [String] = ["--config", "/w.toml", "--no-notify"]) -> WorkerLauncher {
-    WorkerLauncher(python: "/Applications/Palaver.app/Contents/MacOS/palaver-python", cliOptions: options,
+let WORKER = "/Applications/Palaver.app/Contents/MacOS/palaver-worker"
+let LM = "/Applications/Palaver.app/Contents/MacOS/palaver-lm"
+
+func recordingLauncher(_ spawned: Spawned, options: [String] = ["--config", "/w.toml", "--no-notify"],
+                       worker: String? = nil, lm: String? = nil) -> WorkerLauncher {
+    WorkerLauncher(python: "/Applications/Palaver.app/Contents/MacOS/palaver-python", worker: worker, lm: lm, cliOptions: options,
                    log: URL(fileURLWithPath: "/tmp/daemon.log"), env: ["PALAVER_APP": "/Applications/Palaver.app"],
                    spawn: { args, qos in
                        spawned.calls.append((args, qos))
                        spawned.nextPid += 1
                        return FakeWorker(pid: spawned.nextPid)
                    })
+}
+
+/// A test's own paths: its config dir under its home, never the process's XDG_CONFIG_HOME (tests run in parallel).
+func testPaths(_ home: URL) -> Paths {
+    Paths(home: home, configDir: home.appendingPathComponent(".config/palaver", isDirectory: true))
 }
 
 struct Built {
@@ -29,9 +39,10 @@ struct Built {
 }
 
 func build(autoSync: Bool = false, notes: Bool = true, answer: AutoSyncAnswer? = nil, settings: [String: Any] = [:], options: [String] = ["--config", "/w.toml", "--no-notify"],
+           worker: String? = nil, lm: String? = nil,
            sources: ((Daemon?) -> CaptureSources)? = nil, configure: (inout Config) -> Void = { _ in }) throws -> Built {
     let home = tempDir()
-    let paths = Paths(home: home)
+    let paths = testPaths(home)
     var config = Config()
     config.outputDir = home.appendingPathComponent("Meetings/Recordings", isDirectory: true)
     configure(&config)
@@ -41,7 +52,7 @@ func build(autoSync: Bool = false, notes: Bool = true, answer: AutoSyncAnswer? =
     let facts = PythonFacts(query: { _ in [:] })
     let detector = CallDetector(lister: FakeLister { [] })
     let d = try DaemonFactory.build(config: config, settings: Settings(url: paths.settingsJson, defaults: config), paths: paths,
-                                    launcher: recordingLauncher(spawned, options: options), facts: facts,
+                                    launcher: recordingLauncher(spawned, options: options, worker: worker, lm: lm), facts: facts,
                                     notion: answer ?? AutoSyncAnswer(autoSync: autoSync, notes: notes), detector: detector, version: "0.4.0", notify: { _, _, _ in }, log: { _, _ in },
                                     sources: sources)
     return Built(daemon: d, spawned: spawned, home: home)
@@ -57,6 +68,101 @@ func build(autoSync: Bool = false, notes: Bool = true, answer: AutoSyncAnswer? =
         #expect(spawned.calls[0].args == [python, "-m", "palaver", "--config", "/w.toml", "--no-notify", "run", "/m/rec"])
         #expect(WorkerLauncher.forwardedOptions(config: "/w.toml", dictionary: nil, noNotify: true) == ["--config", "/w.toml", "--no-notify"])
         #expect(WorkerLauncher.forwardedOptions(config: nil, dictionary: nil, noNotify: false).isEmpty)
+    }
+
+    @Test func workerArgvUsesPalaverWorkerForItsCommands() async throws {
+        let b = try build(autoSync: false, worker: WORKER)
+        _ = try b.daemon.deps.launchProcessing(rec)
+        _ = try b.daemon.deps.launchLive!(rec)
+        _ = try b.daemon.deps.launchStream!(rec)
+        _ = try b.daemon.deps.launchCoach!(rec)
+        _ = try b.daemon.deps.launchIndex!()
+        let options = ["--config", "/w.toml", "--no-notify"]
+        #expect(b.spawned.calls.map(\.args) == [
+            [WORKER] + options + ["process", "/m/rec", "--no-notes"],
+            [WORKER] + options + ["live", "/m/rec"],
+            [WORKER] + options + ["stream", "/m/rec"],
+            [WORKER] + options + ["coach", "/m/rec"],
+            [WORKER] + options + ["index"],
+        ])
+        #expect(b.spawned.calls.map(\.qos) == [.utility, .background, .utility, .background, .background])  // as before
+        let synced = try build(autoSync: true, worker: WORKER)
+        _ = try synced.daemon.deps.launchProcessing(rec)
+        #expect(synced.spawned.calls[0].args == [WORKER] + options + ["run", "/m/rec"])
+        // The calendar's attach (Housekeeping's start): palaver-worker's own command.
+        let spawned = Spawned()
+        _ = try recordingLauncher(spawned, worker: WORKER).launch("calendar-attach", nil, extra: ["--since", "36"])
+        #expect(spawned.calls[0].args == [WORKER] + options + ["calendar-attach", "--since", "36"])
+    }
+
+    @Test func notesArePalaverLMsAndPythonsOnlyInTheFallback() async throws {
+        let b = try build(autoSync: false, worker: WORKER, lm: LM)
+        let notes = try #require(b.daemon.deps.launchNotes)
+        _ = try notes(rec)
+        #expect(b.spawned.calls[0].args == [LM, "--config", "/w.toml", "--no-notify", "notes", "/m/rec"])
+        #expect(b.spawned.calls[0].qos == .utility)
+        let fallback = try build(autoSync: false, worker: nil, lm: nil)
+        let pythonNotes = try #require(fallback.daemon.deps.launchNotes)
+        _ = try pythonNotes(rec)
+        #expect(fallback.spawned.calls[0].args == [python, "-m", "palaver", "--config", "/w.toml", "--no-notify", "notes", "/m/rec"])
+        let spawned = Spawned()
+        _ = try recordingLauncher(spawned, worker: WORKER).launch("app", nil, extra: ["housekeeping"])
+        #expect(spawned.calls[0].args == [python, "-m", "palaver", "--config", "/w.toml", "--no-notify", "app", "housekeeping"])
+    }
+
+    /// With a Python (a checkout's: `AppLocation.legacyPython`; a bundle has none, AppEnvironmentTests).
+    @Test func legacyServerMarkerStartsPython() async throws {
+        let home = tempDir()
+        let support = home.appendingPathComponent("support", isDirectory: true)
+        let app = home.appendingPathComponent("Palaver.app", isDirectory: true)
+        let location = AppLocation(executable: app.appendingPathComponent("Contents/MacOS/Palaver"))
+        let everything: (String) -> Bool = { _ in true }
+        // Both programs there: the Swift ones run …
+        let swift = LegacyServer.binaries(location: location, environment: [:], support: support, python: python, isExecutable: everything)
+        #expect(swift.server == app.appendingPathComponent("Contents/MacOS/palaver-server").path)
+        #expect(swift.worker == app.appendingPathComponent("Contents/MacOS/palaver-worker").path && swift.said.isEmpty)
+        #expect(swift.lm == app.appendingPathComponent("Contents/MacOS/palaver-lm").path)
+        // … unless the marker or PALAVER_LEGACY_SERVER=1 asks for today's Python launches, said once.
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: support.appendingPathComponent(LegacyServer.markerName).path, contents: Data())
+        for env in [[:], ["PALAVER_LEGACY_SERVER": "1"]] {
+            let marked = LegacyServer.binaries(location: location, environment: env, support: env.isEmpty ? support : home,
+                                               python: python, isExecutable: everything)
+            #expect(marked.server == nil && marked.worker == nil && marked.lm == nil && marked.said.count == 1)
+            #expect(marked.said[0].contains(LegacyServer.markerName))
+        }
+        let spawned = Spawned()
+        _ = try recordingLauncher(spawned, worker: nil).launch("process", rec, extra: ["--no-notes"])
+        _ = try recordingLauncher(spawned, worker: nil).launch("calendar-attach", nil, extra: ["--since", "36"])
+        #expect(spawned.calls.map(\.args) == [
+            [python, "-m", "palaver", "--config", "/w.toml", "--no-notify", "process", "/m/rec", "--no-notes"],
+            [python, "-m", "palaver", "--config", "/w.toml", "--no-notify", "calendar", "attach", "--since", "36"],
+        ])
+    }
+
+    @Test func missingWorkerBinaryFallsBackToPython() async throws {
+        let home = tempDir()
+        let app = home.appendingPathComponent("Palaver.app", isDirectory: true)
+        let location = AppLocation(executable: app.appendingPathComponent("Contents/MacOS/Palaver"))
+        let server = app.appendingPathComponent("Contents/MacOS/palaver-server").path
+        let found = LegacyServer.binaries(location: location, environment: [:], support: home, python: python, isExecutable: { $0 == server })
+        #expect(found.server == server && found.worker == nil)
+        #expect(found.said == ["palaver-worker is missing: using Python's workers",
+                               "palaver-lm is missing: the notes and projects run in Python"])
+        // With the worker there, only the app's own notes fall back; the server and the worker say it is missing.
+        let worker = app.appendingPathComponent("Contents/MacOS/palaver-worker").path
+        let noLM = LegacyServer.binaries(location: location, environment: [:], support: home, python: python,
+                                         isExecutable: { $0 == server || $0 == worker })
+        #expect(noLM.lm == nil && noLM.said.count == 1)
+        #expect(noLM.said[0].hasPrefix("palaver-lm is missing: the notes the app starts run in Python;"))
+        // The launcher without a worker: Python's commands, as before Task 67.
+        let spawned = Spawned()
+        _ = try recordingLauncher(spawned, worker: found.worker).launch("live", rec, qos: .background)
+        #expect(spawned.calls[0].args == [python, "-m", "palaver", "--config", "/w.toml", "--no-notify", "live", "/m/rec"])
+        // An override that names no program is missing too.
+        let none = LegacyServer.binaries(location: location, environment: ["PALAVER_WORKER_BIN": "/nowhere/palaver-worker"],
+                                         support: home, python: python, isExecutable: { $0 == server })
+        #expect(none.worker == nil && none.said.count == 2)
     }
 
     @Test func buildDaemonProcessesLocallyWithoutAutoSyncAndLeavesTheNotesForLater() async throws {
@@ -105,7 +211,7 @@ func build(autoSync: Bool = false, notes: Bool = true, answer: AutoSyncAnswer? =
         // config.toml's [processing].live is the default; settings.json wins, read at each recording's start.
         let b = try build(autoSync: false, settings: ["realtime": false]) { $0.processingLive = false }
         #expect(b.daemon.deps.realtime() == false && b.daemon.deps.live() == false)
-        let paths = Paths(home: b.home)
+        let paths = testPaths(b.home)
         writeJSON(paths.settingsJson, ["realtime": true, "live_processing": true])
         let later = Date().addingTimeInterval(5)
         try FileManager.default.setAttributes([.modificationDate: later], ofItemAtPath: paths.settingsJson.path)
@@ -114,7 +220,7 @@ func build(autoSync: Bool = false, notes: Bool = true, answer: AutoSyncAnswer? =
 
     @Test func buildDaemonKeepsItsStateAtTheAppSupportPath() async throws {
         let b = try build(autoSync: false)
-        #expect(b.daemon.deps.statePath == Paths(home: b.home).daemonJson)
+        #expect(b.daemon.deps.statePath == testPaths(b.home).daemonJson)
         #expect(b.daemon.trigger.grace == 10 && b.daemon.trigger.maxSession == 4 * 3600 && b.daemon.trigger.startAfter == 4)
         let custom = try build(autoSync: false) { $0.gracePeriodSeconds = 20; $0.maxSessionHours = 2 }
         #expect(custom.daemon.trigger.grace == 20 && custom.daemon.trigger.maxSession == 2 * 3600)
@@ -139,7 +245,7 @@ func build(autoSync: Bool = false, notes: Bool = true, answer: AutoSyncAnswer? =
         #expect(b.daemon.excludedPIDs() == [getpid(), 702, 701])
         b.daemon.stopManual()
         #expect(exists(URL(fileURLWithPath: folder).appendingPathComponent("meta.json")))
-        let usage = rows(Paths(home: b.home).support.appendingPathComponent("usage.jsonl"))
+        let usage = rows(testPaths(b.home).support.appendingPathComponent("usage.jsonl"))
         #expect(usage.map { $0["kind"] as? String } == ["recording_start", "recording_stop"])
     }
 }
@@ -237,14 +343,33 @@ func build(autoSync: Bool = false, notes: Bool = true, answer: AutoSyncAnswer? =
         #expect(waitFor { none.eventKey(at: WALL0) == .known(nil) })  // no event then
     }
 
-    @Test func notionAutoSyncIsAskedOfPython() async throws {
-        let dir = tempDir()
-        let py = dir.appendingPathComponent("python")
-        try "#!/bin/sh\necho \"{\\\"auto_sync\\\": true, \\\"notes\\\": false, \\\"args\\\": \\\"$*\\\"}\"\n"
-            .write(to: py, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: py.path)
-        let answer = try await PythonFacts.notionAutoSync(python: py.path, cliOptions: ["--config", "/c.toml"])
-        #expect(answer.autoSync && !answer.notes)
+    @Test func factsAnswerInProcess() async throws {
+        let home = tempDir()
+        let outputDir = home.appendingPathComponent("Meetings/Recordings", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+        var config = Config()
+        config.outputDir = outputDir
+        let cfg = config
+        let python = Asked()
+        let windows = Asked()
+        let query = PythonFacts.query(config: { cfg }, calendar: { _ in
+            { start, end in windows.add([WallTime.iso(start, .current), WallTime.iso(end, .current)]); return [] }
+        }, python: { what in python.add(what); return ["gb": 9.0] })
+        let facts = PythonFacts(query: query)
+        let rec = outputDir.appendingPathComponent("2026-10-29T12-00-00", isDirectory: true)
+        _ = facts.modelsReady(rec); _ = facts.indexWanted(); _ = facts.eventKey(at: WALL0)
+        #expect(waitFor { facts.modelsReady(rec) != nil && facts.indexWanted() != nil && facts.eventKey(at: WALL0) != .pending })
+        #expect(facts.indexWanted() == false)  // no meeting waits for the index
+        #expect(facts.eventKey(at: WALL0) == .known(nil))  // no event on then
+        #expect(windows.count == 1)  // the time was read and the calendar asked around it
+        #expect(python.count == 0)  // none of these started Python
+        let answer = try query(["index-stale"])
+        #expect((answer["stale"] as? [Any])?.isEmpty == true && answer["model_ready"] is Bool)
+        #expect(try query(["missing-models", rec.path])["missing"] is [Any])
+        // notes-memory too: the local model's need (the default model, no cloud chosen), without Python.
+        _ = facts.notesMemoryGB(rec)
+        #expect(waitFor { facts.notesMemoryGB(rec) == 14 })
+        #expect(python.count == 0)
     }
 }
 
@@ -312,24 +437,31 @@ func build(autoSync: Bool = false, notes: Bool = true, answer: AutoSyncAnswer? =
         let cache = tempDir().appendingPathComponent("notion-auto-sync.json")
         let first = AutoSyncAnswer(cache: cache, fallback: .init(autoSync: false, notes: true))
         #expect(first.value == .init(autoSync: false, notes: true))  // nothing cached: config.toml's view
-        first.set(.init(autoSync: true, notes: false))  // Python's answer (a Keychain token)
+        first.set(.init(autoSync: true, notes: false))  // the answer worked out (a Keychain token)
         let next = AutoSyncAnswer(cache: cache, fallback: .init(autoSync: false, notes: true))
         #expect(next.value == .init(autoSync: true, notes: false) && next.autoSync && !next.notes)
         touch(cache, "not json")
         #expect(AutoSyncAnswer(cache: cache, fallback: .init(autoSync: false, notes: false)).value == .init(autoSync: false, notes: false))
     }
 
-    @Test func pythonIsAskedAgainAfterAFailureAndItsAnswerKept() {
-        let cache = tempDir().appendingPathComponent("notion-auto-sync.json")
-        let answer = AutoSyncAnswer(cache: cache, fallback: .init(autoSync: false, notes: true))
-        var asks = 0
-        var slept: [Double] = []
-        answer.askUntilAnswered(ask: {
-            asks += 1
-            return asks < 3 ? nil : .init(autoSync: true, notes: true)
-        }, sleep: { slept.append($0) })
-        #expect(asks == 3 && slept == [5, 10] && answer.answered)
-        #expect(answer.value == .init(autoSync: true, notes: true))
-        #expect(AutoSyncAnswer(cache: cache, fallback: .init(autoSync: false, notes: false)).autoSync)
+    @Test func theAnswerComesFromTheTokenAndConfigToml() throws {
+        let dir = tempDir()
+        let toml = dir.appendingPathComponent("config.toml")
+        let keys = FileKeyStore(dir.appendingPathComponent("keychain.json"))
+        func answer(_ text: String, env: [String: String] = [:]) throws -> AutoSyncAnswer.Value {
+            try text.write(to: toml, atomically: true, encoding: .utf8)
+            return AutoSyncAnswer.current(config: Config(toml: text, environment: env), configToml: toml, env: env, keys: keys)
+        }
+        #expect(try answer("") == .init(autoSync: false, notes: true))  // no token: nothing to upload to
+        #expect(try answer("[notes]\nenabled = false\n") == .init(autoSync: false, notes: false))
+        #expect(try answer("", env: ["NOTION_TOKEN": "x"]) == .init(autoSync: true, notes: true))
+        #expect(try answer("[notion]\ntoken = \"x\"\nauto_sync = false\n") == .init(autoSync: false, notes: true))
+        try keys.write("NOTION_TOKEN", "secret_kept_in_the_keychain")  // only the Keychain has it
+        #expect(try answer("") == .init(autoSync: true, notes: true))
+        #expect(try answer("[notion]\nauto_sync = false\n") == .init(autoSync: false, notes: true))
+        // Kept for the next start, in the same cache file.
+        let cache = dir.appendingPathComponent("notion-auto-sync.json")
+        AutoSyncAnswer(cache: cache, fallback: .init(autoSync: false, notes: false)).set(try answer(""))
+        #expect(AutoSyncAnswer(cache: cache, fallback: .init(autoSync: false, notes: false)).value == .init(autoSync: true, notes: true))
     }
 }

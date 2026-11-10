@@ -47,6 +47,8 @@ public final class Settings: @unchecked Sendable {
     public var nudgeQuietInvitee: Bool { bool("nudge_quiet_invitee", true) }
     public var nudgePace: Bool { bool("nudge_pace", false) }
     public var nudgeFillers: Bool { bool("nudge_fillers", false) }
+    /// Each nudge also as a quiet notification (#19).
+    public var nudgeNotify: Bool { bool("nudge_notify", true) }
 
     /// The setup assistant was finished or skipped (the window's finish_setup writes
     /// `"setup": {"done"|"skipped": <time>, "hardware": …}`).

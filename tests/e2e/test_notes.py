@@ -1,4 +1,5 @@
-"""Writing notes: the time it takes so far, Cancel, the usual time once known."""
+"""Writing notes: the time it takes so far, Cancel, the usual time once known; what palaver-lm writes (its model the
+test's) is shown, and the Python fallback reads it as up to date."""
 
 import re
 
@@ -119,3 +120,30 @@ def test_notes_a_restarted_server_finds_running_show_until_they_are_done(page, a
     expect(bar).to_have_count(0, timeout=15_000)
     expect(_write_button(page)).to_be_enabled()
     assert app_server.notes.calls == []  # no second run
+
+
+def test_the_models_notes_are_written_shown_and_up_to_date_for_python(page, app_server):
+    import json
+
+    from palaver import notes
+    from palaver.models import Utterance
+    from palaver.paths import RecordingPaths
+    from palaver.speakers import without_ignored
+
+    app_server.notes.write({
+        "title": "Rollout plan", "summary": "The rollout moves to Friday.",
+        "sections": [{"heading": "Rollout timing", "points": [{"text": "Ship on Friday", "details": ["Bob: not before"]}]}],
+        "next_steps": [{"owner": "Bob", "task": "Tell the customer"}], "decisions": ["Ship on Friday"],
+        "speaker_names": {"SPEAKER_01": "Bob"}})
+    open_meeting(page, app_server, A)
+    _write_button(page).click()
+    expect(page.locator("#main .notes h2", has_text="Rollout timing")).to_be_visible()
+    expect(page.locator("#main .notes")).to_contain_text("Tell the customer")
+    paths = RecordingPaths(app_server.root / A)
+    written = notes.load(paths)
+    assert written["title"] == "Rollout plan" and written["decisions"] == ["Ship on Friday"]
+    assert {"transcript_hash", "generated_at"} <= set(written)
+    utterances = [Utterance.from_dict(d) for d in json.loads(paths.transcript_json.read_text())]
+    assert not notes.is_stale(paths, without_ignored(paths, utterances))
+    events = [json.loads(line).get("event") for line in paths.session_log.read_text().splitlines()]
+    assert "notes_start" in events and "notes_done" in events

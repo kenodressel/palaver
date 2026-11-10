@@ -8,9 +8,11 @@ import PalaverCore
 
 @Suite struct HelperJobsTests {
     let python = "/A/Contents/MacOS/palaver-python"
+    let lm = "/A/Contents/MacOS/palaver-lm"
 
-    func jobs(_ out: URL, spawn: HelperJobs.Spawn? = nil, alive: @escaping (Int32) -> Bool = { _ in false }) -> HelperJobs {
-        HelperJobs(outputDir: { out }, python: python, cliOptions: ["--config", "/c.toml"], taskpolicy: "/usr/sbin/taskpolicy",
+    func jobs(_ out: URL, lm: String? = "/A/Contents/MacOS/palaver-lm", spawn: HelperJobs.Spawn? = nil,
+              alive: @escaping (Int32) -> Bool = { _ in false }) -> HelperJobs {
+        HelperJobs(outputDir: { out }, python: python, lm: lm, cliOptions: ["--config", "/c.toml"], taskpolicy: "/usr/sbin/taskpolicy",
                    spawn: spawn, now: { 1000 }, alive: alive)
     }
 
@@ -19,17 +21,24 @@ import PalaverCore
         let folder = out.appendingPathComponent("2026-10-30T08-02-13")
         let j = jobs(out)
         #expect(try j.argv(kind: "notes", args: [folder.path, "--force"])
+                == ["/usr/sbin/taskpolicy", "-c", "utility", lm, "--config", "/c.toml", "--no-notify", "notes", folder.path, "--force"])
+        // The legacy-server fallback (no palaver-lm): Python's command.
+        #expect(try jobs(out, lm: nil).argv(kind: "projects", args: ["--no-wait", "suggest"])
                 == ["/usr/sbin/taskpolicy", "-c", "utility", python, "-m", "palaver", "--config", "/c.toml", "--no-notify",
-                    "notes", folder.path, "--force"])
+                    "projects", "--no-wait", "suggest"])
         #expect(Array(try j.argv(kind: "projects", args: ["--no-wait", "suggest"]).suffix(3)) == ["projects", "--no-wait", "suggest"])
         #expect(Array(try j.argv(kind: "projects", args: ["--no-wait", "describe", "ab12"]).suffix(2)) == ["describe", "ab12"])
         for (kind, args) in [("notes", ["/etc", "--force"]), ("notes", [out.path + "/x/../../etc", "--force"]),
                              ("notes", [out.path + "/not-a-meeting", "--force"]), ("notes", [folder.path]),
                              ("projects", ["--no-wait", "rm"]), ("run", [folder.path]),
-                             ("projects", ["--no-wait", "describe", "../x"])] {
+                             ("projects", ["--no-wait", "describe", "../x"]), ("projects", ["--no-wait", "describe", "ab12\n"]),
+                             ("notes", [folder.path + "\n", "--force"])] {
             #expect(throws: CallRefused.self, "\(kind) \(args)") { try j.argv(kind: kind, args: args) }
         }
-        #expect(throws: CallRefused.self) { try j.launch(kind: "projects", key: "../x", args: ["--no-wait", "suggest"]) }
+        for bad in ["../x", "a/b", ".hidden", String(repeating: "a", count: 81), "abc\n", ""] {
+            #expect(throws: CallRefused.self, "\(bad)") { try j.launch(kind: "projects", key: bad, args: ["--no-wait", "suggest"]) }
+        }
+        #expect(!FileManager.default.fileExists(atPath: out.appendingPathComponent(".jobs").path))
     }
 
     @Test func aLaunchedHelperIsRecordedUntilItEndsWithItsExitCodeAndItsOutputKept() throws {
@@ -76,7 +85,7 @@ import PalaverCore
 
     @Test func oneTestRecorderServesAppSockAndTheDaemonsMeetingStart() throws {
         let home = tempDir()
-        let paths = Paths(home: home)
+        let paths = testPaths(home)
         var config = Config()
         config.outputDir = home.appendingPathComponent("Meetings/Recordings", isDirectory: true)
         let calls = Calls()

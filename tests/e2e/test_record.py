@@ -15,6 +15,8 @@ pytestmark = pytest.mark.e2e
 
 def _no_recording(page, served):
     """The call being recorded in the fixtures has ended (and is gone)."""
+    # The page asks for the live meeting as it loads: its folder goes only once that answer is in (else a 404).
+    page.wait_for_load_state("networkidle")
     served.live_worker.kill()
     served.live_worker.wait()
     shutil.rmtree(served.root / LIVE)

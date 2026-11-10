@@ -15,7 +15,7 @@ from pathlib import Path
 
 import soundfile as sf
 
-from . import migrate, notify
+from . import migrate, notify, provider_helper
 from .config import Config, default_config_path, load_config
 from .paths import RecordingPaths
 from .session_log import event, session_log, stage
@@ -377,6 +377,13 @@ def _make_transcriber(cfg: Config, dictionary_path: Path | None):
     )
 
 
+def _cmd_cloud_transcribe(args: argparse.Namespace) -> int:
+    from . import cloud_transcribe
+
+    dictionary_path = Path(args.dictionary).expanduser() if args.dictionary else None
+    return cloud_transcribe.run(_load_cfg(args), Path(args.folder), dictionary_path)
+
+
 def _cmd_live(args: argparse.Namespace) -> int:
     from . import live
     from .diarizer import LiveEngineDiarizer
@@ -708,6 +715,7 @@ def _process(
         talk_seconds,
     )
     from .people import rejected_voices
+    from .store_lock import meeting_lock
     from .voices import VoiceBank, recognize
 
     meeting_event = _attach_calendar(cfg, paths)
@@ -732,11 +740,12 @@ def _process(
         invited=calendar_events.invited_names(paths, list(bank.names()), user_name=cfg.user_name),
         rejected=rejected_voices(paths.folder.parent),  # "Not Tom", here and for voices like it (#48)
     )
-    paths.speakers_auto.write_text(json.dumps(
-        {label: {"name": name, "similarity": round(sim, 3)} for label, (name, sim) in recognized.items()},
-        indent=2,
-        ensure_ascii=False,
-    ))
+    with meeting_lock(paths.folder):
+        paths.speakers_auto.write_text(json.dumps(
+            {label: {"name": name, "similarity": round(sim, 3)} for label, (name, sim) in recognized.items()},
+            indent=2,
+            ensure_ascii=False,
+        ))
     for label, (name, sim) in recognized.items():
         print(f"Recognized {label} as {name} (voice similarity {sim:.2f})")
     for label, name in adopt_live_names(paths).items():
@@ -930,7 +939,10 @@ def _sort_into_projects(cfg: Config, paths: RecordingPaths) -> None:
     meeting, output_dir = paths.folder.name, paths.folder.parent
     store = projects.ProjectStore()
     try:
-        added = projects.assign_by_rules(output_dir, store, user_name=cfg.user_name, meetings=[meeting])
+        with store.locked():  # the rules' changes: reloaded, applied, saved under the lock
+            store.reload()
+            added = projects.assign_by_rules(output_dir, store, user_name=cfg.user_name, meetings=[meeting])
+            store.save()
         if not added and not store.of_meeting(meeting):
             from . import llm
 
@@ -943,8 +955,7 @@ def _sort_into_projects(cfg: Config, paths: RecordingPaths) -> None:
                 with stage("projects", engine=engine.choice, model=engine.model):
                     added = projects.suggest_with_model(
                         output_dir, store, engine.run, user_name=cfg.user_name, meetings=[meeting],
-                        private=_private_meetings(output_dir) if engine.cloud else ())
-        store.save()
+                        private=_private_meetings(output_dir) if engine.cloud else ())  # saves under the lock
     except Exception as exc:  # projects are extra; the notes are written
         print(f"warning: sorting into projects failed: {exc}")
         event("projects_failed", error=str(exc))
@@ -1019,11 +1030,13 @@ def _projects_with_model(cfg: Config, args: argparse.Namespace) -> int:
         for pid in targets:
             text = projects.describe_with_model(cfg.output_dir, store, pid, engine.run, user_name=cfg.user_name,
                                                 private=private)
-            store.save()
             print(f"{store.projects().get(pid, {}).get('name', pid)}: {text}")
         return 0
     meetings = [Path(args.target).name] if args.target else None
-    added = projects.assign_by_rules(cfg.output_dir, store, user_name=cfg.user_name, meetings=meetings)
+    with store.locked():  # the rules' changes: reloaded, applied, saved under the lock
+        store.reload()
+        added = projects.assign_by_rules(cfg.output_dir, store, user_name=cfg.user_name, meetings=meetings)
+        store.save()
     folders = [cfg.output_dir / m for m in meetings or []]
     try:
         engine = llm.engine(cfg, "projects", parse=projects.parse_answer, meetings=folders)
@@ -1034,7 +1047,6 @@ def _projects_with_model(cfg: Config, args: argparse.Namespace) -> int:
         added += projects.suggest_with_model(cfg.output_dir, store, engine.run, user_name=cfg.user_name,
                                              meetings=meetings,
                                              private=_private_meetings(cfg.output_dir) if engine.cloud else ())
-    store.save()
     for meeting, pid in added:
         print(f"{meeting}: {store.projects()[pid]['name']}")
     if engine is None:
@@ -1462,6 +1474,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Leave the notes for later (the app writes them when no call is recorded)")
     p_proc.set_defaults(func=_cmd_process)
 
+    p_cloud = sub.add_parser(
+        "cloud-transcribe", help="The system track through the chosen transcription service (palaver-worker runs this)"
+    )
+    p_cloud.add_argument("folder")
+    p_cloud.set_defaults(func=_cmd_cloud_transcribe)
+
     p_live = sub.add_parser(
         "live", help="Process a recording while it is being made (the daemon starts this)"
     )
@@ -1498,6 +1516,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_next = sub.add_parser("next-question", help="Suggest the best next question in a meeting (inputs on stdin)")
     p_next.add_argument("folder")
     p_next.set_defaults(func=_cmd_next_question)
+
+    p_provider = sub.add_parser(
+        "provider", help="The language model and transcription settings, for the window's server (body on stdin)"
+    )
+    p_provider.add_argument("action", choices=provider_helper.ACTIONS)
+    p_provider.add_argument("--json", action="store_true", help="One JSON line out (the only output)")
+    p_provider.set_defaults(func=provider_helper.command)
 
     p_index = sub.add_parser("index", help="Index meetings for search by meaning (runs in the background)")
     p_index.add_argument("folders", nargs="*", help="Only these recordings (default: all without a current index)")
@@ -1652,6 +1677,8 @@ def build_parser() -> argparse.ArgumentParser:
     r_create.add_argument("--audio", action="store_true", help="Include that meeting's audio (large)")
     r_create.add_argument("-m", "--message", default="", help="What happened")
     r_create.add_argument("--wish", action="store_true", help="A wish, not a bug")
+    r_create.add_argument("--json", action="store_true",
+                          help="The window's report: the form as JSON on stdin, one JSON line out (the only output)")
     r_open = report_sub.add_parser("open", help="Unpack a report and summarize it")
     r_open.add_argument("zip")
     r_open.add_argument("--dir", help="Where to unpack it (default: next to the zip)")
@@ -1679,6 +1706,8 @@ def _cmd_report(args: argparse.Namespace) -> int:
         return 0
     config_path = Path(args.config).expanduser() if args.config else default_config_path()
     output_dir = report.output_dir_for(config_path)
+    if args.json:
+        return _report_json(config_path, output_dir)
     meeting = None if args.meeting == "none" else (args.meeting or report.latest_meeting(output_dir))
     form = report.Form("wish" if args.wish else "bug", args.message, meeting, args.audio)
     print("Collecting logs, settings and this Mac's setup…", flush=True)
@@ -1690,6 +1719,28 @@ def _cmd_report(args: argparse.Namespace) -> int:
     report.reveal(Path(result["path"]))
     print(f"Saved {result['path']} ({report.size_text(result['size'])}, {result['files']} files"
           f"{', about ' + meeting if meeting else ''}).\nSend it to the maintainer, e.g. in Slack or Mail.")
+    return 0
+
+
+def _report_json(config_path: Path, output_dir: Path) -> int:
+    """`report create --json`, for the window's server (#59): the form as the page posts it on stdin, as
+    webapp api.create_report took it; one JSON line out: the zip's path, name, size, files, size_text and the
+    path as shown ("~/…"), or {"error", "status"}: 400 for a bad form (ValueError/KeyError), else 500."""
+    from . import report
+
+    try:
+        form = report.Form.from_dict(json.loads(sys.stdin.read() or "{}"))
+        result = report.create(form, output_dir=output_dir, config_path=config_path, via="window")
+    except (KeyError, ValueError) as exc:
+        print(json.dumps({"error": str(exc), "status": 400}))
+        return 1
+    except Exception as exc:
+        print(json.dumps({"error": str(exc), "status": 500}))
+        return 1
+    report.reveal(Path(result["path"]))
+    home = str(Path.home())
+    shown = "~" + result["path"][len(home):] if result["path"].startswith(home + "/") else result["path"]
+    print(json.dumps({**result, "size_text": report.size_text(result["size"]), "shown": shown}))
     return 0
 
 

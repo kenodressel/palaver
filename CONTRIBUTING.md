@@ -3,11 +3,21 @@
 How to run Palaver from a checkout, test it, and make a release. What
 Palaver does for its users is in the [README](README.md).
 
+Palaver is a Swift app (`native/`, a Swift package): the menu bar app, the
+window's server (`palaver-server`), the pipeline (`palaver-worker`), the
+language model (`palaver-lm`, MLX), the speech engine (`palaver-engine`) and
+the `palaver` command (`palaver-cli`). Since 0.6 a release holds no Python at
+all. The repository's Python package (`palaver/`, its tests in `tests/`) stays
+only for the developer's local fallback (the `legacy-server` marker, below)
+and for the parity tooling that compares it with the Swift code; nothing of it
+ships.
+
 ## Setup (from source)
 
-You need macOS 15 or later on Apple Silicon, [uv](https://docs.astral.sh/uv/)
-and the Xcode Command Line Tools (`xcode-select --install`, for cmake and the
-echo-cancellation library).
+You need macOS 15 or later on Apple Silicon, Xcode (not only the Command Line
+Tools: `make lm` compiles MLX's Metal shaders), cmake (the echo-cancellation
+library) and [uv](https://docs.astral.sh/uv/) (the Python tests, the parity
+tooling and the release scripts).
 
 1. Install the dependencies and build the vendored echo-cancellation library:
 
@@ -89,9 +99,12 @@ echo-cancellation library).
 Then check the setup — permissions, tokens, models, disk — with exact fixes:
 
 ```bash
-uv run palaver doctor    # --offline skips the Notion API check
-uv run palaver --help
+make cli && alias palaver="$PWD/native/.build/release/palaver-cli"   # the Swift command, as the app ships it
+palaver doctor    # --offline skips the Notion API check
+palaver --help
 ```
+
+(`uv run palaver …` is the repository's Python command: the developer's fallback, not what ships.)
 
 ## Tests
 
@@ -115,6 +128,19 @@ merge. Both build the echo-cancellation library first.
   tests are skipped (in CI they fail instead).
 - `tests/js/` holds the page's JavaScript unit tests, run with node through
   `tests/test_js.py` (skipped without node).
+- The Swift tests (`native/Tests`, swift-testing) run first in `make test`
+  (`make engine-test`; one suite: `make swift-test FILTER=<Suite>`), with a
+  temporary config and home: a debug build stops a test that reaches the real
+  `~/.config`, home or `~/Meetings`.
+- `tests/e2e/` runs against `palaver-server` and `palaver-lm` (`make
+  e2e-server`: debug builds, optimized), with a fake menu bar app
+  (`tests/e2e/fake_app.py`) and palaver-lm's test model.
+- `tests/test_parity.py` runs the scenarios in `tools/parity/scenarios` through
+  the Python code and the Swift code (`make parity-helper`) on copies of a
+  synthetic corpus and compares what they wrote and answered, values not
+  bytes. `test_ledger_is_complete` (`tools/parity/ledger_check.py`) checks that
+  every test of a ported Python module has a Swift test of the same name or a
+  line in `docs/superpowers/specs/2026-11-04-phase3-ledger.md`.
 
 CI (`.github/workflows/ci.yml`) runs `make aec` and `make test` on macOS 15.
 
@@ -125,51 +151,72 @@ CI (`.github/workflows/ci.yml`) runs `make aec` and `make test` on macOS 15.
 | Target | What it does |
 |---|---|
 | `aec` | Build the vendored WebRTC echo-cancellation library |
-| `test` | Run the test suite (in parallel) |
+| `test` | Run the test suite (in parallel): the Swift tests, then pytest (Python, JS, e2e on `palaver-server`, parity, the ledger check) |
+| `engine` / `app-swift` / `server` / `worker` / `lm` / `cli` | Build `palaver-engine`, the Swift app, `palaver-server`, `palaver-worker`, `palaver-lm` (xcodebuild, with MLX's shaders) and `palaver-cli` (release; all but the engine and the app fail when the program holds this Mac's paths) |
+| `engine-test` / `swift-test` | Run all Swift tests / the ones `FILTER` names |
+| `parity-helper` / `e2e-server` | Build the parity helper, server and worker (debug) / the e2e tests' `palaver-server` |
+| `eval-engine-worker` | `eval-engine` through `palaver-worker engine-serve` (the in-process engine), writes `engine-gate-worker.md` |
 | `test-changed` | Run the tests for what changed since master |
 | `eval-engine` | Maintainer-only gate: the Swift engine against the old stack's numbers on your own recordings. Needs `PALAVER_EVAL_DIR` (a folder with a local `eval.json`); writes numbers only to `engine-gate.md`. The exit code contract is `tools/eval_engine.py`'s: 0 pass, 1 a check FAILED, 2 misconfigured. Through make both failures show as make's exit 2, so read the printed table |
-| `wheel` | Build the wheel (includes the AEC library) |
-| `requirements` | Export the locked dependency set the runtime is built from |
 | `icons` | Draw the app and menu bar icons into `palaver/assets` (needs Pillow) |
-| `runtime` | Build the runtime archive (kept while `uv.lock` is unchanged) |
 | `models` | Pack the models Palaver hosts (none now; the engine downloads its own) |
-| `app` | Build Palaver.app with the wheel's code inside, zipped |
+| `app` | Build Palaver.app from the Swift programs (no Python), zipped; refuses a bundle with anything of Python or a path of this Mac in it |
+| `compat-runtime` | Write the placeholder runtime the updaters of releases before 0.6 need (a few hundred bytes, the same every build) |
 | `manifest` | Write `manifest.json` and `upload.txt` over the assets in `dist/` |
 | `release` | All release assets in `dist/` |
 | `smoke-install` | Install `dist/` into a throwaway home, check it, and simulate an update |
 | `publish` | Create the GitHub release of this version from `dist/upload.txt` |
-| `clean` | Remove build output (the runtime archive too) |
+| `clean` | Remove build output |
 
 ## Running it from a checkout
 
 As a menu bar app (auto-recording, manual start/stop, the Meetings window).
-The app is native Swift since 0.5 (`native/`, target `Palaver`): it records,
-runs the daemon, serves `app.sock`, hosts the window and starts the Python
-workers (`process`, `notes`, `live`, `webapp-serve`, …) with the checkout's
-`.venv/bin/python` (`PALAVER_PYTHON` overrides it):
+The app is native Swift (`native/`, target `Palaver`): it records, runs the
+daemon, serves `app.sock` and hosts the window. It starts `palaver-server`
+(the window's server), `palaver-worker` (`process`, `live`, `stream`, `coach`,
+`index`, …) and `palaver-lm` (notes, projects, the next question) from
+`native/.build` (`PALAVER_SERVER_BIN` / `PALAVER_WORKER_BIN` / `PALAVER_LM_BIN`
+name other builds); see [Architecture](#architecture):
 
 ```bash
-make app-swift && native/.build/release/Palaver   # icon alone: waiting · 🔴 recording · ⏳ transcribing · ⏸ paused
-palaver menubar          # the Python menu bar app of before (kept for one release)
+make app-swift server worker lm && native/.build/release/Palaver   # icon alone: waiting · 🔴 recording · ⏳ transcribing · ⏸ paused
 ```
 
 A release's `Palaver.app` holds the Swift app as its executable
-(`Contents/MacOS/Palaver`), the Python host `palaver-python` (Palaver's code
-on the runtime, what every worker runs), `palaver-engine`, and the code in
-`Contents/Resources/python`. `PALAVER_LEGACY_APP=1`, or an empty file
-`~/Library/Application Support/palaver/legacy-app`, makes it start the
-Python menu bar app (`palaver-python -m palaver menubar`) instead, for one
-release, in case the Swift app fails on a Mac. A development build of the
-Swift app asks for the microphone and system audio for the terminal that
-runs it; run it only when you mean to record.
+(`Contents/MacOS/Palaver`), `palaver-server`, `palaver-worker`, `palaver-lm`
+and `palaver-engine` beside it, the `palaver` command (`palaver-cli`) as
+`Contents/Resources/bin/palaver`, the window's page files in
+`Contents/Resources/web`, MLX's shaders (`mlx.metallib`) and, for 0.6 only,
+`Contents/Resources/bin/python`: a shell script that starts `bin/palaver mcp`
+for Claude Code and Claude Desktop entries of older versions (the app rewrites
+them at every start). There is no Python in it, and every program is signed
+with the one identity as in 0.5, without the hardened runtime for now
+(`native/Bundle/Palaver.entitlements` is kept for notarization).
 
-Install the Python menu bar app of this checkout as a Mac app that starts at
-login (no terminal tab needed; the release's app is the Swift one):
+**The developer's Python fallback.** In a development build only (not in a
+release), `PALAVER_LEGACY_SERVER=1`, or an empty file
+`~/Library/Application Support/palaver/legacy-server`, makes the app start the
+Python window server and workers of the checkout's `.venv` (`palaver
+webapp-serve`, `palaver process`, …; `PALAVER_PYTHON` names another Python)
+instead of the Swift ones. Both read and write the same files. Without a
+`.venv` the marker is ignored, and an installed Palaver.app always ignores it
+and says so once in app.log. A development build of the Swift app asks for
+the microphone and system audio for the terminal that runs it; run it only
+when you mean to record.
+
+Install the app built from this checkout as a Mac app that starts at login
+(the Swift `palaver` command runs `make app` and puts the built Palaver.app
+in `~/Applications`, in place of the one there; it refuses while the app
+records or transcribes):
 
 ```bash
-palaver app install --login   # → ~/Applications/Palaver.app
-palaver app uninstall
+native/.build/debug/palaver-cli app install --login   # → ~/Applications/Palaver.app
+native/.build/debug/palaver-cli app uninstall
 ```
+
+The Python command of the checkout (`uv run palaver app install`) still
+installs the launcher of the Python menu bar app, for the developer
+fallback only; what follows describes that bundle.
 
 On first launch it asks for Microphone and System Audio Recording under its
 own name — not Screen Recording: the microphone is captured with
@@ -197,23 +244,25 @@ A change anywhere else (recording, call detection, the menu) still needs the
 whole app restarted, and that should wait until nothing records or processes
 (`palaver daemon status`).
 
-Or without the menu bar, in a terminal tab:
+Or without the menu bar, in a terminal tab, with the checkout's Python
+(developer fallback; the Swift `palaver daemon` only says what replaces it):
 
 ```bash
-palaver daemon           # watches for Teams calls and Slack huddles
-palaver daemon status    # from another terminal
+uv run palaver daemon    # watches for Teams calls and Slack huddles
+palaver daemon status    # from another terminal (either command)
 ```
 
 It runs in a terminal rather than as a launchd agent so it inherits the
 terminal's microphone and system-audio permissions. Log:
 `~/Library/Logs/palaver/daemon.log`.
 
-Record by hand:
+Record by hand: the app's menu (Start recording now). With the checkout's
+Python only (the Swift `palaver record` says so and exits 2):
 
 ```bash
-palaver record           # Ctrl+C stops
-palaver record --run     # process + sync immediately after stop
-palaver record --quiet   # no live level meter
+uv run palaver record           # Ctrl+C stops
+uv run palaver record --run     # process + sync immediately after stop
+uv run palaver record --quiet   # no live level meter
 ```
 
 While recording, a live meter shows both tracks once per second:
@@ -226,16 +275,16 @@ rec 00:42 | mic ███▂      -35 dB | system            -- dB (silent 12s)
 is talking — the system-audio tap delivers nothing while no audio plays. If
 the microphone delivers nothing for 30 s, `record` prints a warning.
 
-Process an existing recording, list recordings, name speakers in a terminal:
+Process an existing recording and list recordings:
 
 ```bash
 palaver run ~/Meetings/Recordings/2026-04-17T14-30-00
 palaver list
-palaver rename ~/Meetings/Recordings/2026-04-17T14-30-00
 ```
 
-`rename` plays a short sample of each speaker; Enter keeps the label, giving
-two labels the same name merges them.
+Speakers are named in the Meetings window. `uv run palaver rename <folder>`
+(the checkout's Python only) plays a short sample of each speaker in the
+terminal; Enter keeps the label, giving two labels the same name merges them.
 
 Delete synced recordings older than `retention_days` (unsynced ones are kept
 unless `--include-unsynced`):
@@ -248,15 +297,53 @@ palaver prune
 `process`, `sync` and `run` show a macOS notification when the transcript is
 ready or uploaded, or when a step fails (`--no-notify` to turn off).
 
+## Architecture
+
+Since 0.6 everything Palaver.app runs is Swift (phases 1 to 4 of the migration):
+
+- **The app** (`native/Sources/Palaver`, `PalaverDaemon`, `PalaverCapture`):
+  the menu bar, call detection, recording, `app.sock`, the window.
+- **`palaver-server`** (`PalaverServer`, SwiftNIO): the Meetings window's
+  server and its API (the port of `palaver/webapp`), a child of the app that
+  it restarts when it crashes (`palaver app restart-web`).
+- **`palaver-worker`** (`PalaverWorker`): the pipeline — `process` (echo
+  removal, transcription and speakers with the engine in process, names),
+  `live`, `stream`, `coach`, `index`, `query`, `engine-serve`.
+- **`palaver-lm`** (`PalaverLM`, `PalaverMLX`): the language model — notes,
+  projects and the next question, on MLX on this Mac, a cloud provider or the
+  Claude Code CLI; one model at a time, under the memory rules.
+- **`PalaverCloud`**: the Keychain, the providers and their HTTP transport, the
+  access log, cloud transcription, Notion and the model downloads.
+- **`PalaverDomain`**: what all share — the meeting folders, stores and
+  their locks (`<store>.lock`, compatible with the Python code's locks),
+  undo, people, projects, glossary, search, exchange files.
+- **The `palaver` command** (`PalaverServer/CLI`, product `palaver-cli`, in
+  the bundle as `Contents/Resources/bin/palaver`, which install.sh links to
+  `~/.local/bin/palaver`; phase 4): `process`, `run`, `index` and `sync`
+  start `palaver-worker`, `notes` and `projects` start `palaver-lm`, each in
+  its place with the same options; `list`, `export`, `import`, `voices`,
+  `prune`, `doctor`, `report create`, `daemon status`, `app …` and `mcp`
+  run in it. The commands of earlier versions that the app does now
+  (`record`, `rename`, `daemon` without `status`, `menubar`, `live`, …) say
+  in one line what replaces them and exit 2.
+
+The repository's Python code is not shipped. It stays for the developer's
+fallback (the `legacy-server` marker with a checkout's `.venv`) and the parity
+tooling, until a later cleanup. The files on disk (meetings, stores, settings,
+undo snapshots, exchange files) are the same as before, so 0.5, 0.6 and the
+Python fallback read each other's. What the migration decided, skipped and
+measured is in `docs/superpowers/specs/2026-11-04-phase3-ledger.md`.
+
 ## How it works
 
 1. **Record**: captures the microphone and the Mac's sound as separate WAV
    tracks (16 kHz mono PCM_16) in a timestamped folder under `output_dir`.
 2. **Process**: removes speaker bleed from the microphone track (below),
    transcribes both tracks with Parakeet-TDT v3 and diarizes the system
-   track, both in `palaver-engine` (a Swift helper running FluidAudio's
-   CoreML models; Whisper optional), merges words to speakers, writes `transcript.md` and
-   `transcript.json`, then the notes.
+   track with FluidAudio's CoreML models, in `palaver-worker process` (the
+   engine in process; `palaver-engine` for the Python commands; Whisper
+   optional), merges words to speakers, writes `transcript.md` and
+   `transcript.json`, then the notes (a Python helper).
 3. **Sync**: uploads the transcript as a new Notion page under the
    configured parent (only with a Notion token).
 
@@ -532,8 +619,8 @@ audio only when ticked) and the local usage counts
 
 ```bash
 palaver report create -m "Notes never came"   # the same zip, about the latest meeting
-palaver report open <zip>                     # unpack and summarize (versions, errors, devices, pipeline)
-palaver report usage <zip>...                 # feature use across testers
+uv run palaver report open <zip>              # (maintainer, checkout) unpack and summarize (versions, errors, devices, pipeline)
+uv run palaver report usage <zip>...          # (maintainer, checkout) feature use across testers
 ```
 
 ## Releases
@@ -542,30 +629,27 @@ palaver report usage <zip>...                 # feature use across testers
 `release.yml` runs the same recipe as a manual dry run but never publishes:
 only the Mac with the signing certificate does (below).
 
-- `palaver-app-<version>.zip`: Palaver.app with the code from the wheel
-  (including the echo-cancellation library), compiled ahead
-- `palaver-runtime-<id>.tar.gz`: built only when its id is new; the id is a
-  hash of the locked requirements (exported from `uv.lock`), the Python
-  version, its python-build-standalone release and the arch
-  (`RUNTIME_PYTHON` and `PBS_RELEASE` in the Makefile). The build downloads
-  [python-build-standalone](https://github.com/astral-sh/python-build-standalone)
-  into `dist/build`, checked against the release's `SHA256SUMS`, installs the
-  requirements into it with uv, makes the entry points relocatable, and
-  `otool` checks that no library names `/Users`, Homebrew or `/usr/local`
+- `palaver-app-<version>.zip`: Palaver.app, the Swift programs only
+  (`tools/build_release.py app`); the build refuses a bundle with a Python
+  interpreter, a `.py` file, `palaver-python` or a path of this Mac in it
+- `palaver-runtime-no-python-1.tar.gz`: a placeholder of a few hundred bytes
+  (the same every build). The updaters of releases before 0.6 refuse a manifest
+  without a runtime and an app whose runtime.json names another one; they never
+  run it. 0.6.0rc1 uploads it once, later releases keep its URL. The app deletes
+  an old runtime folder after its first good start.
 - `manifest.json`, `install.sh`, and `upload.txt`: the files this release must
   upload. An asset the previous release published unchanged keeps its URL
   there and is not uploaded again; `make publish` creates the GitHub release
   from `upload.txt`.
 
-An installed Palaver has three layers, each downloaded only when it changed:
-the app (`~/Applications/Palaver.app`, every release), the runtime
-(`~/Library/Application Support/palaver/runtime/<id>/`, when `uv.lock`
-changes) and the models (`~/Library/Application Support/palaver/models/fluidaudio` for
-speech and speakers, which the engine downloads itself, and
-`~/.cache/huggingface` for the notes model and the search model). The updater checks each download
-against the manifest's SHA-256. The runtime before the current one is kept,
-so `PALAVER_VERSION=0.1.0 sh install.sh` goes back without a download, and
-`PALAVER_ASSETS_DIR=dist sh install.sh` installs from local release assets.
+An installed Palaver has two layers, each downloaded only when it changed:
+the app (`~/Applications/Palaver.app`, every release) and the models
+(`~/Library/Application Support/palaver/models/fluidaudio` for speech and
+speakers, which the engine downloads itself, and `~/.cache/huggingface` for the
+notes model and the search model). The updater (Swift, in the app) and install.sh
+check each download against the manifest's SHA-256. `PALAVER_ASSETS_DIR=dist sh
+install.sh` installs from local release assets; going back to a release before
+0.6 takes that release's own install.sh, which installs its runtime.
 
 ### Signing releases
 
@@ -599,9 +683,12 @@ once more. A Developer ID certificate works the same way and also satisfies
 Gatekeeper for downloads.
 
 `make smoke-install` installs `dist/` into a throwaway home under
-`sandbox-exec` (no writes outside it, no network), imports Palaver and its
-dependencies as the app runs them, and updates twice, with `install.sh` and with the app's
-updater, checking the runtime is not downloaded again.
+`sandbox-exec` (no writes outside it, no network, no Python on `PATH`), checks
+the bundle (no Python, signed without the hardened runtime, the programs answer), updates with
+`install.sh` and with the app's Swift updater (`palaver-update-driver`, a
+test-only program that does what the Updates menu does), runs 0.3.14's frozen
+swap.sh, updates the published 0.3.14 and 0.5.0rc6 with their own updaters, and
+uninstalls.
 
 ## README screenshots
 

@@ -2,14 +2,15 @@ import Foundation
 import Testing
 @testable import PalaverCore
 
-private let home = NSString(string: "~").expandingTildeInPath
+/// What `~` stands for in tests: the temporary PALAVER_HOME make swift-test sets (TestIsolation), never the real home.
+private let home = ProcessInfo.processInfo.environment["PALAVER_HOME"] ?? "<PALAVER_HOME unset>"
 
 @Test func configDefaultsWithoutAFile() {
     let c = Config.load(URL(fileURLWithPath: "/nonexistent/config.toml"), environment: [:])
     #expect(c.outputDir.path == home + "/Meetings/Recordings")
     #expect(c.retentionDays == 14 && c.maxSessionHours == 4 && c.gracePeriodSeconds == 10)
     #expect(c.recordSlack && c.processingLive && c.notesEnabled && c.calendarEnabled)
-    #expect(c.notesEngine == "local" && c.notionMode == "page" && c.userName == "User")
+    #expect(c.notesEngine == "local" && c.notionMode == "page" && c.userName == "User" && c.notesModel == "sonnet")
     #expect(!c.notionAutoSync)  // no token: nothing to upload to
     #expect(c.memory.isEmpty)
 }
@@ -41,6 +42,7 @@ private let home = NSString(string: "~").expandingTildeInPath
         enabled = false
         engine = "claude"
         local_model = "org/some-model"
+        model = "opus"
 
         [calendar]
         enabled = false
@@ -55,7 +57,7 @@ private let home = NSString(string: "~").expandingTildeInPath
     #expect(c.outputDir.path == home + "/Meetings/Rec")
     #expect(c.retentionDays == 7 && c.maxSessionHours == 6 && c.gracePeriodSeconds == 20)
     #expect(!c.recordSlack && !c.processingLive && !c.notesEnabled && !c.calendarEnabled)
-    #expect(c.notesEngine == "claude" && c.notesLocalModel == "org/some-model")
+    #expect(c.notesEngine == "claude" && c.notesLocalModel == "org/some-model" && c.notesModel == "opus")
     #expect(c.memory == ["live_gb": 5, "notes_gb": 9.5])
 }
 
@@ -140,8 +142,9 @@ private func settingsFile(_ json: String?) throws -> URL {
 @Test func settingsDefaults() throws {
     let s = Settings(url: try settingsFile(nil))
     #expect(s.realtime && s.recordTeams && s.recordSlack && s.liveProcessing && s.searchMeaning && s.checkUpdates)
-    #expect(s.nudgeTalkShare && s.nudgeMonologue && s.nudgeQuietInvitee)
+    #expect(s.nudgeTalkShare && s.nudgeMonologue && s.nudgeQuietInvitee && s.nudgeNotify)
     #expect(!s.nudgePace && !s.nudgeFillers)
+    #expect(!Settings(url: try settingsFile(#"{"nudge_notify": false}"#)).nudgeNotify)
     #expect(s.audioDays == 0 && s.userName == nil)
 }
 
@@ -188,4 +191,34 @@ private func settingsFile(_ json: String?) throws -> URL {
     #expect(t["user.name"] == .string("Timo"))
     #expect(t["x.list"] == .other && t["x.after"] == .int(1))
     #expect(t["x.inline"] == .other && t["x.last"] == .int(2))
+}
+
+@Test func testsNeverReachTheRealHome() {
+    #expect(TestIsolation.isTestProcess)
+    let env = ProcessInfo.processInfo.environment
+    #expect(!(env["PALAVER_HOME"] ?? "").isEmpty && !(env["XDG_CONFIG_HOME"] ?? "").isEmpty)
+    #expect(Paths.fromEnvironment().home.path == env["PALAVER_HOME"])
+    #expect(Paths.fromEnvironment().configDir.path == env["XDG_CONFIG_HOME"]! + "/palaver")
+    let own = URL(fileURLWithPath: "/tmp/ph/own", isDirectory: true)
+    #expect(Paths(home: URL(fileURLWithPath: "/tmp/ph"), configDir: own).settingsJson.path == "/tmp/ph/own/settings.json")
+    #expect(Paths(home: URL(fileURLWithPath: "/tmp/ph"), env: [:]).configToml.path == "/tmp/ph/.config/palaver/config.toml")
+    #expect(Config(toml: "[recording]\noutput_dir = \"~/x\"\n").outputDir.path == env["PALAVER_HOME"]! + "/x")
+}
+
+/// A test that would reach the user's real home, ~/.config or ~/Meetings stops before anything is read.
+@Test func aTestReachingTheRealHomeStops() async {
+    await #expect(processExitsWith: .failure) { _ = Paths.fromEnvironment([:]) }
+    await #expect(processExitsWith: .failure) { _ = Paths(home: URL(fileURLWithPath: TestIsolation.realHome!)) }
+    await #expect(processExitsWith: .failure) {
+        _ = Paths(home: URL(fileURLWithPath: "/tmp/ph"), configDir: URL(fileURLWithPath: TestIsolation.realHome! + "/.config/palaver"))
+    }
+    await #expect(processExitsWith: .failure) {
+        _ = Paths(home: URL(fileURLWithPath: "/tmp/ph"), env: ["XDG_CONFIG_HOME": TestIsolation.realHome! + "/.config"])
+    }
+    await #expect(processExitsWith: .failure) { _ = Config(toml: "[recording]\noutput_dir = \"\(TestIsolation.realHome!)/Meetings/Recordings\"\n") }
+    await #expect(processExitsWith: .failure) {
+        var env = ProcessInfo.processInfo.environment
+        env["PALAVER_HOME"] = nil
+        _ = TestIsolation.testHome(env)
+    }
 }

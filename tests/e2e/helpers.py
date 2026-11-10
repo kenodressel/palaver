@@ -18,6 +18,13 @@ def goto(page: Page, served, where: str = "") -> None:
     page.locator("#list .item").first.wait_for(state="attached")  # the list is hidden beside People etc.
 
 
+def reload(page: Page) -> None:
+    """Reload once the page's own requests are answered: WebKit reports a fetch the reload cuts off as a page error
+    ("… due to access control checks")."""
+    page.wait_for_load_state("networkidle")
+    page.reload()
+
+
 def open_meeting(page: Page, served, mid: str, tab: str | None = None) -> None:
     goto(page, served, f"#/{mid}")
     expect(page.locator("#main h1")).to_have_text(TITLES[mid])

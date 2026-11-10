@@ -4,6 +4,7 @@ import Foundation
 import Testing
 import PalaverCore
 @testable import PalaverDaemon
+import enum PalaverDomain.Continuation
 
 /// A daemon recording a call that quits `at` (SIGTERM → shutdown).
 func quitDuringACall(_ dir: URL, _ activity: @escaping (Double) -> CallApp?, at: Double = 400) async throws -> (Sessions, Harness) {
@@ -374,29 +375,6 @@ extension DaemonTicks {
         #expect(reason(old) == ProcessState.error)
         #expect([done, queued, head, part, running, live, notMeeting].map(reason) == [String?](repeating: nil, count: 7))
         #expect(reason(waiting) == ProcessState.models)
-    }
-}
-
-/// test_continuation.py's listing (the join stays in Python's `process`).
-@Suite struct PartsFileTests {
-    @Test func partsAreListedOnTheFirstPartInOrder() async throws {
-        let dir = tempDir()
-        let head = dir.appendingPathComponent("2026-11-02T12-00-00"), a = dir.appendingPathComponent("2026-11-02T12-30-00"),
-            b = dir.appendingPathComponent("2026-11-02T12-45-00")
-        for f in [head, a, b] { mkdir(f) }
-        #expect(Continuation.parts(head).isEmpty)
-        try Continuation.addPart(head, a)
-        try Continuation.addPart(head, b)
-        try Continuation.addPart(head, a)  // once
-        #expect(parts(head) == [a.path, b.path])
-        let text = try String(contentsOf: head.appendingPathComponent("parts.json"), encoding: .utf8)
-        #expect(text == "{\n  \"parts\": [\n    \"2026-11-02T12-30-00\",\n    \"2026-11-02T12-45-00\"\n  ]\n}")
-        // What `process` keeps there stays.
-        touch(head.appendingPathComponent("parts.json"), #"{"complete": false, "parts": ["2026-11-02T12-30-00"]}"#)
-        try Continuation.addPart(head, b)
-        let kept = try #require(JSONValue.parse(try Data(contentsOf: head.appendingPathComponent("parts.json"))))
-        #expect(kept["complete"] == .bool(false) && kept["parts"] == .strings(["2026-11-02T12-30-00", "2026-11-02T12-45-00"]))
-        #expect(throws: (any Error).self) { try Continuation.addPart(dir.appendingPathComponent("gone"), a) }
     }
 }
 

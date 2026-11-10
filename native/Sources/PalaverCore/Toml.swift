@@ -13,8 +13,15 @@ public enum TomlValue: Equatable, Sendable {
 /// a broken config never stops the app. Values are never logged.
 public enum Toml {
     /// Flat map, keyed "section.key" ("key" at the top level).
-    public static func parse(_ text: String) -> [String: TomlValue] {
+    public static func parse(_ text: String) -> [String: TomlValue] { parseOrdered(text).values }
+
+    /// `parse`, and the keys in the order the file gave them (a repeated key keeps its first place).
+    public static func parseOrdered(_ text: String) -> (values: [String: TomlValue], order: [String]) {
         var out: [String: TomlValue] = [:]
+        var order: [String] = []
+        func put(_ key: String, _ value: TomlValue) {
+            if out.updateValue(value, forKey: key) == nil { order.append(key) }
+        }
         var section = ""
         let text = text.hasPrefix("\u{FEFF}") ? String(text.dropFirst()) : text
         let lines = text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
@@ -38,13 +45,13 @@ public enum Toml {
             for q in ["\"\"\"", "'''"] where rest.hasPrefix(q) {
                 var body = String(rest.dropFirst(3))
                 if let end = body.range(of: q) {
-                    out[full] = .string(String(body[..<end.lowerBound]))
+                    put(full, .string(String(body[..<end.lowerBound])))
                 } else {
                     while i < lines.count {
                         body += "\n" + lines[i]
                         i += 1
                         if let end = body.range(of: q) {
-                            out[full] = .string(String(body[..<end.lowerBound]).trimmingCharacters(in: .newlines))
+                            put(full, .string(String(body[..<end.lowerBound]).trimmingCharacters(in: .newlines)))
                             break
                         }
                     }
@@ -74,12 +81,12 @@ public enum Toml {
                     text = lines[i]
                     i += 1
                 }
-                out[full] = TomlValue.other
+                put(full, TomlValue.other)
                 continue
             }
-            if let v = scan.scalar() { out[full] = v }
+            if let v = scan.scalar() { put(full, v) }
         }
-        return out
+        return (out, order)
     }
 
     struct Scanner {

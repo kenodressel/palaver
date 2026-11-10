@@ -61,3 +61,10 @@ private func run(_ lines: [String]) async throws -> [[String: Any]] {
     #expect(r["path"] as? String == "/x.wav")
     #expect(r["n"] as? Int == 3)
 }
+
+/// The default models folder follows PALAVER_HOME (make engine-test sets a temporary one): a test never reaches the
+/// user's real models.
+@Test func theDefaultModelsFolderIsUnderPalaverHome() {
+    let home = ProcessInfo.processInfo.environment["PALAVER_HOME"] ?? "<unset>"
+    #expect(ModelStore.defaultDirectory.path == home + "/Library/Application Support/palaver/models/fluidaudio")
+}

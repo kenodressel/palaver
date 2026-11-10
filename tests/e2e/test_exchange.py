@@ -33,7 +33,7 @@ def export_from_menu(page, served, mid: str, *, voices: bool = False) -> str:
     expect(dialog(page)).to_have_count(0)
     text = expect_toast(page, re.compile(r"^Saved to Downloads: “.+\.zip”$")).locator(".toast-text").inner_text()
     name = text.split("“", 1)[1].rstrip("”")
-    return str(served.root.parent / "Downloads" / name)
+    return str(served.home / "Downloads" / name)
 
 
 def test_export_offers_what_goes_in_and_saves_the_file_to_downloads(page, app_server):
@@ -51,7 +51,7 @@ def test_export_offers_what_goes_in_and_saves_the_file_to_downloads(page, app_se
     d.get_by_role("checkbox", name="Notes").uncheck()
     d.get_by_role("button", name="Export").click()
     expect_toast(page, "Saved to Downloads: “2026-10-27 Team standup.zip”")
-    with zipfile.ZipFile(app_server.root.parent / "Downloads" / "2026-10-27 Team standup.zip") as zf:
+    with zipfile.ZipFile(app_server.home / "Downloads" / "2026-10-27 Team standup.zip") as zf:
         names = set(zf.namelist())
     assert "meeting/transcript.json" in names and "meeting/notes.json" not in names
     assert not any(n.startswith(("audio/", "voices/")) for n in names)
@@ -66,7 +66,7 @@ def test_escape_cancels_the_export(page, app_server):
     expect(dialog(page)).to_be_visible()
     page.keyboard.press("Escape")
     expect(dialog(page)).to_have_count(0)
-    assert not (app_server.root.parent / "Downloads").exists()
+    assert not (app_server.home / "Downloads").exists()
 
 
 def test_escape_and_a_click_beside_do_not_close_the_dialog_while_it_works(page, app_server):
@@ -96,7 +96,7 @@ def test_a_meeting_kept_on_this_mac_asks_before_it_is_exported(page, app_server)
     expect(dialog(page).get_by_role("heading")).to_have_text("This meeting is kept on this Mac")
     dialog(page).get_by_role("button", name="Cancel").click()
     expect(dialog(page)).to_have_count(0)
-    assert not (app_server.root.parent / "Downloads").exists()
+    assert not (app_server.home / "Downloads").exists()
 
 
 def test_the_same_meeting_imported_asks_and_goes_beside_mine_then_undo_takes_it_back(page, app_server):

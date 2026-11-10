@@ -1,0 +1,41 @@
+def unpack_runtime(archive: Path, runtime_id: str, home: Path | None = None) -> Path:
+    """A runtime archive (one folder named by its id) into runtime/<id>,
+    whole or not at all. One that is there already is kept."""
+    import tarfile
+
+    root = install_layout.runtimes_dir(home)
+    target = root / runtime_id
+    if (target / "bin" / "python3").exists():
+        return target
+    root.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{runtime_id}.", dir=root))
+    try:
+        with tarfile.open(archive) as tar:
+            for member in tar.getmembers():
+                parts = Path(member.name).parts
+                if not parts or parts[0] != runtime_id or ".." in parts or member.name.startswith("/"):
+                    raise release.ManifestError(f"unexpected path in the runtime archive: {member.name}")
+                if member.issym() or member.islnk():  # links stay inside the runtime's own folder
+                    base = os.path.dirname(member.name) if member.issym() else ""
+                    points_to = os.path.normpath(os.path.join(base, member.linkname))
+                    if member.linkname.startswith("/") or Path(points_to).parts[:1] != (runtime_id,):
+                        raise release.ManifestError(f"a link out of the runtime in its archive: {member.name}")
+            tar.extractall(staging, filter="data")  # its own symlinks (python3 -> python3.13) are kept
+        if not (staging / runtime_id / "bin" / "python3").exists():
+            raise release.ManifestError("the runtime archive has no bin/python3")
+        shutil.rmtree(target, ignore_errors=True)  # a broken one from before
+        (staging / runtime_id).rename(target)
+        return target
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+def _unpack_app(self, archive: Path, work: Path, plan: release.Plan) -> Path:
+    out = work / "app"
+    subprocess.run(["/usr/bin/ditto", "-xk", str(archive), str(out)], check=True, capture_output=True)
+    archive.unlink()
+    app = out / install_layout.APP_NAME
+    info = install_layout.bundle_info(app)
+    if info.get("version") != plan.version or info.get("runtime") != plan.runtime_id:
+        raise release.ManifestError(f"the downloaded app is not Palaver {plan.version}")
+    subprocess.run(["/usr/bin/xattr", "-dr", "com.apple.quarantine", str(app)], capture_output=True)
+    return app

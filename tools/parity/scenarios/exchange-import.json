@@ -1,0 +1,32 @@
+{
+  "name": "exchange-import",
+  "steps": [
+    {"op": "cutting", "args": {"action": "plant", "folder": "2026-10-28T14-00-00", "files": {
+      "speakers.json": {"SPEAKER_00": "Timo Strauß"}, "speakers_merged.json": {"SPEAKER_02": "SPEAKER_00"}}}},
+    {"op": "exchange", "args": {"action": "export", "folder": "2026-10-28T14-00-00", "dest": "exports/rollout.zip",
+                                "voices": true, "projects": ["Northwind rollout", "Contoso"], "user_name": "Valerie"}},
+    {"op": "cutting", "args": {"action": "plant", "folder": "2026-10-28T14-00-00", "files": {"local_only.json": {}}}},
+    {"op": "exchange", "args": {"action": "export", "folder": "2026-10-28T14-00-00", "dest": "exports/kept.zip",
+                                "confirm_local": true, "notes": false}},
+    {"op": "exchange", "args": {"action": "match", "file": "exports/rollout.zip"}},
+    {"op": "exchange", "args": {"action": "import", "file": "exports/rollout.zip"}, "error": true},
+    {"op": "exchange", "args": {"action": "import", "file": "exports/rollout.zip", "separate": true, "calendar": true,
+                                "settle": true}},
+    {"op": "exchange", "args": {"action": "import", "file": "exports/kept.zip", "separate": true}},
+    {"op": "exchange", "args": {"action": "import", "file": "exports/kept.zip"}, "error": true},
+    {"op": "exchange", "args": {"action": "decide-voices", "folder": "2026-10-28T14-00-00-2", "add": true}},
+    {"op": "exchange", "args": {"action": "decide-voices", "folder": "2026-10-28T14-00-00-2", "add": true}},
+    {"op": "exchange", "args": {"action": "decide-voices", "folder": "2026-10-28T14-00-00-3", "add": false}},
+    {"op": "cutting", "args": {"action": "plant", "folder": "2026-10-30T10-00-00", "files": {"imported.json": {
+      "from": "Valerie", "format": 1, "palaver_version": "0.5.0", "exported_at": "2026-10-30T10:41:12+01:00",
+      "imported_at": "2026-10-30T10:52:40+01:00", "file": "Contoso kickoff.palaver", "projects": ["Contoso", "northwind ROLLOUT"],
+      "names": {"SPEAKER_00": {"name": "Valerie", "how": "exporter"}, "SPEAKER_01": {"name": "Timo Strauß", "how": "hand"}},
+      "voices_pending": [], "beside": null, "title": "Contoso kickoff"}}}},
+    {"op": "exchange", "args": {"action": "settle", "folder": "2026-10-30T10-00-00"}},
+    {"op": "exchange", "args": {"action": "plant-golden", "name": "exchange-python-audio.zip", "dest": "exports/audio.zip"}},
+    {"op": "exchange", "args": {"action": "import", "file": "exports/audio.zip", "user_name": "Valerie"}}
+  ],
+  "compare": ["Recordings", "config", "home", "events.json"],
+  "rules": {"Recordings/*/system.wav": "pcm_within_2_lsb"},
+  "result": true
+}

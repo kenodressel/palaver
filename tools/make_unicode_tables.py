@@ -1,0 +1,139 @@
+"""Regenerate native/Sources/PalaverDomain/Python/UnicodeTables.swift: the Unicode rules of Python
+3.13's `str` and `re` (Unicode 15.1), so the Swift domain never takes them from macOS or ICU.
+
+    uv run python tools/make_unicode_tables.py
+
+It writes, as flat UInt32 arrays (big Swift dictionary and tuple literals compile slowly):
+- ranges [lo, hi] of `c.isalnum() or c == "_"` (`\\w`), `isdecimal` (`\\d`), `isspace` (`\\s`),
+  `isupper` and `isalpha`;
+- `casefold`: every code point whose `c.casefold() != c`, with what it folds to;
+- `simple fold`: the classes of code points `re.IGNORECASE` treats as the same letter (a lowercase
+  key plus `re._compiler._EXTRA_CASES`), each checked against `re.fullmatch` here.
+"""
+
+from __future__ import annotations
+
+import re
+import sys
+import unicodedata
+from pathlib import Path
+
+import _sre
+
+VERSION = "15.1.0"
+OUT = Path(__file__).resolve().parents[1] / "native" / "Sources" / "PalaverDomain" / "Python" / "UnicodeTables.swift"
+LAST = 0x10FFFF
+
+
+def ranges(test) -> list[tuple[int, int]]:
+    out: list[tuple[int, int]] = []
+    start = None
+    for cp in range(LAST + 2):
+        hit = cp <= LAST and test(chr(cp))
+        if hit and start is None:
+            start = cp
+        elif not hit and start is not None:
+            out.append((start, cp - 1))
+            start = None
+    return out
+
+
+def case_fold() -> dict[int, list[int]]:
+    folds = {}
+    for cp in range(LAST + 1):
+        c = chr(cp)
+        if (f := c.casefold()) != c:
+            folds[cp] = [ord(x) for x in f]
+    return folds
+
+
+def simple_fold() -> dict[int, list[int]]:
+    """Each code point that `re.IGNORECASE` matches with others, to those others (ascending).
+
+    A literal `c` matches `x` when lower(x) is lower(c) or one of `_EXTRA_CASES[lower(c)]`
+    (re/_compiler.py), so the classes are keyed by the smallest of those."""
+    extra = re._compiler._EXTRA_CASES
+    classes: dict[int, list[int]] = {}
+    for cp in range(LAST + 1):
+        lo = _sre.unicode_tolower(cp)
+        key = min((lo,) + extra.get(lo, ()))
+        classes.setdefault(key, []).append(cp)
+    fold = {}
+    for members in classes.values():
+        if len(members) > 1:
+            for cp in members:
+                fold[cp] = [m for m in members if m != cp]
+    return fold
+
+
+def check_simple_fold(fold: dict[int, list[int]]) -> None:
+    """Against `re` itself: every member matches every other, and each cased code point's
+    lower/upper/title/casefold partners match exactly when they are in its class."""
+    for cp, others in fold.items():
+        pattern = re.compile(re.escape(chr(cp)), re.IGNORECASE)
+        for other in others:
+            assert pattern.fullmatch(chr(other)), (hex(cp), hex(other))
+    for cp in range(LAST + 1):
+        if not (_sre.unicode_iscased(cp) or cp in fold):
+            continue
+        c = chr(cp)
+        pattern = re.compile(re.escape(c), re.IGNORECASE)
+        for partner in {c.lower(), c.upper(), c.title(), c.casefold()}:
+            if len(partner) == 1 and partner != c:
+                want = ord(partner) in fold.get(cp, ())
+                assert bool(pattern.fullmatch(partner)) == want, (hex(cp), hex(ord(partner)))
+
+
+def flat_ranges(rs: list[tuple[int, int]]) -> list[int]:
+    return [x for r in rs for x in r]
+
+
+def flat_map(m: dict[int, list[int]]) -> list[int]:
+    """[code point, count, targets…] per entry, by code point."""
+    out = []
+    for cp in sorted(m):
+        out += [cp, len(m[cp]), *m[cp]]
+    return out
+
+
+def swift_array(name: str, values: list[int], doc: str) -> str:
+    rows = []
+    for i in range(0, len(values), 10):
+        rows.append("        " + ", ".join(f"0x{v:X}" for v in values[i:i + 10]) + ",")
+    return f"    /// {doc}\n    static let {name}: [UInt32] = [\n" + "\n".join(rows) + "\n    ]\n"
+
+
+def main() -> int:
+    if unicodedata.unidata_version != VERSION:
+        print(f"needs Unicode {VERSION} (Python 3.13), this Python has {unicodedata.unidata_version}", file=sys.stderr)
+        return 1
+    word = ranges(lambda c: c.isalnum() or c == "_")
+    tables = [
+        ("wordFlat", flat_ranges(word), "`c.isalnum() or c == \"_\"`: [lo, hi] pairs."),
+        ("digitFlat", flat_ranges(ranges(str.isdecimal)), "`c.isdecimal()`: [lo, hi] pairs."),
+        ("spaceFlat", flat_ranges(ranges(str.isspace)), "`c.isspace()`: [lo, hi] pairs."),
+        ("upperFlat", flat_ranges(ranges(str.isupper)), "`c.isupper()`: [lo, hi] pairs."),
+        ("alphaFlat", flat_ranges(ranges(str.isalpha)), "`c.isalpha()`: [lo, hi] pairs."),
+        ("caseFoldFlat", flat_map(case_fold()), "`c.casefold()` where it is not `c`: [c, n, n targets] per entry."),
+    ]
+    fold = simple_fold()
+    check_simple_fold(fold)
+    tables.append(("simpleFoldFlat", flat_map(fold),
+                   "`re.IGNORECASE`: [c, n, the n others it matches] per entry."))
+    text = (
+        "// Generated by tools/make_unicode_tables.py from Python 3.13's unicodedata and re: do not edit.\n"
+        "// The Unicode rules of Python's str and re, so the domain never takes them from macOS or ICU.\n"
+        "\n"
+        "extension UnicodeTables {\n"
+        "    /// `unicodedata.unidata_version` of the Python the tables came from.\n"
+        f"    public static let version = \"{VERSION}\"\n\n"
+        + "\n".join(swift_array(name, values, doc) for name, values, doc in tables)
+        + "}\n"
+    )
+    OUT.write_text(text, encoding="utf-8")
+    print(OUT.relative_to(Path.cwd()) if OUT.is_relative_to(Path.cwd()) else OUT)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

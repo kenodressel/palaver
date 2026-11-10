@@ -1,7 +1,8 @@
 // Palaver, the native app: the bundle's executable (Contents/MacOS/Palaver), or a development build
-// (native/.build/…/Palaver, its workers run with the checkout's .venv python). It replaces the ObjC
-// launcher and the Python `palaver menubar`; PALAVER_LEGACY_APP=1 or the `legacy-app` marker in
-// Application Support starts the Python menu bar app instead, for one release.
+// (native/.build/…/Palaver). The window's server, the pipeline's workers and the language model are
+// palaver-server, palaver-worker and palaver-lm; a release carries no Python. In a development build
+// only, PALAVER_LEGACY_SERVER=1 or the `legacy-server` marker runs the Python window server and workers
+// of the checkout's .venv instead (the developer's fallback); a release ignores the marker and says so.
 import AppKit
 import Foundation
 import PalaverCore
@@ -52,22 +53,9 @@ if location.bundle != nil {
     setvbuf(stdout, nil, _IOLBF, 0)
 }
 
-/// The release's runtime is gone (the launcher's prelude did this): say how to get it back, exit 78.
-if let runtime = location.runtimePython(home: paths.home), access(runtime.path, X_OK) != 0 {
-    MainActor.assumeIsolated {
-        NSApplication.shared.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert()
-        alert.messageText = "Palaver can't start"
-        alert.informativeText = "Its runtime is missing (\(runtime.path)). Run the installer again:\n\n"
-            + "curl -fsSL https://raw.githubusercontent.com/kenodressel/palaver/master/install.sh | sh"
-        alert.runModal()
-    }
-    exit(78)
-}
-
 let log = AppLog(paths: paths)
-let python = location.python(environment: environment)
+/// The developer's fallback Python (a checkout's .venv); nil in a release, which never starts one.
+let python = location.legacyPython(environment: environment)
 let bundled = location.bundle != nil && Bundle.main.bundleIdentifier != nil
 var childEnv: [String: String] = [:]
 if let bundle = location.bundle { childEnv["PALAVER_APP"] = bundle.path }
@@ -109,44 +97,13 @@ func startNotifications(opener: @escaping @Sendable (String?) -> Void) -> Notifi
     return n
 }
 
-// --- the fallback: the Python menu bar app as the child, as the ObjC launcher ran it ---------------
-if LegacyApp.wanted(environment: environment, support: paths.support) {
-    log.info("starting the Python menu bar app (PALAVER_LEGACY_APP=1 or \(LegacyApp.markerName) in Application Support)")
-    MainActor.assumeIsolated {
-        final class ClickBox: @unchecked Sendable { var launcher: LegacyLauncher? }
-        let box = ClickBox()
-        let notifications = startNotifications(opener: { meeting in box.launcher?.open(meeting) })
-        do {
-            let argv = LegacyApp.argv(python: python, cliOptions: WorkerLauncher.forwardedOptions(
-                config: options.config, dictionary: options.dictionary, noNotify: options.noNotify))
-            let launcher = try LegacyLauncher(argv: argv, env: childEnv, log: paths.appLog, clicks: notifications != nil)
-            box.launcher = launcher
-            launcher.forwardSignals()
-            Thread.detachNewThread {
-                let code = launcher.wait()
-                notifications?.stop()
-                exit(code)
-            }
-        } catch {
-            log.warning("palaver menubar did not start: \(error)")
-            notifications?.stop()
-            exit(127)
-        }
-        if notifications != nil {
-            NSApplication.shared.setActivationPolicy(.accessory)  // an app, so a notification's click reaches it
-            NSApp.run()
-        }
-    }
-    dispatchMain()
-}
-
 // --- the app -----------------------------------------------------------------------------------------
 log.file.event("app_start", logger: "palaver", [("version", version), ("pid", Int(getpid())),
                                                 ("argv", Array(CommandLine.arguments.dropFirst())), ("app", "native")])
 
 // A second Palaver must not touch the first one's recording: refused before anything is bound. The
-// lock is held until the process ends; daemon.json's pid also catches a Python app (the fallback, or
-// a version before) that takes no lock.
+// lock is held until the process ends; daemon.json's pid also catches a Python app (a version before)
+// that takes no lock.
 func refuseSecondStart(_ message: String) -> Never {
     print("error: \(message)")
     log.warning(message)
@@ -168,7 +125,13 @@ MainActor.assumeIsolated {
     let notifications = startNotifications(opener: { meeting in
         DispatchQueue.main.async { MainActor.assumeIsolated { box.app?.openWindow(meeting, lookForUpdate: false) } }
     })
-    let setup = AppSetup(paths: paths, location: location, options: options, version: version, python: python, log: log,
+    // palaver-server, palaver-worker and palaver-lm, unless a development build's legacy-server fallback is wanted
+    // (or one of them is not built there): then Python's commands, said once in app.log.
+    let swift = LegacyServer.binaries(location: location, environment: environment, support: paths.support, python: python)
+    for line in swift.said { print(line) }
+    let setup = AppSetup(paths: paths, location: location, options: options, version: version,
+                         python: python ?? LegacyServer.NO_PYTHON,
+                         server: swift.server, worker: swift.worker, lm: swift.lm, legacyServer: swift.legacy, log: log,
                          childEnv: childEnv)
     do {
         let app = try PalaverApp(setup: setup, notifications: notifications)

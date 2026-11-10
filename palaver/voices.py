@@ -23,6 +23,7 @@ from pathlib import Path
 import numpy as np
 
 from ._xdg import xdg_config_home
+from .store_lock import locked
 
 MATCH_THRESHOLD = 0.75
 MATCH_MARGIN = 0.1
@@ -72,24 +73,25 @@ class VoiceBank:
 
     def add(self, name: str, embedding: list[float], *, source: str) -> bool:
         """Store a voice sample; ``source`` (recording:label) dedupes repeats."""
-        found = self._find(name)
-        if found is None:
-            path, data = self._dir / f"{_slug(name)}.json", {"name": name, "samples": []}
-            while path.exists():
-                path = path.with_name(path.stem + "-1.json")
-        else:
-            path, data = found
-        if any(s["source"] == source for s in data["samples"]):
-            return False
-        data["samples"].append({
-            "embedding": [float(x) for x in embedding],
-            "source": source,
-            "added": datetime.now().astimezone().isoformat(timespec="seconds"),
-        })
-        data["samples"] = data["samples"][-MAX_SAMPLES_PER_PERSON:]
-        self._dir.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, ensure_ascii=False))
-        return True
+        with locked(self._dir):
+            found = self._find(name)
+            if found is None:
+                path, data = self._dir / f"{_slug(name)}.json", {"name": name, "samples": []}
+                while path.exists():
+                    path = path.with_name(path.stem + "-1.json")
+            else:
+                path, data = found
+            if any(s["source"] == source for s in data["samples"]):
+                return False
+            data["samples"].append({
+                "embedding": [float(x) for x in embedding],
+                "source": source,
+                "added": datetime.now().astimezone().isoformat(timespec="seconds"),
+            })
+            data["samples"] = data["samples"][-MAX_SAMPLES_PER_PERSON:]
+            self._dir.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(data, ensure_ascii=False))
+            return True
 
     def owner(self, source: str) -> str | None:
         """Whose sample came from ``source`` (recording:label)."""
@@ -101,17 +103,18 @@ class VoiceBank:
     def remove_source(self, source: str) -> bool:
         """Take back a sample, e.g. when a speaker was named wrongly. A person
         left without samples is removed."""
-        removed = False
-        for _name, (path, data) in self._people().items():
-            kept = [s for s in data["samples"] if s["source"] != source]
-            if len(kept) == len(data["samples"]):
-                continue
-            removed = True
-            if kept:
-                path.write_text(json.dumps({**data, "samples": kept}, ensure_ascii=False))
-            else:
-                path.unlink()
-        return removed
+        with locked(self._dir):
+            removed = False
+            for _name, (path, data) in self._people().items():
+                kept = [s for s in data["samples"] if s["source"] != source]
+                if len(kept) == len(data["samples"]):
+                    continue
+                removed = True
+                if kept:
+                    path.write_text(json.dumps({**data, "samples": kept}, ensure_ascii=False))
+                else:
+                    path.unlink()
+            return removed
 
     def size(self) -> int | None:
         """How many numbers a stored voice has (the voice model's); None when empty."""
@@ -122,39 +125,42 @@ class VoiceBank:
 
     def remove_meeting(self, meeting_id: str) -> int:
         """Take back every sample learned from one meeting (an import undone)."""
-        removed = 0
-        for _name, (path, data) in self._people().items():
-            kept = [s for s in data["samples"] if not str(s["source"]).startswith(f"{meeting_id}:")]
-            if len(kept) == len(data["samples"]):
-                continue
-            removed += len(data["samples"]) - len(kept)
-            if kept:
-                path.write_text(json.dumps({**data, "samples": kept}, ensure_ascii=False))
-            else:
-                path.unlink()
-        return removed
+        with locked(self._dir):
+            removed = 0
+            for _name, (path, data) in self._people().items():
+                kept = [s for s in data["samples"] if not str(s["source"]).startswith(f"{meeting_id}:")]
+                if len(kept) == len(data["samples"]):
+                    continue
+                removed += len(data["samples"]) - len(kept)
+                if kept:
+                    path.write_text(json.dumps({**data, "samples": kept}, ensure_ascii=False))
+                else:
+                    path.unlink()
+            return removed
 
     def forget(self, name: str) -> bool:
-        found = self._find(name)
-        if found is None:
-            return False
-        found[0].unlink()
-        return True
+        with locked(self._dir):
+            found = self._find(name)
+            if found is None:
+                return False
+            found[0].unlink()
+            return True
 
     def rename(self, old: str, new: str) -> bool:
         """Give ``old``'s samples to ``new``; merges when ``new`` exists."""
-        found = self._find(old)
-        if found is None:
-            return False
-        path, data = found
-        target = self._find(new)
-        if target is not None and target[0] == path:  # only the spelling changes
-            path.write_text(json.dumps({**data, "name": new}, ensure_ascii=False))
+        with locked(self._dir):
+            found = self._find(old)
+            if found is None:
+                return False
+            path, data = found
+            target = self._find(new)
+            if target is not None and target[0] == path:  # only the spelling changes
+                path.write_text(json.dumps({**data, "name": new}, ensure_ascii=False))
+                return True
+            for sample in data["samples"]:
+                self.add(new, sample["embedding"], source=sample["source"])
+            path.unlink()
             return True
-        for sample in data["samples"]:
-            self.add(new, sample["embedding"], source=sample["source"])
-        path.unlink()
-        return True
 
     def scores(self, embedding: list[float]) -> list[tuple[float, str]]:
         """(similarity, name) per person, best first."""

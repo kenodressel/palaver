@@ -7,8 +7,12 @@ import PalaverCore
 final class RecordingCenter: NotificationCenterLike, @unchecked Sendable {
     let file: String
     init(file: String) { self.file = file }
-    func post(title: String, body: String, userInfo: [String: String], completion: @escaping @Sendable (Error?) -> Void) {
-        let obj: [String: Any] = ["title": title, "message": body, "open": userInfo["open"] ?? ""]
+    func post(title: String, body: String, userInfo: [String: String], quiet: Bool, expires: Double?,
+              completion: @escaping @Sendable (Error?) -> Void) {
+        var obj: [String: Any] = ["title": title, "message": body, "open": userInfo["open"] ?? ""]
+        // Only when asked for, so an ordinary notification records exactly as before.
+        if quiet { obj["quiet"] = true }
+        if let expires { obj["expires"] = expires }
         if let d = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]),
            let h = FileHandle(forWritingAtPath: file) {
             h.seekToEndOfFile(); h.write(d + Data("\n".utf8)); try? h.close()

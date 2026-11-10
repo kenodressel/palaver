@@ -101,11 +101,16 @@ The fixed contracts, in order of importance:
 3. **Server.** The HTTP API and the domain logic move to Swift: meetings,
    people, projects, glossary, search, voices and speaker inference. The
    frontend stays as it is, and the end-to-end tests run against the
-   Swift server. *Own design.*
+   Swift server. *Own design: `2026-11-04-swift-server-phase3-design.md`.* It widens
+   this phase to everything that writes meeting folders and stores: the
+   `process`/`run` pipeline with echo cancellation, `live`, `stream`, the
+   coach and the search index (with the e5 encoder) come along, so one
+   domain never has two writers.
 4. **Language models and integrations.** Notes, coach and project
    suggestions move to mlx-swift-lm or the cloud providers, along with
-   Notion, the MCP server and the search embeddings. Python leaves the
-   app, and the installer ships no Python runtime. *Own design.*
+   Notion and the MCP server, plus the updater back end, doctor, report
+   and the `palaver` CLI. Python leaves the app, and the installer ships
+   no Python runtime. *Own design: `2026-11-04-swift-lm-phase4-design.md`.*
 
 *My call:* while the migration runs, **new features wait.** Bug fixes for
 the testers go on in Python. Issues #13–#18 land in the phase that owns

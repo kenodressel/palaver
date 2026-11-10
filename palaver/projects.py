@@ -30,6 +30,7 @@ from . import calendar_events, notes, titles
 from ._xdg import xdg_config_home
 from .paths import RecordingPaths, is_recording_folder_name
 from .speakers import names_in_effect
+from .store_lock import locked
 
 # Similarity to a project's closest meeting needed to put a meeting in it
 # without asking, and to suggest it.
@@ -67,11 +68,17 @@ class ProjectStore:
         self._data.setdefault("projects", {})
         self._data.setdefault("meetings", {})
 
+    def locked(self):
+        """``with store.locked():`` holds the store's lock (the same one Swift takes): reload, change,
+        save inside it. Never around a model run."""
+        return locked(self.path)
+
     def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(self._data, indent=2, ensure_ascii=False))
-        tmp.replace(self.path)
+        with self.locked():
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(self._data, indent=2, ensure_ascii=False))
+            tmp.replace(self.path)
 
     # --- projects
 
@@ -479,34 +486,37 @@ def suggest_with_model(output_dir: Path, store: ProjectStore, run: Callable[[str
         rewrite = " (description can be rewritten)" if p["description_by"] != "you" else ""
         projects.append(f"- id {pid}: {p['name']} — {p['description'] or 'no description yet'}{rewrite}"
                         + (f"\n  meetings: {'; '.join(sample)}" if sample else ""))
-    store.save()  # the model takes a while; changes made meanwhile are read back
+    # No save before the model: the callers persist under the lock, and a write of this process's older copy would undo changes made since.
     answer = run(PROMPT.format(user=user_name, rules=DESCRIPTION_RULES, projects="\n".join(projects) or "(none yet)",
                                meetings="\n".join(_describe(f) for f in todo)), SCHEMA)
-    store.reload()
+    # The model is done: read the file again under the lock (it changed meanwhile, maybe), apply, save.
+    with store.locked():
+        store.reload()
 
-    created: dict[str, str] = {}
-    for p in answer.get("new_projects", []):
-        if isinstance(p, dict) and str(p.get("name", "")).strip():
-            created[str(p.get("key"))] = store.create(str(p["name"]), str(p.get("description", "")), by="model")
-    for d in answer.get("descriptions", []):
-        pid = str(d.get("project")) if isinstance(d, dict) else ""
-        if pid in store.projects() and pid not in hidden and store.projects()[pid]["description_by"] != "you":
-            store.update(pid, description=str(d.get("description", "")), by="model")
-    asked = {f.meeting for f in todo}
-    added = []
-    for a in answer.get("assignments", []):
-        mid = str(a.get("meeting")) if isinstance(a, dict) else ""
-        if mid not in asked:
-            continue
-        for ref in a.get("projects", []):
-            pid = created.get(str(ref), str(ref))
-            if pid in store.projects() and pid not in hidden and store.assign(mid, pid, by="model",
-                                                                               why="suggested by the model"):
-                added.append((mid, pid))
-    # Projects the model proposed but put nothing in are noise.
-    for pid in created.values():
-        if not store.meetings_of(pid):
-            store.delete(pid)
+        created: dict[str, str] = {}
+        for p in answer.get("new_projects", []):
+            if isinstance(p, dict) and str(p.get("name", "")).strip():
+                created[str(p.get("key"))] = store.create(str(p["name"]), str(p.get("description", "")), by="model")
+        for d in answer.get("descriptions", []):
+            pid = str(d.get("project")) if isinstance(d, dict) else ""
+            if pid in store.projects() and pid not in hidden and store.projects()[pid]["description_by"] != "you":
+                store.update(pid, description=str(d.get("description", "")), by="model")
+        asked = {f.meeting for f in todo}
+        added = []
+        for a in answer.get("assignments", []):
+            mid = str(a.get("meeting")) if isinstance(a, dict) else ""
+            if mid not in asked:
+                continue
+            for ref in a.get("projects", []):
+                pid = created.get(str(ref), str(ref))
+                if pid in store.projects() and pid not in hidden and store.assign(mid, pid, by="model",
+                                                                                   why="suggested by the model"):
+                    added.append((mid, pid))
+        # Projects the model proposed but put nothing in are noise.
+        for pid in created.values():
+            if not store.meetings_of(pid):
+                store.delete(pid)
+        store.save()
     return added
 
 
@@ -519,14 +529,15 @@ def describe_with_model(output_dir: Path, store: ProjectStore, pid: str, run: Ca
     meetings = "\n".join(_describe(every[m]) for m in store.meetings_of(pid) if m in every)
     if not meetings:
         return project["description"]
-    store.save()
     answer = run(
         f"Describe the project “{project['name']}” from the meetings {user_name} recorded in it. "
         f"{DESCRIPTION_RULES} Write in the language most of the meetings use. Its meetings:\n{meetings}",
         {"type": "object", "properties": {"description": {"type": "string"}}, "required": ["description"]},
     )
-    store.reload()
-    if pid not in store.projects():
-        return ""  # deleted meanwhile
-    store.update(pid, description=str(answer.get("description", "")), by="model")
-    return store.projects()[pid]["description"]
+    with store.locked():
+        store.reload()
+        if pid not in store.projects():
+            return ""  # deleted meanwhile
+        store.update(pid, description=str(answer.get("description", "")), by="model")
+        store.save()
+        return store.projects()[pid]["description"]

@@ -169,10 +169,13 @@ def test_coach_worker_ends_when_the_folder_is_gone(tmp_path: Path):
     try:
         _wait(lambda: (folder / "coach.json").exists())
         w._fh.close()
-        shutil.rmtree(folder)
+        # Gone as the trash takes it: in one rename. (rmtree raced the worker's next coach.json, written every
+        # 20 ms, and failed with "Directory not empty" under load.)
+        folder.rename(tmp_path / "trashed")
         t.join(timeout=10)
         assert not t.is_alive()
         assert not (folder / "coach.json").exists()
+        shutil.rmtree(tmp_path / "trashed")
     finally:
         stop.set()
         t.join(timeout=5)

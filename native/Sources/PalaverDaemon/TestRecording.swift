@@ -1,7 +1,8 @@
 // The setup assistant's test recording (onboarding.TestRecording, inventory §2 "Test recording"):
 // only started by the user's click, stopped by it, after `maxSeconds` or by a meeting starting;
 // never while a meeting is recorded. The audio goes into a temp folder and is never kept; what
-// is learned from it (levels, the mic's words) comes from `palaver onboarding analyze`.
+// is learned from it (levels, the mic's words) comes from `palaver-worker test-analyze` (Python's
+// `palaver onboarding analyze` only in the developer's Python fallback, without palaver-worker).
 import Foundation
 import PalaverCapture
 import PalaverCore
@@ -186,9 +187,10 @@ public final class TestRecorder: @unchecked Sendable {
 
 extension TestRecorder {
     /// A capture of both tracks into the folder the way a meeting is recorded, without a
-    /// session.log (its lines never mix with a meeting's), and `palaver onboarding analyze` for the
-    /// rest. `sources`: the real ones, or fakes in tests.
-    public static func live(sources: @escaping () -> CaptureSources, python: String, cliOptions: [String],
+    /// session.log (its lines never mix with a meeting's), and `palaver-worker test-analyze` for the
+    /// rest (`worker` nil: the Python fallback's `palaver onboarding analyze`). `sources`: the real
+    /// ones, or fakes in tests.
+    public static func live(sources: @escaping () -> CaptureSources, worker: String?, python: String, cliOptions: [String],
                             env: [String: String] = [:], maxSeconds: Double = TestRecorder.maxSeconds) -> TestRecorder {
         TestRecorder(maxSeconds: maxSeconds, capture: { folder in
             let mic = folder.appendingPathComponent("mic_raw.wav"), system = folder.appendingPathComponent("system.wav")
@@ -200,22 +202,30 @@ extension TestRecorder {
                 return (fm.fileExists(atPath: mic.path) ? mic : nil, fm.fileExists(atPath: system.path) ? system : nil)
             }
         }, analyze: { mic, system, mode in
-            try analyzeWithPython(mic: mic, system: system, mode: mode, python: python, cliOptions: cliOptions, env: env)
+            let argv = worker.map { [$0] + cliOptions + analyzeArguments(command: ["test-analyze"], mic: mic, system: system, mode: mode) }
+                ?? [python, "-m", "palaver"] + cliOptions
+                + analyzeArguments(command: ["onboarding", "analyze"], mic: mic, system: system, mode: mode) + ["--checks"]
+            return try analyze(argv: argv, env: env)
         })
     }
 
-    /// `palaver onboarding analyze <mic> [--system <wav>] [--mode <json>] --checks` → its checks.
-    public static func analyzeWithPython(mic: URL?, system: URL?, mode: [String: Any], python: String, cliOptions: [String],
-                                         env: [String: String] = [:], timeout: TimeInterval = 180) throws -> [[String: Any]] {
-        // "-": no microphone track was written (the verdict says so).
-        var args = ["-m", "palaver"] + cliOptions + ["onboarding", "analyze", mic?.path ?? "-", "--checks"]
+    /// `<command> <mic|-> [--system <wav>] [--mode <json>]`: "-" when no microphone track was written (the verdict
+    /// says so).
+    static func analyzeArguments(command: [String], mic: URL?, system: URL?, mode: [String: Any]) -> [String] {
+        var args = command + [mic?.path ?? "-"]
         if let system { args += ["--system", system.path] }
         if !mode.isEmpty, let data = try? JSONSerialization.data(withJSONObject: mode), let text = String(data: data, encoding: .utf8) {
             args += ["--mode", text]
         }
+        return args
+    }
+
+    /// Runs `argv` (palaver-worker's `test-analyze`, or Python's `onboarding analyze --checks`) and returns the
+    /// checks of its one JSON line.
+    public static func analyze(argv: [String], env: [String: String] = [:], timeout: TimeInterval = 180) throws -> [[String: Any]] {
         let p = Foundation.Process()
-        p.executableURL = URL(fileURLWithPath: python)
-        p.arguments = args
+        p.executableURL = URL(fileURLWithPath: argv[0])
+        p.arguments = Array(argv.dropFirst())
         var merged = ProcessInfo.processInfo.environment
         for (k, v) in env { merged[k] = v }
         p.environment = merged
@@ -223,7 +233,7 @@ extension TestRecorder {
         p.standardOutput = out
         p.standardError = FileHandle.nullDevice
         p.standardInput = FileHandle.nullDevice
-        do { try p.run() } catch { throw WorkerError(description: "cannot start \(python): \(error.localizedDescription)") }
+        do { try p.run() } catch { throw WorkerError(description: "cannot start \(argv[0]): \(error.localizedDescription)") }
         let timer = DispatchSource.makeTimerSource(queue: .global())
         timer.schedule(deadline: .now() + timeout)
         timer.setEventHandler { p.terminate() }
@@ -233,7 +243,7 @@ extension TestRecorder {
         timer.cancel()
         guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let checks = obj["checks"] as? [[String: Any]] else {
-            throw WorkerError(description: "palaver onboarding analyze: no answer (exit \(p.terminationStatus))")
+            throw WorkerError(description: "the test recording's analysis gave no answer (exit \(p.terminationStatus))")
         }
         return checks
     }

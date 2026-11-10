@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- For later notarization: 0.6.0rc1 is signed as 0.5 was, without the hardened runtime, so this file is not used
+     yet (palaver/app_bundle.py HARDENED_RUNTIME). Under the hardened runtime, which notarization needs, the runtime
+     refuses what is not granted here: the microphone (the app records your side of a meeting, the setup's
+     test recording) and the calendar (the app, the window's server and the worker read a meeting's event), and
+     Apple Events (osascript started by the app and the palaver command: notifications without the app, quitting
+     it). System audio (Core Audio process taps, ScreenCaptureKit) needs no entitlement. -->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<key>com.apple.security.personal-information.calendars</key>
+	<true/>
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
+</dict>
+</plist>

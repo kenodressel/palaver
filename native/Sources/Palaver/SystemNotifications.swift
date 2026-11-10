@@ -10,12 +10,25 @@ final class SystemCenter: NSObject, NotificationCenterLike, UNUserNotificationCe
 
     func install() { center.delegate = self }
 
-    func post(title: String, body: String, userInfo: [String: String], completion: @escaping @Sendable (Error?) -> Void) {
+    /// No sound ever (`content.sound` stays nil). `quiet`: passive, so it neither lights up the screen nor breaks
+    /// through a Focus. `expires`: removed from Notification Center after that many seconds (a nudge that is no
+    /// longer true).
+    func post(title: String, body: String, userInfo: [String: String], quiet: Bool, expires: Double?,
+              completion: @escaping @Sendable (Error?) -> Void) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.userInfo = userInfo
-        center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil), withCompletionHandler: completion)
+        if quiet { content.interruptionLevel = .passive }
+        let id = UUID().uuidString
+        center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil)) { error in
+            if error == nil, let expires {
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + expires) {
+                    UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [id])
+                }
+            }
+            completion(error)
+        }
     }
 
     func authorizationStatus(completion: @escaping @Sendable (NotifyPermission) -> Void) {

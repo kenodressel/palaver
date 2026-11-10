@@ -6,6 +6,7 @@
 import Darwin
 import Foundation
 import PalaverCore
+import PalaverDomain
 
 /// Another Palaver is running: a second one must not touch its recording or queue.
 /// A calendar lookup that answers later: `.pending` while Python is asked, then the event's key
@@ -159,6 +160,8 @@ public final class Daemon {
     private var notesWaitingLogged = false
     private var notesRetryAt: [String: Double] = [:]
     private var notesRetries: [String: Int] = [:]
+    /// Notes palaver-lm stopped for low memory, per meeting.
+    private var notesMemoryStops: [String: Int] = [:]
     private var indexer: WorkerProcess?
     private var indexDownloading = false
     public var indexCheckSeconds = DaemonTiming.indexCheckSeconds
@@ -935,9 +938,12 @@ public final class Daemon {
     /// only with enough free memory. A call that starts meanwhile stops them; they start over after.
     private func pumpNotes() {
         if let n = notes {
-            if n.poll() != nil {
+            if let rc = n.poll() {
+                let folder = notesFolder
                 notes = nil; notesFolder = nil
                 indexNext = nil  // new notes to index
+                // palaver-lm stopped itself: the Mac ran low on memory while it was over its budget (the watchdog's rule).
+                if rc == MemoryRules.lowMemoryExit, let folder { notesStoppedForMemory(folder) }
             } else if session != nil, let f = notesFolder {
                 info("a call started; writing the notes of \(name(f)) again after it")
                 n.terminate()
@@ -1103,6 +1109,21 @@ public final class Daemon {
 
     /// Notes stopped for low memory wait in the queue, with a backoff, then for the free memory
     /// their model needs as any notes do.
+    /// Notes palaver-lm stopped for low memory: queued again like a stop of the watchdog's own ("requeue"), given up
+    /// with the watchdog's words after `maxRequeues` ("drop").
+    private func notesStoppedForMemory(_ folder: String) {
+        let n = (notesMemoryStops[folder] ?? 0) + 1
+        notesMemoryStops[folder] = n
+        if n <= MemoryRules.maxRequeues {
+            if n == 1 { deps.notify("Notes paused: the Mac is low on memory", "They are written again later.", name(folder)) }
+            notesLater(folder)
+        } else {
+            let (title, message) = MemoryTexts.texts(kind: "notes", what: "drop", used: 0, limit: 0, meeting: name(folder), free: nil)
+            deps.notify(title, message, name(folder))
+            warning("notes of \(name(folder)) were stopped for low memory \(n) times; given up")
+        }
+    }
+
     private func notesLater(_ folder: String) {
         let n = (notesRetries[folder] ?? 0) + 1
         notesRetries[folder] = n

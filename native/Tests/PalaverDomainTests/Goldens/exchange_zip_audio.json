@@ -1,0 +1,102 @@
+{
+ "zips": {
+  "exchange-python-audio.zip": {
+   "audio": {
+    "audio/system.opus": {
+     "rate": 16000,
+     "channels": 1,
+     "frames": 32000
+    },
+    "audio/mic.opus": {
+     "rate": 16000,
+     "channels": 1,
+     "frames": 32000
+    }
+   },
+   "entries": [
+    [
+     "manifest.json",
+     8
+    ],
+    [
+     "meeting/meta.json",
+     8
+    ],
+    [
+     "meeting/transcript.json",
+     8
+    ],
+    [
+     "meeting/turns.json",
+     8
+    ],
+    [
+     "meeting/speakers.json",
+     8
+    ],
+    [
+     "audio/system.opus",
+     0
+    ],
+    [
+     "audio/mic.opus",
+     0
+    ]
+   ]
+  },
+  "exchange-python-audio-flac.zip": {
+   "audio": {
+    "audio/system.flac": {
+     "rate": 22050,
+     "channels": 1,
+     "frames": 44100
+    },
+    "audio/mic.flac": {
+     "rate": 22050,
+     "channels": 1,
+     "frames": 44100
+    }
+   },
+   "entries": [
+    [
+     "manifest.json",
+     8
+    ],
+    [
+     "meeting/meta.json",
+     8
+    ],
+    [
+     "meeting/transcript.json",
+     8
+    ],
+    [
+     "meeting/turns.json",
+     8
+    ],
+    [
+     "meeting/speakers.json",
+     8
+    ],
+    [
+     "audio/system.flac",
+     0
+    ],
+    [
+     "audio/mic.flac",
+     0
+    ]
+   ]
+  }
+ },
+ "imported": {
+  "exchange-python-audio.zip": {
+   "rate": 16000,
+   "frames": 32000
+  },
+  "exchange-python-audio-flac.zip": {
+   "rate": 22050,
+   "frames": 44100
+  }
+ }
+}

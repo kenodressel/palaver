@@ -335,6 +335,21 @@ struct WebSupervisorTests {
                          "--ready-fd", "6", "--app-socket", "/s/app.sock"])
     }
 
+    @Test func serverChildArgvHasTheSameHandshake() {
+        let python = WebSupervisor.childArgv(python: "/b/palaver-python", cliOptions: ["--config", "/c.toml"], listenFD: 5,
+                                             readyFD: 6, appSocket: URL(fileURLWithPath: "/s/app.sock"))
+        let swift = WebSupervisor.childArgv(python: "/b/palaver-python", cliOptions: ["--config", "/c.toml"], listenFD: 5,
+                                            readyFD: 6, appSocket: URL(fileURLWithPath: "/s/app.sock"), server: "/b/palaver-server",
+                                            staticDir: URL(fileURLWithPath: "/b/static", isDirectory: true))
+        #expect(swift == ["/b/palaver-server", "--config", "/c.toml", "--listen-fd", "5", "--ready-fd", "6",
+                          "--app-socket", "/s/app.sock", "--static", "/b/static"])
+        // The same handshake (listening socket, ready pipe, app.sock) as webapp-serve's.
+        #expect(Array(swift[3..<9]) == Array(python[python.count - 6..<python.count]))
+        let unknownStatic = WebSupervisor.childArgv(python: "/p", cliOptions: [], listenFD: 5, readyFD: 6,
+                                                    appSocket: URL(fileURLWithPath: "/s/app.sock"), server: "/b/palaver-server")
+        #expect(unknownStatic.last == "/s/app.sock")  // no Python handed on
+    }
+
     @Test func theWindowGetsTheSamePortAtEveryStartUnlessItIsTaken() throws {
         let ports = try freePorts(3)
         let first = try WebListener.forWindow(ports: ports)

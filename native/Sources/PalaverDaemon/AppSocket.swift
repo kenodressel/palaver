@@ -6,6 +6,7 @@
 // Handlers are injected; later tasks provide them.
 import Darwin
 import Foundation
+import PalaverCloud
 import PalaverCore
 
 /// The recording process answered no, and says why (shown on the page): `refused: true`.
@@ -253,7 +254,8 @@ private final class ResultBox<T>: @unchecked Sendable { var result: Result<T, Er
 private func runBlocking<T>(_ body: @escaping @Sendable () async throws -> T) throws -> T {
     let box = ResultBox<T>()
     let sem = DispatchSemaphore(value: 0)
-    Task.detached {
+    // Off the cooperative pool (PalaverCloud's runBlocking does the same): the waiting threads can't starve it.
+    Task.detached(executorPreference: BlockingWorkExecutor.shared) {
         do { box.result = .success(try await body()) } catch { box.result = .failure(error) }
         sem.signal()
     }

@@ -91,14 +91,16 @@ def make_meeting(folder: Path, *, start: datetime, lines: list[Line], duration: 
     return paths
 
 
-def make_live(folder: Path, *, start: datetime, pid: int) -> RecordingPaths:
+def make_live(folder: Path, *, start: datetime, pid: int | None) -> RecordingPaths:
     """A meeting being recorded: what the live worker has so far (live.json),
-    a .part file, and a live worker that is "running" (``pid``)."""
+    a .part file, and a live worker that is "running" (``pid``; None: no
+    live.pid, as in the parity corpus)."""
     paths = RecordingPaths(folder)
     folder.mkdir(parents=True)
     Path(str(paths.system_wav) + ".part").write_bytes(b"\0" * 100)
     paths.meta.write_text(json.dumps({"start_time": start.isoformat()}))
-    (folder / "live.pid").write_text(str(pid))
+    if pid is not None:
+        (folder / "live.pid").write_text(str(pid))
     seg = lambda t, text, who=None: {"start": t, "end": t + 2, "text": text, "speaker": who, "words": []}
     paths.live.write_text(json.dumps({
         "until": 60.0,
@@ -129,9 +131,10 @@ def _at(stamp: str) -> datetime:
     return datetime.strptime(stamp, "%Y-%m-%dT%H-%M-%S").astimezone()
 
 
-def build_recordings(root: Path, live_pid: int) -> dict[str, RecordingPaths]:
+def build_recordings(root: Path, live_pid: int | None) -> dict[str, RecordingPaths]:
     """The four meetings of the E2E suite, in ``root``. ``live_pid`` is the live
-    worker of the meeting being recorded: a process that is running."""
+    worker of the meeting being recorded: a process that is running; None
+    writes no live.pid (the parity corpus, tools/parity/corpus.py)."""
     root.mkdir(parents=True, exist_ok=True)
     a_start = _at(A)
     out = {

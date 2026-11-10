@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -24,6 +25,36 @@ def test_make_target_refuses_before_building_the_engine():
     assert out.returncode != 0
     assert "PALAVER_EVAL_DIR" in out.stderr
     assert "swift build" not in out.stdout + out.stderr  # the check comes before the engine build
+
+
+def test_worker_mode_refuses_a_missing_worker(capsys, tmp_path):
+    (tmp_path / "eval.json").write_text("{}")
+    env = {"PALAVER_EVAL_DIR": str(tmp_path)}
+    assert eval_engine.main(["--worker", str(tmp_path / "nope")], env=env) == 2
+    assert "no such file" in capsys.readouterr().err
+    assert eval_engine.main([], env={**env, "PALAVER_EVAL_WORKER": str(tmp_path / "nope")}) == 2
+
+
+def test_worker_mode_talks_engine_serve_through_the_engine_client(tmp_path):
+    """The gate's client starts ``<worker> engine-serve --models … --version …`` and reads its replies as
+    palaver-engine's."""
+    worker = tmp_path / "fake worker"
+    worker.write_text(f"""#!{sys.executable}
+import json, sys
+for line in sys.stdin:
+    req = json.loads(line)
+    print(json.dumps({{"id": req["id"], "ok": True, "argv": sys.argv[1:], "cmd": req["cmd"]}}), flush=True)
+""")
+    worker.chmod(0o755)
+    (tmp_path / "scratch").mkdir()
+    engine = eval_engine.worker_engine(worker, tmp_path / "scratch")
+    try:
+        reply = engine.call("hello")
+    finally:
+        engine.close()
+    assert reply["cmd"] == "hello"
+    assert reply["argv"][0] == "engine-serve"
+    assert "--models" in reply["argv"] and "--version" in reply["argv"]
 
 
 def test_confusion_on_toy_annotations():

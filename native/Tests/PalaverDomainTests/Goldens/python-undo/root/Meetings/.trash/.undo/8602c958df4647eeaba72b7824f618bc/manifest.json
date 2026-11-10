@@ -1,0 +1,40 @@
+{
+  "label": "voices",
+  "time": "2026-11-04T22:10:33.664682+01:00",
+  "meetings": {
+    "2026-10-20T14-35-17": {
+      "partial": false,
+      "audio": false,
+      "fingerprint": "367753b9e81ac1a4faee7ab20946f6de7a6fdbf0b467a6108afd7e7390211cb0"
+    },
+    "2026-10-22T10-00-00": {
+      "partial": true,
+      "audio": false,
+      "fingerprint": "79368311f4ce55e8584cad0a8e754eef093c66dc308acf2ea51aa9da0288564b"
+    },
+    "2026-10-22T10-00-30": {
+      "partial": true,
+      "audio": false,
+      "fingerprint": "c0e9458a96c2925574a68941ffd19316f6a2ce44adba1ac6f167fa39c6cd64d3"
+    }
+  },
+  "stores": [
+    {
+      "path": "/PALAVER-UNDO-ROOT/root/config/palaver/voices",
+      "index": 0,
+      "existed": true,
+      "dir": true,
+      "fingerprint": "dir:cb94be1e7318fc38a8dbb6f6742b32f1389b85dcad4f9df03bc48b5756ea8608"
+    },
+    {
+      "path": "/PALAVER-UNDO-ROOT/root/config/palaver/organizations.json",
+      "index": 1,
+      "existed": true,
+      "dir": false,
+      "fingerprint": "file:ed9da042a5c8563cafa80359e5b5b9c8d28a333a52678d3e07186d81776ef4c3"
+    }
+  ],
+  "moves": [],
+  "created": [],
+  "created_fingerprints": {}
+}

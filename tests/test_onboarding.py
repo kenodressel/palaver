@@ -876,6 +876,39 @@ def test_the_download_helper_keeps_no_xet_chunk_cache(monkeypatch):
     assert seen[-1]["HF_XET_CHUNK_CACHE_SIZE_BYTES"] == "123"
 
 
+def test_fetch_command_downloads_with_the_configs_token_in_the_environment(monkeypatch, capsys):
+    """`python -m palaver.onboarding fetch <id> <repo>` (the Swift window server's download of a model that is not
+    the speech models): `_fetch` with the token from config.toml in the download helper's environment, never on a
+    command line; a failure is one line on stderr, the line the page shows, never a traceback or the token."""
+    import subprocess
+    import sys
+    from types import SimpleNamespace
+
+    from palaver import config
+
+    token = "hf_" + "fake0token0for0this0test"
+    runs = []
+    answer = subprocess.CompletedProcess([], 0, "", "")
+    monkeypatch.setattr(config, "load_config", lambda: SimpleNamespace(hf_token=token))
+    monkeypatch.setattr(ob, "fetch_hosted", lambda repo, manifest=None: False)
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: runs.append((cmd, kw)) or answer)
+    assert ob._main(["fetch", "gemma", "mlx-community/other-repo"]) == 0
+    (cmd, kw), = runs
+    assert cmd == [sys.executable, "-m", "palaver.onboarding", "download", "gemma", "mlx-community/other-repo"]
+    assert kw["env"]["HF_TOKEN"] == token and token not in " ".join(cmd)
+    assert kw["env"]["HF_XET_CHUNK_CACHE_SIZE_BYTES"] == "0"
+    assert capsys.readouterr() == ("", "")
+
+    answer = subprocess.CompletedProcess([], 1, "", "Traceback (most recent call last):\n  File \"x\"\n"
+                                         f"token {token} refused\nRepositoryNotFoundError: 404 for this repo\n")
+    assert ob._main(["fetch", "gemma", ob.GEMMA]) == 1
+    out, err = capsys.readouterr()
+    assert out == "" and err == "RepositoryNotFoundError: 404 for this repo\n"
+    assert ob._main(["fetch", "no-such-model", "x/y"]) == 1
+    out, err = capsys.readouterr()
+    assert out == "" and err.count("\n") == 1 and "Traceback" not in err
+
+
 def test_download_progress_counts_in_the_units_of_the_model_size():
     """disk_gb is in GiB (as free disk and Settings → Storage): progress too, so
     a download isn't shown complete before its last 7 %."""

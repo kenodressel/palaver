@@ -1,0 +1,15 @@
+{
+  "label": "rename",
+  "time": "2026-11-04T22:10:33.649281+01:00",
+  "meetings": {
+    "2026-10-20T14-35-17": {
+      "partial": false,
+      "audio": false,
+      "fingerprint": "df65c8b615f80a1bd56af8c82461b5e3f067b64862a6e55f34d927ff3a478c67"
+    }
+  },
+  "stores": [],
+  "moves": [],
+  "created": [],
+  "created_fingerprints": {}
+}

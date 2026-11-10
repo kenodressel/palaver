@@ -35,6 +35,7 @@ import numpy as np
 
 from . import calendar_events, shared_mic, titles
 from .paths import RecordingPaths, is_recording_folder_name
+from .store_lock import meeting_lock
 from .voices import MATCH_MARGIN, MATCH_THRESHOLD, MIN_TALK_SECONDS, VoiceBank, recognize, said_not
 
 # A voice must talk this much to be inferred from the calendar: short
@@ -301,12 +302,14 @@ def refresh(output_dir: Path, *, user_name: str = "", bank: VoiceBank | None = N
             if label not in new or new[label]["confidence"] < hint["confidence"]:
                 new[label] = hint
         new = dict(sorted(new.items()))
-        if new == load(paths):
-            continue
-        if new:
-            paths.speakers_inferred.write_text(json.dumps(new, indent=2, ensure_ascii=False))
-        else:
-            paths.speakers_inferred.unlink(missing_ok=True)
+        with meeting_lock(paths.folder):
+            if new == load(paths):
+                continue
+            if new:
+                paths.speakers_inferred.write_text(json.dumps(new, indent=2, ensure_ascii=False))
+            else:
+                paths.speakers_inferred.unlink(missing_ok=True)
+        # Outside the meeting's lock: saving the names learns voices, which takes the bank's.
         if paths.transcript_json.exists() and paths.meta.exists():
             save_speaker_names(paths, load_speaker_names(paths), bank)
         changed += 1

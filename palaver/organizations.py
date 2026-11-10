@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from ._xdg import xdg_config_home
+from .store_lock import locked
 from .attribution import Link
 
 EXTERN = "Extern"
@@ -61,10 +62,11 @@ class Organizations:
         self._data.setdefault("people", {})
 
     def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(self._data, indent=2, ensure_ascii=False))
-        tmp.replace(self.path)
+        with locked(self.path):
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(self._data, indent=2, ensure_ascii=False))
+            tmp.replace(self.path)
 
     def name(self, key: str) -> str:
         return self._data["names"].get(key) or default_name(key)

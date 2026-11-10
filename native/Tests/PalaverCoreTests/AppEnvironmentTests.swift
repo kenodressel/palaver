@@ -1,6 +1,6 @@
-// Where the app runs and what it starts with: options, the bundle or a checkout, the workers'
-// python, the version, the legacy fallback, the temp-folder sweep, the single-instance check, the
-// crash log's header, and the fallback's launcher (a fake menu bar app, no real one).
+// Where the app runs and what it starts with: options, the bundle or a checkout, the developer's Python (a
+// checkout's only), the version, the legacy fallback, the temp-folder sweep, the single-instance check and the
+// crash log's header.
 import Darwin
 import Foundation
 import Testing
@@ -28,52 +28,138 @@ private func write(_ url: URL, _ text: String) {
         #expect(AppOptions.parse(["--config"]) == AppOptions())  // no value: nothing
     }
 
-    @Test func insideABundleTheWorkersRunItsPythonHostAndTheVersionIsItsRuntimeJson() {
+    @Test func aBundleHasNoPythonAtAllAndItsVersionIsItsRuntimeJson() {
         let root = temp()
         let app = root.appendingPathComponent("Palaver.app", isDirectory: true)
-        write(app.appendingPathComponent("Contents/Resources/runtime.json"), #"{"version": "0.5.0", "runtime": "3.13.18-arm64-abc"}"#)
+        write(app.appendingPathComponent("Contents/Resources/runtime.json"), #"{"version": "0.6.0rc1", "runtime": "no-python-1"}"#)
         let loc = AppLocation(executable: app.appendingPathComponent("Contents/MacOS/Palaver"))
         #expect(loc.bundle?.path == app.path && loc.checkout == nil)
-        #expect(loc.python(environment: [:]) == app.path + "/Contents/MacOS/palaver-python")
-        #expect(loc.python(environment: ["PALAVER_PYTHON": "/x/python"]) == "/x/python")
-        #expect(loc.version() == "0.5.0")
+        #expect(loc.legacyPython(environment: [:], isExecutable: { _ in true }) == nil)
+        #expect(loc.legacyPython(environment: ["PALAVER_PYTHON": "/x/python"], isExecutable: { _ in true }) == nil)
+        #expect(loc.version() == "0.6.0rc1")
     }
 
-    @Test func aDevelopmentBuildRunsTheCheckoutsVenvAndReadsItsVersion() {
+    @Test func theHomeIsPalaverHomeElseHomeElseTheAccounts() {
+        #expect(Paths.home(environment: ["PALAVER_HOME": "/tmp/p", "HOME": "/tmp/h"]).path == "/tmp/p")
+        #expect(Paths.home(environment: ["PALAVER_HOME": "", "HOME": "/tmp/h"]).path == "/tmp/h")
+        #expect(Paths.home(environment: [:]) == FileManager.default.homeDirectoryForCurrentUser)
+        // config.toml's `~` is that home.
+        let config = Config(toml: "[recording]\noutput_dir = \"~/rec\"\n", environment: ["PALAVER_HOME": "/tmp/p", "HOME": "/tmp/h"])
+        #expect(config.outputDir.path == "/tmp/p/rec")
+        #expect(Config(toml: "", environment: ["PALAVER_HOME": "/tmp/p"]).outputDir.path == "/tmp/p/Meetings/Recordings")
+    }
+
+    @Test func thePalaverCommandInResourcesBinIsInsideTheBundleAlsoThroughALink() throws {
+        let root = temp()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = root.appendingPathComponent("Palaver.app", isDirectory: true)
+        write(app.appendingPathComponent("Contents/Resources/runtime.json"), #"{"version": "0.6.0"}"#)
+        let cli = app.appendingPathComponent("Contents/Resources/bin/palaver")
+        write(cli, "")
+        let loc = AppLocation(executable: cli)
+        #expect(loc.bundle?.path == app.path && loc.checkout == nil && loc.version() == "0.6.0")
+        // ~/.local/bin/palaver, as install.sh links it.
+        let link = root.appendingPathComponent("local/bin/palaver")
+        try FileManager.default.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: cli)
+        #expect(AppLocation(executable: link).bundle?.path == app.path)
+        // Another bin folder is no bundle.
+        #expect(AppLocation(executable: root.appendingPathComponent("Other/Resources/bin/palaver")).bundle == nil)
+    }
+
+    @Test func aDevelopmentBuildHasTheCheckoutsVenvAsItsPythonAndReadsItsVersion() {
         let repo = temp()
         write(repo.appendingPathComponent("palaver/__init__.py"), "\"\"\"Palaver.\"\"\"\n\n__version__ = \"0.4.9\"\n")
         let exe = repo.appendingPathComponent("native/.build/arm64-apple-macosx/release/Palaver")
         let loc = AppLocation(executable: exe)
+        let venv = repo.path + "/.venv/bin/python"
         #expect(loc.bundle == nil && loc.checkout?.path == repo.path)
-        #expect(loc.python(environment: [:]) == repo.path + "/.venv/bin/python")
+        #expect(loc.legacyPython(environment: [:], isExecutable: { $0 == venv }) == venv)
+        #expect(loc.legacyPython(environment: [:], isExecutable: { _ in false }) == nil)  // no venv: no Python
+        #expect(loc.legacyPython(environment: ["PALAVER_PYTHON": "/x/python"], isExecutable: { _ in false }) == "/x/python")
         #expect(loc.version() == "0.4.9")
-        #expect(loc.runtimePython(home: repo) == nil)  // no runtime to check outside a release
         let nowhere = AppLocation(executable: URL(fileURLWithPath: "/nonexistent-\(UUID())/Palaver"))
         #expect(nowhere.bundle == nil && nowhere.checkout == nil && nowhere.version() == "?")
-        #expect(nowhere.python(environment: [:]) == "python3")
+        #expect(nowhere.legacyPython(environment: ["PALAVER_PYTHON": "/x/python"], isExecutable: { _ in true }) == nil)
     }
 
-    @Test func aReleaseChecksTheRuntimeItWasBuiltFor() throws {
+    @Test func aReleaseWithoutRuntimeJsonReadsInfoPlist() throws {
         let root = temp()
         let app = root.appendingPathComponent("Palaver.app", isDirectory: true)
         try FileManager.default.createDirectory(at: app.appendingPathComponent("Contents"), withIntermediateDirectories: true)
-        try PropertyListSerialization.data(fromPropertyList: ["PalaverRuntimeID": "3.13.18-arm64-abc", "CFBundleShortVersionString": "0.5.0"],
+        try PropertyListSerialization.data(fromPropertyList: ["CFBundleShortVersionString": "0.5.0"],
                                            format: .xml, options: 0).write(to: app.appendingPathComponent("Contents/Info.plist"))
         let loc = AppLocation(executable: app.appendingPathComponent("Contents/MacOS/Palaver"))
-        #expect(loc.runtimePython(home: root)?.path
-                == root.path + "/Library/Application Support/palaver/runtime/3.13.18-arm64-abc/bin/python3")
-        #expect(loc.version() == "0.5.0")  // no runtime.json: Info.plist's
+        #expect(loc.version() == "0.5.0")
     }
 
-    @Test func theLegacyAppIsChosenByTheEnvironmentOrTheMarkerFile() {
+    @Test func theSwiftProgramsAreTheBundlesTheCheckoutsBuildOrTheOverride() throws {
+        let app = URL(fileURLWithPath: "/Applications/Palaver.app", isDirectory: true)
+        let bundled = AppLocation(executable: app.appendingPathComponent("Contents/MacOS/Palaver"))
+        #expect(bundled.binary("palaver-worker", environment: [:], fileExists: { _ in true })
+                == "/Applications/Palaver.app/Contents/MacOS/palaver-worker")
+        #expect(bundled.binary("palaver-worker", environment: [:], fileExists: { _ in false }) == nil)
+        #expect(bundled.binary("palaver-server", environment: ["PALAVER_SERVER_BIN": "/x/palaver-server"], fileExists: { _ in true })
+                == "/x/palaver-server")
+        #expect(bundled.staticDir()?.path == "/Applications/Palaver.app/Contents/Resources/web")
+
+        let root = temp()
+        write(root.appendingPathComponent("palaver/__init__.py"), "__version__ = \"0.5.0rc4\"\n")
+        let dev = AppLocation(executable: root.appendingPathComponent("native/.build/debug/Palaver"))
+        let release = root.appendingPathComponent("native/.build/release/palaver-server").path
+        let debug = root.appendingPathComponent("native/.build/debug/palaver-server").path
+        #expect(dev.binary("palaver-server", environment: [:], fileExists: { $0 == release }) == release)
+        #expect(dev.binary("palaver-server", environment: [:], fileExists: { $0 == debug }) == debug)
+        #if DEBUG
+        #expect(dev.binary("palaver-server", environment: [:], fileExists: { $0 == debug || $0 == release }) == debug)  // its own build
+        #endif
+        #expect(dev.staticDir() == root.appendingPathComponent("palaver/webapp/static", isDirectory: true))
+        #expect(AppLocation(executable: URL(fileURLWithPath: "/nowhere/bin/Palaver"), fileExists: { _ in false })
+                    .binary("palaver-worker", environment: [:], fileExists: { _ in true }) == nil)
+    }
+
+    @Test func theLegacyServerIsChosenByTheEnvironmentOrTheMarkerFile() {
         let support = temp()
-        #expect(!LegacyApp.wanted(environment: [:], support: support))
-        #expect(LegacyApp.wanted(environment: ["PALAVER_LEGACY_APP": "1"], support: support))
-        #expect(!LegacyApp.wanted(environment: ["PALAVER_LEGACY_APP": "0"], support: support))
-        write(support.appendingPathComponent("legacy-app"), "")
-        #expect(LegacyApp.wanted(environment: [:], support: support))
-        #expect(LegacyApp.argv(python: "/A/Contents/MacOS/palaver-python", cliOptions: ["--config", "/c.toml"])
-                == ["/A/Contents/MacOS/palaver-python", "-m", "palaver", "--config", "/c.toml", "menubar"])
+        #expect(!LegacyServer.wanted(environment: [:], support: support))
+        #expect(LegacyServer.wanted(environment: ["PALAVER_LEGACY_SERVER": "1"], support: support))
+        #expect(!LegacyServer.wanted(environment: ["PALAVER_LEGACY_APP": "1"], support: support))  // the gone fallback
+        write(support.appendingPathComponent("legacy-server"), "")
+        #expect(LegacyServer.wanted(environment: [:], support: support))
+    }
+
+    @Test func inABundleTheLegacyMarkerIsIgnoredAndSaidAndEveryProgramIsTheSwiftOne() {
+        let support = temp()
+        write(support.appendingPathComponent("legacy-server"), "")
+        let app = URL(fileURLWithPath: "/Applications/Palaver.app", isDirectory: true)
+        let bundled = AppLocation(executable: app.appendingPathComponent("Contents/MacOS/Palaver"))
+        let python = bundled.legacyPython(environment: [:], isExecutable: { _ in true })
+        let all = LegacyServer.binaries(location: bundled, environment: [:], support: support, python: python, isExecutable: { _ in true })
+        #expect(all.server == app.path + "/Contents/MacOS/palaver-server" && all.worker == app.path + "/Contents/MacOS/palaver-worker")
+        #expect(all.lm == app.path + "/Contents/MacOS/palaver-lm" && !all.legacy)
+        #expect(all.said.count == 1 && all.said[0].contains("legacy-server") && all.said[0].contains("ignored"))
+        // A program missing from the bundle is still the bundle's (its start fails and says where), never Python.
+        let missing = LegacyServer.binaries(location: bundled, environment: [:], support: temp(), python: nil,
+                                            isExecutable: { !$0.hasSuffix("palaver-lm") })
+        #expect(missing.lm == app.path + "/Contents/MacOS/palaver-lm" && missing.said == ["palaver-lm is missing (\(missing.lm!))"])
+    }
+
+    @Test func inACheckoutWithItsVenvTheLegacyMarkerRunsPython() {
+        let support = temp()
+        let repo = temp()
+        write(repo.appendingPathComponent("palaver/__init__.py"), "__version__ = \"0.6.0rc1\"\n")
+        let dev = AppLocation(executable: repo.appendingPathComponent("native/.build/debug/Palaver"))
+        let venv = repo.path + "/.venv/bin/python"
+        let python = dev.legacyPython(environment: [:], isExecutable: { $0 == venv })
+        #expect(python == venv)
+        let swift = LegacyServer.binaries(location: dev, environment: [:], support: support, python: python, isExecutable: { _ in true })
+        #expect(swift.server != nil && swift.worker != nil && swift.lm != nil && !swift.legacy && swift.said.isEmpty)
+        write(support.appendingPathComponent("legacy-server"), "")
+        let legacy = LegacyServer.binaries(location: dev, environment: [:], support: support, python: python, isExecutable: { _ in true })
+        #expect(legacy.server == nil && legacy.worker == nil && legacy.lm == nil && legacy.legacy)
+        #expect(legacy.said.count == 1 && legacy.said[0].contains(venv))
+        // Without its venv the marker is ignored there too.
+        let noVenv = LegacyServer.binaries(location: dev, environment: [:], support: support, python: nil, isExecutable: { _ in true })
+        #expect(noVenv.server != nil && !noVenv.legacy && noVenv.said[0].contains("ignored"))
     }
 
     @Test func theSweepRemovesOnlyTheNotifyFilesOfGoneProcesses() throws {
@@ -109,62 +195,6 @@ private func write(_ url: URL, _ text: String) {
                                    now: Date(timeIntervalSince1970: 0))
         #expect(line.hasPrefix("=== "))
         #expect(line.hasSuffix(" palaver app pid 77 palaver 0.5.0 argv ['--no-notify']\n"))
-    }
-}
-
-// The fallback's launcher, with a fake menu bar app (a shell script), as test_app_bundle.py tested
-// the ObjC launcher: the command, the click socket, a forwarded signal, the exit code.
-@Suite(.serialized) struct LegacyLauncherTests {
-    func fakeApp(_ dir: URL, _ body: String) -> URL {
-        let script = dir.appendingPathComponent("fake python")  // a path with a space
-        write(script, "#!/bin/sh\n" + body)
-        chmod(script.path, 0o755)
-        return script
-    }
-
-    func waitFor(_ url: URL, _ seconds: Double = 10) -> String? {
-        let end = Date().addingTimeInterval(seconds)
-        while Date() < end {
-            if let s = try? String(contentsOf: url, encoding: .utf8), s.hasSuffix("\n") { return s }
-            usleep(20_000)
-        }
-        return nil
-    }
-
-    @Test func itStartsTheMenuBarAppWithItsOutputInTheLogAndReturnsItsExitCode() throws {
-        let dir = temp()
-        let marker = dir.appendingPathComponent("args.txt")
-        let fake = fakeApp(dir, "echo \"$@|$PALAVER_NOTIFY|${PALAVER_LAUNCHER_FD:-none}\" > '\(marker.path)'\necho said\nexit 3\n")
-        let log = dir.appendingPathComponent("logs/app.log")
-        let launcher = try LegacyLauncher(argv: LegacyApp.argv(python: fake.path, cliOptions: ["--config", "/x y/c.toml"]),
-                                          env: ["PALAVER_NOTIFY": "/t/palaver-1.sock"], log: log, clicks: false)
-        #expect(launcher.wait() == 3)
-        #expect(waitFor(marker) == "-m palaver --config /x y/c.toml menubar|/t/palaver-1.sock|none\n")
-        #expect(try String(contentsOf: log, encoding: .utf8) == "said\n")
-    }
-
-    @Test func aClickReachesTheAppThroughTheFdInItsEnvironment() throws {
-        let dir = temp()
-        let marker = dir.appendingPathComponent("click.txt")
-        // dd reads one datagram from the inherited socket.
-        let fake = fakeApp(dir, "eval \"dd bs=200 count=1 <&$PALAVER_LAUNCHER_FD 2>/dev/null\" > '\(marker.path).part'\n"
-                                + "printf '\\n' >> '\(marker.path).part'; mv '\(marker.path).part' '\(marker.path)'\n")
-        let launcher = try LegacyLauncher(argv: [fake.path], env: [:], log: dir.appendingPathComponent("app.log"), clicks: true)
-        launcher.open("2026-10-30T08-02-13")
-        #expect(waitFor(marker) == "open 2026-10-30T08-02-13\n")
-        #expect(launcher.wait() == 0)
-    }
-
-    @Test func aSignalToTheAppIsPassedOnAndItsExitBecomesTheApps() throws {
-        let dir = temp()
-        let ready = dir.appendingPathComponent("ready.txt")
-        let fake = fakeApp(dir, "trap 'exit 7' USR2\necho up > '\(ready.path)'\nwhile :; do sleep 0.05; done\n")
-        let launcher = try LegacyLauncher(argv: [fake.path], env: [:], log: dir.appendingPathComponent("app.log"), clicks: false)
-        launcher.forwardSignals([SIGUSR2])  // the app forwards TERM, INT and HUP; USR2 keeps this test process safe
-        defer { launcher.stopForwarding() }
-        #expect(waitFor(ready) == "up\n")
-        kill(getpid(), SIGUSR2)
-        #expect(launcher.wait() == 7)
     }
 }
 

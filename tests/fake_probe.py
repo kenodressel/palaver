@@ -85,6 +85,25 @@ class FakeProbe:
         self.hardware_calls = 0
         self.cfg = None
 
+    def set(self, **values) -> None:
+        """What the end-to-end tests change, by palaver-server's probe.json keys
+        (conftest's ProbeFile): hardware, installed, permissions, downloaded,
+        fail_once, full_name."""
+        if "hardware" in values:
+            hw = values["hardware"]
+            self._hardware = ob.Hardware(hw.get("chip", "Apple M4 Pro"), hw.get("memory_gb", 48), hw.get("free_disk_gb", 120))
+        if "installed" in values:
+            self._installed = ob.Installed(**values["installed"])
+        if "permissions" in values:
+            self._permissions.clear()
+            self._permissions.update(values["permissions"])
+        if "downloaded" in values:
+            self._downloaded = set(values["downloaded"])
+        if "fail_once" in values:
+            self.fail_once = set(values["fail_once"])
+        if "full_name" in values:
+            self._name = values["full_name"]
+
     def _fetch(self, model: ob.Model) -> None:
         self.fetch_gate.wait(10)
         self.fetched.append(model.id)

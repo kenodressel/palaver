@@ -1,0 +1,155 @@
+{
+ "cases": [
+  [
+   "Im Atterkring-Raum? Nein, atterkring. Merger von Unit zu14, Junit.",
+   "Im Attakring-Raum? Nein, Attakring. Merger von Unit 214, Unit.",
+   [
+    [
+     3,
+     12,
+     "Atterkring"
+    ],
+    [
+     25,
+     34,
+     "atterkring"
+    ],
+    [
+     47,
+     55,
+     "Unit zu14"
+    ],
+    [
+     57,
+     61,
+     "Junit"
+    ]
+   ]
+  ],
+  [
+   "Atter-Kring und ATTER-KRING und Atterkrings und Atterkring_x",
+   "Attakring und Attakring und Atterkrings und Atterkring_x",
+   [
+    [
+     0,
+     9,
+     "Atter-Kring"
+    ],
+    [
+     14,
+     23,
+     "ATTER-KRING"
+    ]
+   ]
+  ],
+  [
+   "Straße, STRASSE, strasse, Strasse, STRAßE — Straßen",
+   "Straße, STRASSE, strasse, Strasse, STRAßE — Straßen",
+   []
+  ],
+  [
+   "Timo Strauss traf Tim Strauß; Timo   Strauss nicht.",
+   "Timo Strauss traf Tim Strauß; Timo   Strauss nicht.",
+   []
+  ],
+  [
+   "😀 Cloud, Cloud😀, x Cloud y, ÄCloud, Cloud-Ä",
+   "KLOUD 😀, KLOUD 😀😀, x KLOUD 😀 y, ÄCloud, KLOUD 😀-Ä",
+   [
+    [
+     0,
+     7,
+     "😀 Cloud"
+    ],
+    [
+     9,
+     16,
+     "Cloud"
+    ],
+    [
+     21,
+     28,
+     "Cloud"
+    ],
+    [
+     40,
+     47,
+     "Cloud"
+    ]
+   ]
+  ],
+  [
+   "ǅ Cloud İ cloud Σ cloud",
+   "ǅ KLOUD 😀 İ KLOUD 😀 Σ KLOUD 😀",
+   [
+    [
+     2,
+     9,
+     "Cloud"
+    ],
+    [
+     12,
+     19,
+     "cloud"
+    ],
+    [
+     22,
+     29,
+     "cloud"
+    ]
+   ]
+  ],
+  [
+   "nothing here",
+   "nothing here",
+   []
+  ],
+  [
+   "",
+   "",
+   []
+  ],
+  [
+   "Unit zu14Unit zu14 Unit zu14",
+   "Unit zu14Unit zu14 Unit 214",
+   [
+    [
+     19,
+     27,
+     "Unit zu14"
+    ]
+   ]
+  ]
+ ],
+ "after_update": [
+  [
+   "Im Atterkring-Raum? Nein, atterkring. Merger von Unit zu14, Junit.",
+   "Im Atterkring-Raum? Nein, atterkring. Merger von Unit 214, Unit."
+  ],
+  [
+   "Atter-Kring und ATTER-KRING und Atterkrings und Atterkring_x",
+   "Attakring 2 und Attakring 2 und Atterkrings und Atterkring_x"
+  ]
+ ],
+ "file": "{\n  \"version\": 3,\n  \"rejected\": [\n    \"term:x\",\n    \"variant:a:b\"\n  ],\n  \"terms\": {\n    \"aaaaaaaa\": {\n      \"term\": \"Attakring 2\",\n      \"variants\": [\n        \"Atter-Kring\"\n      ],\n      \"note\": \"n\"\n    },\n    \"bbbbbbbb\": {\n      \"term\": \"Unit 214\",\n      \"variants\": [\n        \"Unit zu14\"\n      ],\n      \"note\": \"\"\n    },\n    \"dddddddd\": {\n      \"term\": \"Straße\",\n      \"variants\": [],\n      \"note\": \"the street\"\n    },\n    \"eeeeeeee\": {\n      \"term\": \"Timo Strauß\",\n      \"variants\": [\n        \"Tim Strauß\"\n      ],\n      \"note\": \"\"\n    },\n    \"ffffffff\": {\n      \"term\": \"KLOUD 😀\",\n      \"variants\": [\n        \"Cloud\",\n        \"😀 Cloud\"\n      ],\n      \"note\": \"\"\n    }\n  },\n  \"extra\": {\n    \"k\": [\n      1,\n      2.5\n    ]\n  }\n}",
+ "ids": [
+  "aaaaaaaa",
+  "bbbbbbbb",
+  "dddddddd",
+  "eeeeeeee",
+  "ffffffff"
+ ],
+ "find": [
+  "aaaaaaaa",
+  null
+ ],
+ "owner": [
+  null,
+  "ffffffff",
+  null
+ ],
+ "rejected": [
+  "term:x",
+  "variant:a:b"
+ ]
+}

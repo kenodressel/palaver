@@ -83,3 +83,20 @@ def test_permission_state_file_is_read_by_python(helper):
             break
         time.sleep(0.05)
     assert notify.permission() == "not_asked"
+
+
+def test_a_quiet_datagram_reaches_the_center_as_quiet(helper):
+    """#19: palaver-worker's live coach sends its nudges with ``quiet`` and ``expires``; the app posts them
+    so (no sound, passive, taken away after ``expires`` seconds). Without them a notification is as before."""
+    import socket
+
+    sock, _, record = helper
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as s:
+        s.sendto(json.dumps({"title": "Live coach", "message": "3-min monologue", "open": "2026-11-07T10-00-00",
+                             "quiet": True, "expires": 120.0}).encode(), sock)
+    notify.notify("Notes ready", "Weekly", meeting="2026-11-07T10-00-00")
+    assert _wait_records(record, 2) == [
+        {"title": "Live coach", "message": "3-min monologue", "open": "2026-11-07T10-00-00", "quiet": True,
+         "expires": 120.0},
+        {"title": "Notes ready", "message": "Weekly", "open": "2026-11-07T10-00-00"},
+    ]

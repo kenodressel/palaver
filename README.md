@@ -92,7 +92,7 @@ to the new folders at the first start.
 ## Requirements
 
 - macOS 15 or later on Apple Silicon (M1 or later)
-- About 3 GB of disk for the app and its runtime, plus the models you choose
+- About 0.2 GB of disk for the app, plus the models you choose
   in the setup assistant (speech and speaker models 0.5 GB, the notes model Gemma 4 12B 8.3 GB,
   search 0.45 GB: about 9.3 GB in all)
 - For notes written on your Mac: enough memory for the notes model. It needs
@@ -119,8 +119,7 @@ The installer writes only into your home folder and changes no shell or
 
 | What | Where | Size | Downloaded |
 |---|---|---|---|
-| The app: the native Mac app, Palaver's code and its speech engine | `~/Applications/Palaver.app` | 13 MB download, 28 MB on disk | every release |
-| Its runtime: Python and every library Palaver uses, prebuilt | `~/Library/Application Support/palaver/runtime/` | 530 MB download, 1.6 GB on disk; the one before it stays to go back to (up to 3.3 GB) | only when it changed |
+| The app: the native Mac app, its window's server, pipeline, language model and speech engine, and the `palaver` command (no Python since 0.6) | `~/Applications/Palaver.app` | 53 MB download, 120 MB on disk | every release |
 | The models, with your OK in the setup assistant | `~/Library/Application Support/palaver/models/` and `~/.cache/huggingface` | about 9.3 GB: speech and speakers 0.5, Gemma 4 12B 8.3, search 0.45 | once |
 
 Sizes as Settings → Storage shows them (1 GB = 1024 MB); Finder counts
@@ -258,7 +257,7 @@ then it restarts. A failed update keeps the version you have and says why.
 Running the install command again updates too.
 
 **Uninstall.** Settings → Updates → Uninstall Palaver… asks first, then
-removes the app, its runtime, the login item and the `palaver` command; the
+removes the app, the login item and the `palaver` command; the
 models only when ticked; your recordings, settings and voices only when
 ticked. Or in a terminal:
 
@@ -276,17 +275,21 @@ and a little more:
 
 ```bash
 palaver doctor                 # check the setup, say what to fix
-palaver record                 # record now; Ctrl+C stops
 palaver list                   # every recording and its state
+palaver daemon status          # what the app does right now
 palaver run <folder>           # transcribe, write notes (and upload) a recording
-palaver rename <folder>        # name the speakers, with a short sample of each
 palaver voices                 # whose voices are stored
-palaver voices forget "Anna"   # delete someone's voice
+palaver voices forget "Valerie"  # delete someone's voice
 palaver export <meeting>       # a meeting as a .zip for a colleague
 palaver import <zip>           # a meeting a colleague exported
+palaver report create -m "…"   # a problem report on the Desktop
 palaver mcp --install          # let Claude Code read your meetings
 palaver --help                 # everything else
 ```
+
+Recording and naming speakers are the app's: start a recording from the
+menu bar icon, name speakers in the Meetings window. `palaver record` and
+`palaver rename` of earlier versions say so.
 
 ## Advanced settings
 
@@ -354,6 +357,11 @@ puts a split call back together.
 
 ## Contributing
 
-Palaver is written in Python, with a WKWebView window. To build it from
-source, run the tests or make a release, see [CONTRIBUTING.md](CONTRIBUTING.md).
+Palaver is a native Mac app written in Swift — the menu bar app, the
+Meetings window's server, the pipeline that records, transcribes and names
+speakers, the language model that writes the notes, and the `palaver`
+command. Since 0.6 the app holds no Python. The repository's Python code
+remains only for a local developer fallback and the parity tooling that
+compares it with the Swift code. To build it from source, run the tests or
+make a release, see [CONTRIBUTING.md](CONTRIBUTING.md).
 Third-party licenses are in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).

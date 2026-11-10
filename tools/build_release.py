@@ -1,21 +1,32 @@
 """Build Palaver's release assets on this Mac (#60); `make release` runs it.
 
-    python tools/build_release.py runtime  --dist dist --python 3.13.18 --pbs-release 20261026
-    python tools/build_release.py models   --dist dist
-    python tools/build_release.py app      --dist dist
-    python tools/build_release.py manifest --dist dist [--previous manifest.json]
+    python tools/build_release.py app            --dist dist
+    python tools/build_release.py compat-runtime --dist dist
+    python tools/build_release.py manifest       --dist dist [--previous manifest.json]
 
-- runtime: python-build-standalone (downloaded into the build folder, its
-  sha256 checked against the release's SHA256SUMS) plus every locked
-  dependency, made relocatable
-  and checked: no Mach-O file may load anything from /Users, Homebrew or
-  /usr/local. Built once per runtime id; an existing archive is kept.
+Palaver 0.6 and later hold no Python: no runtime archive of their own, nothing of
+the repository's Python code in the app.
+
+- app: Palaver.app, zipped: the Swift app as its executable, the speech engine
+  (palaver-engine), the window's server (palaver-server), the worker
+  (palaver-worker), the language model's worker (palaver-lm, with MLX's
+  shaders), the `palaver` command (palaver-cli, as Contents/Resources/bin/palaver),
+  the one-release MCP shim (native/Bundle/bin/python), the window's page files
+  (Contents/Resources/web), the domain's resources (zipf.bin) and the
+  third-party notices; runtime.json names the placeholder runtime. The build
+  refuses a bundle with anything of Python in it or a path of this Mac
+  (`check_bundle`).
+- compat-runtime: the placeholder runtime (COMPAT_RUNTIME_ID), a few hundred
+  bytes: what the updaters of releases before 0.6 need to take the app. The
+  release that first names it uploads it; later ones keep its URL (--previous).
+- manifest: manifest.json over the assets (its runtime block: the placeholder),
+  and upload.txt: the assets this release must upload. An asset the previous
+  release already published (same file, same sha256) keeps its URL there and is
+  not uploaded again.
 - models: nothing; Palaver hosts no models (the engine downloads its own).
-- app: Palaver.app, zipped: the Swift app as its executable, the wheel's code
-  with its Python host (palaver-python), and the Swift engine.
-- manifest: manifest.json over the assets, and upload.txt: the assets this
-  release must upload. An asset the previous release already published
-  (same file, same sha256) keeps its URL there and is not uploaded again.
+
+`--compat-runtime` (app, manifest) is accepted and changes nothing: it is the
+only mode since 0.6.
 """
 
 from __future__ import annotations
@@ -24,12 +35,10 @@ import argparse
 import json
 import os
 import platform
-import re
 import shutil
 import subprocess
 import sys
 import tarfile
-import tempfile
 import zipfile
 from pathlib import Path
 
@@ -39,169 +48,11 @@ sys.path.insert(0, str(ROOT))
 from palaver import release  # noqa: E402
 
 ARCH = "arm64"
-FORBIDDEN_PREFIXES = ("/Users/", "/opt/homebrew", "/usr/local", "/private/", "/tmp/", "/install/")
 
 
 def run(*argv, **kw):
     print("+", " ".join(str(a) for a in argv), flush=True)
     return subprocess.run([str(a) for a in argv], check=True, **kw)
-
-
-def requirements(dist: Path) -> str:
-    out = dist / "requirements.txt"
-    run("uv", "export", "--frozen", "--no-dev", "--no-emit-project", "--no-hashes",
-        "--format", "requirements-txt", "-o", out, cwd=ROOT, stdout=subprocess.DEVNULL)
-    return out.read_text()
-
-
-PBS = "https://github.com/astral-sh/python-build-standalone/releases/download"
-PBS_RELEASE = "20261026"  # set by --pbs-release (the Makefile's PBS_RELEASE)
-
-
-def runtime_id(dist: Path, python: str) -> str:
-    return release.runtime_id(requirements(dist), python, ARCH, build=f"python-build-standalone {PBS_RELEASE}")
-
-
-# --- runtime -------------------------------------------------------------------------------------
-
-def _fetch(url: str, dest: Path) -> Path:
-    import urllib.request
-
-    print(f"+ download {url}", flush=True)
-    with urllib.request.urlopen(url, timeout=60) as response, open(dest, "wb") as out:
-        shutil.copyfileobj(response, out)
-    return dest
-
-
-def _install_python(build: Path, python: str) -> Path:
-    """python-build-standalone ``python`` of release PBS_RELEASE, into the
-    build folder only, its sha256 checked against the release's SHA256SUMS."""
-    from urllib.parse import quote
-
-    name = f"cpython-{python}+{PBS_RELEASE}-aarch64-apple-darwin-install_only.tar.gz"
-    folder = build / "pbs" / PBS_RELEASE
-    folder.mkdir(parents=True, exist_ok=True)
-    archive = folder / name
-    sums = folder / "SHA256SUMS"
-    if not sums.exists():
-        _fetch(f"{PBS}/{PBS_RELEASE}/SHA256SUMS", sums)
-    expected = next((line.split()[0] for line in sums.read_text().splitlines()
-                     if line.split()[1:] == [name]), None)
-    if expected is None:
-        raise SystemExit(f"python-build-standalone {PBS_RELEASE} has no {name}")
-    if not archive.exists() or release.sha256_file(archive) != expected:
-        _fetch(f"{PBS}/{PBS_RELEASE}/{quote(name)}", archive)
-    if release.sha256_file(archive) != expected:
-        archive.unlink()
-        raise SystemExit(f"✗ {name}: sha256 does not match SHA256SUMS")
-    print(f"✓ {name}: sha256 matches", flush=True)
-    out = folder / python
-    shutil.rmtree(out, ignore_errors=True)
-    out.mkdir()
-    with tarfile.open(archive) as tar:
-        tar.extractall(out, filter="tar")
-    return out / "python"
-
-
-def _macho_files(root: Path):
-    for path in root.rglob("*"):
-        if path.is_file() and not path.is_symlink():
-            with open(path, "rb") as fh:
-                head = fh.read(4)
-            if head in (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xfe\xed\xfa\xcf"):
-                yield path
-
-
-def _load_commands(path: Path) -> tuple[str | None, list[str], list[str]]:
-    """(its own install name, the libraries it loads, its rpaths)."""
-    out = subprocess.run(["otool", "-l", str(path)], capture_output=True, text=True).stdout
-    own, libs, rpaths = None, [], []
-    for m in re.finditer(r"cmd (LC_ID_DYLIB|LC_LOAD_DYLIB|LC_LOAD_WEAK_DYLIB|LC_REEXPORT_DYLIB|LC_RPATH)\n"
-                         r"\s+cmdsize \d+\n\s+(?:name|path) (.+?) \(offset", out):
-        kind, value = m.group(1), m.group(2)
-        if kind == "LC_ID_DYLIB":
-            own = value
-        elif kind == "LC_RPATH":
-            rpaths.append(value)
-        else:
-            libs.append(value)
-    return own, sorted(set(libs)), sorted(set(rpaths))
-
-
-def _scrub_links(root: Path) -> list[str]:
-    """Make every Mach-O file independent of where it was built: an install
-    name naming the build folder becomes @rpath/<name>, rpaths into
-    Homebrew or /usr/local are dropped, so the runtime behaves the same on every Mac. Changed files
-    are signed again (ad hoc, as arm64 requires). Returns what still
-    points outside: libraries loaded from there."""
-    bad = []
-    for path in _macho_files(root):
-        own, libs, rpaths = _load_commands(path)
-        changes = []
-        if own and own.startswith(FORBIDDEN_PREFIXES):
-            changes += ["-id", f"@rpath/{Path(own).name}"]
-        for rpath in rpaths:
-            if rpath.startswith(FORBIDDEN_PREFIXES):
-                changes += ["-delete_rpath", rpath]
-        if changes:
-            subprocess.run(["install_name_tool", *changes, str(path)], check=True, capture_output=True)
-            subprocess.run(["codesign", "--force", "--sign", "-", str(path)], check=True, capture_output=True)
-        bad += [f"{path.relative_to(root)} -> {lib}" for lib in libs if lib.startswith(FORBIDDEN_PREFIXES)]
-    return bad
-
-
-def _check_links(root: Path) -> list[str]:
-    """Mach-O files that name anything outside the system by an absolute path."""
-    bad = []
-    for path in _macho_files(root):
-        own, libs, rpaths = _load_commands(path)
-        for value in ([own] if own else []) + libs + rpaths:
-            if value.startswith(FORBIDDEN_PREFIXES):
-                bad.append(f"{path.relative_to(root)}: {value}")
-    return bad
-
-
-_RELOCATABLE_SHEBANG = "#!/bin/sh\n'''exec' \"$(dirname -- \"$(realpath -- \"$0\")\")/python3\" \"$0\" \"$@\"\n' '''\n"
-
-
-def _relocate_scripts(runtime: Path, build: Path) -> int:
-    """Entry-point scripts start the build folder's python, by a #! line or
-    uv's three-line sh header: they start the python next to them instead
-    (the trick uv's relocatable venvs use)."""
-    fixed = 0
-    for script in (runtime / "bin").iterdir():
-        if script.is_symlink() or not script.is_file():
-            continue
-        try:
-            text = script.read_text()
-        except UnicodeDecodeError:
-            continue
-        lines = text.split("\n")
-        if lines[0].startswith("#!") and str(build) in lines[0]:
-            body = lines[1:]
-        elif lines[0] == "#!/bin/sh" and len(lines) > 2 and lines[1].startswith("'''exec'") \
-                and str(build) in lines[1]:
-            body = lines[3:]
-        else:
-            continue
-        script.write_text(_RELOCATABLE_SHEBANG + "\n".join(body))
-        fixed += 1
-    return fixed
-
-
-def _text_mentions(root: Path, needle: str) -> list[str]:
-    """Small text files that still name the build folder (RECORD files and
-    the like are harmless, but a script would not run elsewhere)."""
-    hits = []
-    for path in root.rglob("*"):
-        if path.is_file() and not path.is_symlink() and path.suffix not in (".pyc", ".so", ".dylib") \
-                and path.stat().st_size < 2_000_000:
-            try:
-                if needle in path.read_text(errors="strict"):
-                    hits.append(str(path.relative_to(root)))
-            except (UnicodeDecodeError, OSError):
-                continue
-    return hits
 
 
 def check_no_apple_double(archive: Path) -> None:
@@ -212,46 +63,60 @@ def check_no_apple_double(archive: Path) -> None:
         raise SystemExit(f"✗ {archive.name} holds AppleDouble files: " + ", ".join(bad[:5]))
 
 
-def build_runtime(dist: Path, python: str, compression: str) -> Path:
-    rid = runtime_id(dist, python)
-    archive = dist / f"palaver-runtime-{rid}.tar.{compression}"
-    if archive.exists():
-        print(f"✓ {archive.name} exists (runtime {rid}): kept")
-        return archive
-    build = dist / "build"
-    stage = build / "runtime"
-    shutil.rmtree(stage, ignore_errors=True)
-    stage.mkdir(parents=True)
-    runtime = stage / rid
-    shutil.copytree(_install_python(build, python), runtime, symlinks=True)
-    marker = runtime / "lib" / f"python{'.'.join(python.split('.')[:2])}" / "EXTERNALLY-MANAGED"
-    marker.unlink(missing_ok=True)
-    run("uv", "pip", "install", "--python", runtime / "bin" / "python3", "--no-config", "--compile-bytecode",
-        "--link-mode", "copy", "-r", dist / "requirements.txt")
-    marker.write_text("[externally-managed]\nError=This Python is Palaver's runtime; Palaver's installer manages it.\n")
-    fixed = _relocate_scripts(runtime, build)
-    print(f"✓ {fixed} entry-point scripts made relocatable")
-    loads = _scrub_links(runtime)
-    if loads:
-        raise SystemExit("✗ runtime loads libraries from outside itself:\n  " + "\n  ".join(loads[:20]))
-    bad = _check_links(runtime)
-    if bad:
-        raise SystemExit("✗ runtime names paths outside itself:\n  " + "\n  ".join(bad[:20]))
-    print("✓ otool: no Mach-O file names anything in /Users, Homebrew or /usr/local")
-    scripts = [h for h in _text_mentions(runtime / "bin", str(build)) if not h.endswith(".pyc")]
-    if scripts:
-        raise SystemExit("✗ scripts still name the build folder: " + ", ".join(scripts))
-    run(runtime / "bin" / "python3", "-I", "-c", "import mlx.core, rumps, mlx_lm")
+# --- the compat runtime (0.6 and later run without Python) ----------------------------------------
+
+# Every release before 0.6 (0.1.0 to 0.5.0rcN) updates through its own Python updater, frozen in it:
+# it refuses a manifest without a runtime block, downloads the runtime when its id is not on the Mac,
+# unpacks it only when every member sits in `<id>/` and `<id>/bin/python3` exists (it never runs it),
+# and takes the new app only when its runtime.json names that id
+# (tests/fixtures/updater_0.3.14, tests/test_release_compat.py). This archive is all they need: the
+# Swift app never uses it, and deletes the runtime folder after its first good start.
+COMPAT_RUNTIME_ID = "no-python-1"
+COMPAT_PYTHON3 = """#!/bin/sh
+echo "Palaver 0.6 and later run without Python. This placeholder only let an older Palaver update; Palaver deletes it." >&2
+exit 1
+"""
+
+
+def compat_runtime_archive(dist: Path) -> Path:
+    return dist / f"palaver-runtime-{COMPAT_RUNTIME_ID}.tar.gz"
+
+
+def app_runtime_id(archive: Path) -> str | None:
+    """The runtime the zipped app's runtime.json names (what the updaters before 0.6 compare with the manifest)."""
+    try:
+        with zipfile.ZipFile(archive) as z:
+            return json.loads(z.read("Palaver.app/Contents/Resources/runtime.json")).get("runtime")
+    except (OSError, KeyError, ValueError, zipfile.BadZipFile):
+        return None
+
+
+def build_compat_runtime(dist: Path) -> Path:
+    """The same bytes on every build (fixed times and owners, no AppleDouble files): a release
+    that publishes it once keeps its URL in every later manifest (``--previous``)."""
+    import gzip
+    import io
+
+    archive = compat_runtime_archive(dist)
     tmp = archive.with_name(archive.name + ".tmp")
-    flag = {"gz": "-czf", "xz": "-cJf"}[compression]
-    # COPYFILE_DISABLE: macOS tar otherwise adds AppleDouble "._*" files, and an updater
-    # before 0.5 refuses a runtime archive with "._<id>" at its top.
-    env = {**os.environ, "XZ_OPT": "-T0 -6", "COPYFILE_DISABLE": "1"}
-    run("tar", "--no-xattrs", "--no-mac-metadata", "-C", stage, flag, tmp, rid, env=env)
+    with open(tmp, "wb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", mtime=0, filename="") as gz, \
+            tarfile.open(fileobj=gz, mode="w", format=tarfile.USTAR_FORMAT) as tar:
+        def add(name: str, mode: int, data: bytes | None = None) -> None:
+            info = tarfile.TarInfo(name)
+            info.mode, info.mtime, info.uid, info.gid, info.uname, info.gname = mode, 0, 0, 0, "", ""
+            if data is None:
+                info.type = tarfile.DIRTYPE
+                tar.addfile(info)
+            else:
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+
+        add(COMPAT_RUNTIME_ID, 0o755)
+        add(f"{COMPAT_RUNTIME_ID}/bin", 0o755)
+        add(f"{COMPAT_RUNTIME_ID}/bin/python3", 0o755, COMPAT_PYTHON3.encode())
     check_no_apple_double(tmp)
-    tmp.rename(archive)
-    shutil.rmtree(stage)
-    print(f"✓ {archive.name}: {archive.stat().st_size / 1e6:.0f} MB")
+    tmp.replace(archive)
+    print(f"✓ {archive.name}: {archive.stat().st_size} bytes (runtime {COMPAT_RUNTIME_ID}, for updates from before 0.6)")
     return archive
 
 
@@ -266,51 +131,113 @@ def build_models(dist: Path) -> None:
 
 # --- app -----------------------------------------------------------------------------------------
 
-ENGINE_BIN = ROOT / "native" / ".build" / "release" / "palaver-engine"
-APP_BIN = ROOT / "native" / ".build" / "release" / "Palaver"  # the Swift app (phase 2): the bundle's executable
+RELEASE_DIR = ROOT / "native" / ".build" / "release"
+ENGINE_BIN = RELEASE_DIR / "palaver-engine"
+APP_BIN = RELEASE_DIR / "Palaver"  # the Swift app (phase 2): the bundle's executable
+SERVER_BIN = RELEASE_DIR / "palaver-server"  # the window's server (phase 3)
+WORKER_BIN = RELEASE_DIR / "palaver-worker"  # the pipeline's worker (phase 3)
+CLI_BIN = RELEASE_DIR / "palaver-cli"  # the `palaver` command (phase 4): Contents/Resources/bin/palaver
+# The language model's worker (phase 4): built by xcodebuild (make lm), which compiles MLX's Metal shaders.
+LM_PRODUCTS = ROOT / "native" / ".build" / "xcode" / "Build" / "Products" / "Release"
+LM_BIN = LM_PRODUCTS / "palaver-lm"
+# What palaver-lm reads besides itself: the shaders (Contents/Resources/mlx.metallib) and swift-transformers' resources.
+LM_RESOURCES = (LM_PRODUCTS / "mlx-swift_Cmlx.bundle" / "Contents" / "Resources" / "default.metallib",
+                LM_PRODUCTS / "swift-transformers_Hub.bundle")
+MCP_SHIM = ROOT / "native" / "Bundle" / "bin" / "python"  # Contents/Resources/bin/python, for 0.6 only
+WEB = ROOT / "palaver" / "webapp" / "static"  # the window's page files: Contents/Resources/web
+DOMAIN_RESOURCES = ROOT / "native" / "Sources" / "PalaverDomain" / "Resources"  # zipf.bin
+LICENSES = ROOT / "THIRD_PARTY_LICENSES.md"
 
 
-def build_app(dist: Path, python: str, version: str | None = None, engine: Path | None = None,
-              app_binary: Path | None = None) -> Path:
-    """``version``: another version than the code's (the smoke test's update).
-    ``engine``: the built palaver-engine, ``app_binary`` the built Swift app
-    (default: both from native/.build/release)."""
+def _is_macho(path: Path) -> bool:
+    try:
+        with open(path, "rb") as f:
+            return f.read(4) in (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xfe\xed\xfa\xcf", b"\xbe\xba\xfe\xca")
+    except OSError:
+        return False
+
+
+def bundle_problems(app: Path, home: str | None = None, checkout: Path = ROOT) -> list[str]:
+    """What must not be in a release bundle: anything of Python (palaver-python, Contents/Resources/python, a
+    ``.py``/``.pyc`` file, an interpreter: any file named like python but the MCP shim, which must be a shell
+    script), a runtime.json that does not name the placeholder runtime, or a path of the building Mac (its home
+    folder, the checkout) in any file. Empty when the bundle is fine."""
+    home = home if home is not None else os.path.expanduser("~")
+    shim = app / "Contents" / "Resources" / "bin" / "python"
+    problems = []
+    needles = [n.encode() for n in {home.rstrip("/") + "/", str(checkout).rstrip("/") + "/"} if len(n) > 2]
+    for path in sorted(app.rglob("*")):
+        rel = path.relative_to(app.parent)
+        name = path.name.lower()
+        if path.suffix in (".py", ".pyc") or (path.is_dir() and name == "__pycache__"):
+            problems.append(f"{rel}: Python code")
+        elif "python" in name and path != shim:
+            problems.append(f"{rel}: named like Python")
+        if path.is_file() and not path.is_symlink():
+            data = path.read_bytes()
+            for needle in needles:
+                if needle in data:
+                    problems.append(f"{rel}: names {needle.decode()} (a path of this Mac)")
+    if shim.exists():
+        text = shim.read_bytes()
+        if not text.startswith(b"#!/bin/sh\n") or _is_macho(shim) or len(text) > 4096:
+            problems.append(f"{shim.relative_to(app.parent)}: not the shell shim (native/Bundle/bin/python)")
+    try:
+        runtime = json.loads((app / "Contents" / "Resources" / "runtime.json").read_text()).get("runtime")
+    except (OSError, ValueError):
+        runtime = None
+    if runtime != COMPAT_RUNTIME_ID:
+        problems.append(f"runtime.json names {runtime!r}, not {COMPAT_RUNTIME_ID} (no release before 0.6 could update)")
+    return problems
+
+
+def check_bundle(app: Path) -> None:
+    problems = bundle_problems(app)
+    if problems:
+        raise SystemExit("✗ the bundle is no release without Python:\n  " + "\n  ".join(problems[:20]))
+    print("✓ no Python in the bundle (only the MCP shim bin/python), no path of this Mac, runtime.json: "
+          + COMPAT_RUNTIME_ID)
+
+
+def build_app(dist: Path, version: str | None = None, engine: Path | None = None,
+              app_binary: Path | None = None, server: Path | None = None, worker: Path | None = None,
+              lm: Path | None = None, lm_resources: tuple[Path, ...] | None = None, cli: Path | None = None) -> Path:
+    """``version``: another version than the code's (the smoke test's update). ``engine``,
+    ``app_binary``, ``server``, ``worker``, ``cli``: the built palaver-engine, Swift app,
+    palaver-server, palaver-worker and palaver-cli (default: all from native/.build/release);
+    ``lm``, ``lm_resources``: palaver-lm and its shaders and resources (default: xcodebuild's
+    products, LM_PRODUCTS)."""
     from palaver import __version__, app_bundle
 
-    engine = engine or ENGINE_BIN
-    if not engine.is_file():
-        raise SystemExit(f"✗ {engine} is missing: run `make engine` first (make app does)")
-    app_binary = app_binary or APP_BIN
-    if not app_binary.is_file():
-        raise SystemExit(f"✗ {app_binary} is missing: run `make app-swift` first (make app does)")
+    def built(given: Path | None, default: Path, target: str) -> Path:
+        path = given or default
+        if not path.is_file():
+            raise SystemExit(f"✗ {path} is missing: run `make {target}` first (make app does)")
+        return path
 
-    rid = runtime_id(dist, python)
-    wheels = sorted(dist.glob(f"palaver-{__version__}-*.whl"))
-    if not wheels:
-        raise SystemExit(f"no wheel of palaver {__version__} in {dist}: run `make wheel` first")
-    with zipfile.ZipFile(wheels[-1]) as wheel:
-        if "palaver/_vendored/webrtc_aec/libraven_aec.dylib" not in wheel.namelist():
-            raise SystemExit(f"✗ {wheels[-1].name} lacks the AEC library")
-        code = Path(tempfile.mkdtemp(dir=dist))
-        wheel.extractall(code)
-    if version and version != __version__:
-        init = code / "palaver" / "__init__.py"
-        init.write_text(init.read_text().replace(f'__version__ = "{__version__}"', f'__version__ = "{version}"'))
-    __version__ = version or __version__
+    engine = built(engine, ENGINE_BIN, "engine")
+    app_binary = built(app_binary, APP_BIN, "app-swift")
+    server = built(server, SERVER_BIN, "server")
+    worker = built(worker, WORKER_BIN, "worker")
+    lm = built(lm, LM_BIN, "lm")
+    cli = built(cli, CLI_BIN, "cli")
+    lm_resources = LM_RESOURCES if lm_resources is None else lm_resources
+    for needed in lm_resources:
+        if not needed.exists():
+            raise SystemExit(f"✗ {needed} is missing: run `make lm` first (make app does)")
+    version = version or __version__
     out = dist / "app"
     shutil.rmtree(out, ignore_errors=True)
-    out.mkdir()
-    try:
-        # Bytecode for the runtime's Python (same minor version as the build's).
-        same = f"{sys.version_info.major}.{sys.version_info.minor}" == python.rsplit(".", 1)[0]
-        app = app_bundle.build_release_app(out, runtime_id=rid, code=code, app_binary=app_binary, version=__version__,
-                                           compile_with=sys.executable if same else None, engine=engine)
-    finally:
-        shutil.rmtree(code, ignore_errors=True)
-    archive = dist / f"palaver-app-{__version__}.zip"
+    out.mkdir(parents=True)
+    app = app_bundle.build_release_app(out, app_binary=app_binary, engine=engine, server=server, worker=worker, lm=lm,
+                                       cli=cli, mcp_shim=MCP_SHIM, web=WEB, lm_resources=list(lm_resources),
+                                       domain_resources=DOMAIN_RESOURCES, licenses=LICENSES, version=version,
+                                       runtime_json_id=COMPAT_RUNTIME_ID)
+    check_bundle(app)
+    archive = dist / f"palaver-app-{version}.zip"
     archive.unlink(missing_ok=True)
     run("ditto", "-ck", "--keepParent", app, archive)
-    print(f"✓ {archive.name}: {archive.stat().st_size / 1e6:.1f} MB (runtime {rid})")
+    print(f"✓ {archive.name}: {archive.stat().st_size / 1e6:.1f} MB (runtime.json: {COMPAT_RUNTIME_ID})")
     return archive
 
 
@@ -336,19 +263,20 @@ def _previous(path: str | None) -> dict[str, release.Asset]:
     return {a.name: a for a in (m.app, m.runtime, *(x.asset for x in m.models))}
 
 
-def build_manifest(dist: Path, python: str, previous: str | None, notes: str | None,
+def build_manifest(dist: Path, previous: str | None, notes: str | None,
                    version: str | None = None, base_url: str | None = None) -> Path:
     """``base_url``: where the assets are instead of this release on GitHub
-    (a file:// folder, to test an update from inside the app)."""
+    (a file:// folder, to test an update from inside the app). The runtime block names the
+    placeholder (`compat-runtime`): the updaters of releases before 0.6 need one."""
     from palaver import __version__
 
     __version__ = version or __version__
-    rid = runtime_id(dist, python)
+    rid = COMPAT_RUNTIME_ID
     tag = f"v{__version__}"
     old = _previous(previous)
     runtime = next(iter(sorted(dist.glob(f"palaver-runtime-{rid}.tar.*"))), None)
     if runtime is None:
-        raise SystemExit(f"no runtime archive for {rid} in {dist}")
+        raise SystemExit(f"no placeholder runtime for {rid} in {dist}: run `build_release.py compat-runtime` first")
     uploads = []
 
     def asset(path: Path) -> release.Asset:
@@ -359,8 +287,11 @@ def build_manifest(dist: Path, python: str, previous: str | None, notes: str | N
             uploads.append(path.name)
         return a
 
+    app_zip = dist / f"palaver-app-{__version__}.zip"
+    if app_runtime_id(app_zip) != rid:  # the updaters before 0.6 would refuse the app
+        raise SystemExit(f"✗ {app_zip.name}'s runtime.json names {app_runtime_id(app_zip)}, the manifest {rid}")
     manifest = release.Manifest(
-        version=__version__, app=asset(dist / f"palaver-app-{__version__}.zip"), runtime_id=rid,
+        version=__version__, app=asset(app_zip), runtime_id=rid,
         runtime=asset(runtime), models=(), minimum_macos="15.0", arch=ARCH,
         notes=Path(notes).read_text().strip() if notes and Path(notes).exists() else None)
     out = dist / "manifest.json"
@@ -371,33 +302,28 @@ def build_manifest(dist: Path, python: str, previous: str | None, notes: str | N
 
 
 def main(argv: list[str]) -> int:
-    global PBS_RELEASE
     parser = argparse.ArgumentParser(prog="build_release")
-    parser.add_argument("what", choices=["runtime-id", "runtime", "models", "app", "manifest"])
+    parser.add_argument("what", choices=["app", "manifest", "compat-runtime", "models"])
     parser.add_argument("--dist", default="dist")
-    parser.add_argument("--python", default="3.13.18")
-    parser.add_argument("--pbs-release", default=PBS_RELEASE, help="the python-build-standalone release")
-    parser.add_argument("--compression", choices=["gz", "xz"], default="gz")
     parser.add_argument("--previous", help="the previous release's manifest.json")
     parser.add_argument("--notes", help="a file with this release's notes")
     parser.add_argument("--version", help="build as this version (testing an update)")
     parser.add_argument("--base-url", help="the assets' location instead of the GitHub release")
+    parser.add_argument("--compat-runtime", action="store_true",
+                        help="accepted for scripts of 0.5: the placeholder runtime is the only one since 0.6")
     args = parser.parse_args(argv)
     if platform.machine() != ARCH or sys.platform != "darwin":
         raise SystemExit("release assets are built on an Apple Silicon Mac")
-    PBS_RELEASE = args.pbs_release
     dist = Path(args.dist).resolve()
     dist.mkdir(parents=True, exist_ok=True)
-    if args.what == "runtime-id":
-        print(runtime_id(dist, args.python))
-    elif args.what == "runtime":
-        build_runtime(dist, args.python, args.compression)
+    if args.what == "app":
+        build_app(dist, args.version)
+    elif args.what == "compat-runtime":
+        build_compat_runtime(dist)
     elif args.what == "models":
         build_models(dist)
-    elif args.what == "app":
-        build_app(dist, args.python, args.version)
     else:
-        build_manifest(dist, args.python, args.previous, args.notes, args.version, args.base_url)
+        build_manifest(dist, args.previous, args.notes, args.version, args.base_url)
     return 0
 
 

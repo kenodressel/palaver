@@ -34,12 +34,16 @@ func spawn(_ argv: [String], env: [String: String], outputFD: Int32, onExit: (@S
 
 /// Starts argv in a session of its own with exactly the environment `env` (not merged with the
 /// app's). stdin is `stdin` (a pipe's read end, say), else /dev/null; stdout and stderr go to
-/// `output`, else they are the app's own (fds 1 and 2). Of everything else the app has open only
-/// the descriptors in `inherit` pass, at the same numbers (the web server's listening socket and
-/// ready pipe): POSIX_SPAWN_CLOEXEC_DEFAULT closes the rest, close-on-exec or not.
+/// `output`, else they are the app's own (fds 1 and 2); `errors`, when given, takes stderr. Of
+/// everything else the app has open only the descriptors in `inherit` pass, at the same numbers
+/// (the web server's listening socket and ready pipe): POSIX_SPAWN_CLOEXEC_DEFAULT closes the
+/// rest, close-on-exec or not.
 /// Signal dispositions and the mask start at their defaults.
+/// `newSession` false: the child stays in this process's session and process group (a helper of a worker, which the
+/// daemon's `killpg` must stop with it). `cwd`: the folder it starts in (else this process's).
 public func spawnChild(_ argv: [String], env: [String: String], stdin: Int32? = nil, inherit: [Int32] = [],
-                       output: Int32? = nil, onExit: (@Sendable (Int32) -> Void)? = nil) throws -> Process {
+                       output: Int32? = nil, errors: Int32? = nil, newSession: Bool = true, cwd: String? = nil,
+                       onExit: (@Sendable (Int32) -> Void)? = nil) throws -> Process {
     // Foundation's Process has no setsid: spawn with posix_spawn and wrap the pid.
     var actions: posix_spawn_file_actions_t? = nil
     posix_spawn_file_actions_init(&actions)
@@ -56,13 +60,15 @@ public func spawnChild(_ argv: [String], env: [String: String], stdin: Int32? = 
         posix_spawn_file_actions_addinherit_np(&actions, 1)
         posix_spawn_file_actions_addinherit_np(&actions, 2)
     }
+    if let errors { posix_spawn_file_actions_adddup2(&actions, errors, 2) }
     for fd in inherit { posix_spawn_file_actions_addinherit_np(&actions, fd) }
+    if let cwd { posix_spawn_file_actions_addchdir_np(&actions, cwd) }
     var attr: posix_spawnattr_t? = nil
     posix_spawnattr_init(&attr)
     defer { posix_spawnattr_destroy(&attr) }
     // A session of its own; only the fds named above pass; default signal state: the app may
     // ignore SIGPIPE or block signals, and a child must not inherit that.
-    let flags = POSIX_SPAWN_SETSID | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF
+    let flags = (newSession ? POSIX_SPAWN_SETSID : 0) | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF
     posix_spawnattr_setflags(&attr, Int16(flags))
     var empty = sigset_t(), all = sigset_t()
     sigemptyset(&empty)
@@ -78,6 +84,40 @@ public func spawnChild(_ argv: [String], env: [String: String], stdin: Int32? = 
     let rc = posix_spawn(&pid, argv[0], &actions, &attr, cArgs, cEnv)
     guard rc == 0 else { throw WorkerError(description: "cannot start \(argv[0]): \(String(cString: strerror(rc)))") }
     return Process(pid: pid, onExit: onExit)
+}
+
+/// The helpers this process started in its own process group (the Claude Code CLI under palaver-lm): a `killpg` of the
+/// group reaches them anyway; a SIGTERM or SIGINT to this process alone is passed on to them (`terminateAll`) before it
+/// exits, so none keeps running (and billing) without it.
+public enum LiveHelpers {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var live: [pid_t: Process] = [:]
+
+    public static func add(_ p: Process) { lock.withLock { live[p.pid] = p } }
+    public static func remove(_ p: Process) { _ = lock.withLock { live.removeValue(forKey: p.pid) } }
+    public static var pids: [pid_t] { lock.withLock { Array(live.keys) } }
+
+    /// `sig` to every helper still running (never to one already reaped).
+    public static func terminateAll(_ sig: Int32 = SIGTERM) {
+        for p in lock.withLock({ Array(live.values) }) { p.signal(sig) }
+    }
+
+    /// SIGTERM and SIGINT end this process after passing the signal on to its helpers (exit code 128+signal, as the
+    /// signal itself would). Call once, at the start of a program that starts helpers in its own group.
+    public static func forwardTerminationSignals() {
+        for sig in [SIGTERM, SIGINT] {
+            signal(sig, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: sig, queue: .global())
+            source.setEventHandler {
+                terminateAll(sig)
+                _exit(128 + sig)
+            }
+            source.resume()
+            sources.append(source)
+        }
+    }
+
+    nonisolated(unsafe) private static var sources: [DispatchSourceSignal] = []
 }
 
 /// What the daemon needs of a worker it started: its pid, whether it ended, and a way to stop it.

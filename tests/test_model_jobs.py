@@ -44,6 +44,18 @@ def test_the_exit_code_is_kept(tmp_path: Path):
     assert model_jobs.wait(root, "projects", "projects")["returncode"] == 75
 
 
+def test_a_run_that_ended_is_done_before_its_pid_is_free(tmp_path: Path):
+    """The launcher writes "done" while the helper is still unreaped (its pid taken): a reader in between never
+    finds a dead pid under a "running" record, which it would call stale (a 502 for a notes run that just ended)."""
+    proc = subprocess.Popen([sys.executable, "-c", "import os, signal; os.kill(os.getpid(), signal.SIGTERM)"])
+    assert model_jobs._exit_code_unreaped(proc.pid) == -15
+    assert model_jobs._alive(proc.pid)  # ended, not yet reaped
+    assert proc.wait() == -15
+    done = subprocess.Popen([sys.executable, "-c", "raise SystemExit(3)"])
+    assert model_jobs._exit_code_unreaped(done.pid) == 3 and done.wait() == 3
+    assert model_jobs._exit_code_unreaped(os.getpid()) is None  # not a child
+
+
 def test_a_second_launch_while_one_runs_is_the_same_job(tmp_path: Path):
     root = tmp_path / ".jobs"
     launched = []

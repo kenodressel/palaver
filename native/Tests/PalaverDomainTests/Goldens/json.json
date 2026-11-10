@@ -1,0 +1,260 @@
+{
+ "cases": [
+  {
+   "value_json": "{\"name\": \"Timo Strau\\u00df\", \"emoji\": \"\\ud83d\\ude00\", \"tab\": \"a\\tb\", \"ctl\": \"\\u0001\"}",
+   "indent": null,
+   "ensure_ascii": true,
+   "text": "{\"name\": \"Timo Strau\\u00df\", \"emoji\": \"\\ud83d\\ude00\", \"tab\": \"a\\tb\", \"ctl\": \"\\u0001\"}"
+  },
+  {
+   "value_json": "{\"name\": \"Timo Strau\\u00df\", \"emoji\": \"\\ud83d\\ude00\", \"tab\": \"a\\tb\", \"ctl\": \"\\u0001\"}",
+   "indent": null,
+   "ensure_ascii": false,
+   "text": "{\"name\": \"Timo Strauß\", \"emoji\": \"😀\", \"tab\": \"a\\tb\", \"ctl\": \"\\u0001\"}"
+  },
+  {
+   "value_json": "{\"name\": \"Timo Strau\\u00df\", \"emoji\": \"\\ud83d\\ude00\", \"tab\": \"a\\tb\", \"ctl\": \"\\u0001\"}",
+   "indent": 1,
+   "ensure_ascii": true,
+   "text": "{\n \"name\": \"Timo Strau\\u00df\",\n \"emoji\": \"\\ud83d\\ude00\",\n \"tab\": \"a\\tb\",\n \"ctl\": \"\\u0001\"\n}"
+  },
+  {
+   "value_json": "{\"name\": \"Timo Strau\\u00df\", \"emoji\": \"\\ud83d\\ude00\", \"tab\": \"a\\tb\", \"ctl\": \"\\u0001\"}",
+   "indent": 1,
+   "ensure_ascii": false,
+   "text": "{\n \"name\": \"Timo Strauß\",\n \"emoji\": \"😀\",\n \"tab\": \"a\\tb\",\n \"ctl\": \"\\u0001\"\n}"
+  },
+  {
+   "value_json": "{\"name\": \"Timo Strau\\u00df\", \"emoji\": \"\\ud83d\\ude00\", \"tab\": \"a\\tb\", \"ctl\": \"\\u0001\"}",
+   "indent": 2,
+   "ensure_ascii": true,
+   "text": "{\n  \"name\": \"Timo Strau\\u00df\",\n  \"emoji\": \"\\ud83d\\ude00\",\n  \"tab\": \"a\\tb\",\n  \"ctl\": \"\\u0001\"\n}"
+  },
+  {
+   "value_json": "{\"name\": \"Timo Strau\\u00df\", \"emoji\": \"\\ud83d\\ude00\", \"tab\": \"a\\tb\", \"ctl\": \"\\u0001\"}",
+   "indent": 2,
+   "ensure_ascii": false,
+   "text": "{\n  \"name\": \"Timo Strauß\",\n  \"emoji\": \"😀\",\n  \"tab\": \"a\\tb\",\n  \"ctl\": \"\\u0001\"\n}"
+  },
+  {
+   "value_json": "[1.0, 0.30000000000000004, 1e-05, 1e+16, -0.0, 1.2345678901234568e+17, 5e-324, 1.7976931348623157e+308]",
+   "indent": null,
+   "ensure_ascii": true,
+   "text": "[1.0, 0.30000000000000004, 1e-05, 1e+16, -0.0, 1.2345678901234568e+17, 5e-324, 1.7976931348623157e+308]"
+  },
+  {
+   "value_json": "[1.0, 0.30000000000000004, 1e-05, 1e+16, -0.0, 1.2345678901234568e+17, 5e-324, 1.7976931348623157e+308]",
+   "indent": null,
+   "ensure_ascii": false,
+   "text": "[1.0, 0.30000000000000004, 1e-05, 1e+16, -0.0, 1.2345678901234568e+17, 5e-324, 1.7976931348623157e+308]"
+  },
+  {
+   "value_json": "[1.0, 0.30000000000000004, 1e-05, 1e+16, -0.0, 1.2345678901234568e+17, 5e-324, 1.7976931348623157e+308]",
+   "indent": 1,
+   "ensure_ascii": true,
+   "text": "[\n 1.0,\n 0.30000000000000004,\n 1e-05,\n 1e+16,\n -0.0,\n 1.2345678901234568e+17,\n 5e-324,\n 1.7976931348623157e+308\n]"
+  },
+  {
+   "value_json": "[1.0, 0.30000000000000004, 1e-05, 1e+16, -0.0, 1.2345678901234568e+17, 5e-324, 1.7976931348623157e+308]",
+   "indent": 1,
+   "ensure_ascii": false,
+   "text": "[\n 1.0,\n 0.30000000000000004,\n 1e-05,\n 1e+16,\n -0.0,\n 1.2345678901234568e+17,\n 5e-324,\n 1.7976931348623157e+308\n]"
+  },
+  {
+   "value_json": "[1.0, 0.30000000000000004, 1e-05, 1e+16, -0.0, 1.2345678901234568e+17, 5e-324, 1.7976931348623157e+308]",
+   "indent": 2,
+   "ensure_ascii": true,
+   "text": "[\n  1.0,\n  0.30000000000000004,\n  1e-05,\n  1e+16,\n  -0.0,\n  1.2345678901234568e+17,\n  5e-324,\n  1.7976931348623157e+308\n]"
+  },
+  {
+   "value_json": "[1.0, 0.30000000000000004, 1e-05, 1e+16, -0.0, 1.2345678901234568e+17, 5e-324, 1.7976931348623157e+308]",
+   "indent": 2,
+   "ensure_ascii": false,
+   "text": "[\n  1.0,\n  0.30000000000000004,\n  1e-05,\n  1e+16,\n  -0.0,\n  1.2345678901234568e+17,\n  5e-324,\n  1.7976931348623157e+308\n]"
+  },
+  {
+   "value_json": "{\"nested\": {\"b\": [], \"a\": {}}}",
+   "indent": null,
+   "ensure_ascii": true,
+   "text": "{\"nested\": {\"b\": [], \"a\": {}}}"
+  },
+  {
+   "value_json": "{\"nested\": {\"b\": [], \"a\": {}}}",
+   "indent": null,
+   "ensure_ascii": false,
+   "text": "{\"nested\": {\"b\": [], \"a\": {}}}"
+  },
+  {
+   "value_json": "{\"nested\": {\"b\": [], \"a\": {}}}",
+   "indent": 1,
+   "ensure_ascii": true,
+   "text": "{\n \"nested\": {\n  \"b\": [],\n  \"a\": {}\n }\n}"
+  },
+  {
+   "value_json": "{\"nested\": {\"b\": [], \"a\": {}}}",
+   "indent": 1,
+   "ensure_ascii": false,
+   "text": "{\n \"nested\": {\n  \"b\": [],\n  \"a\": {}\n }\n}"
+  },
+  {
+   "value_json": "{\"nested\": {\"b\": [], \"a\": {}}}",
+   "indent": 2,
+   "ensure_ascii": true,
+   "text": "{\n  \"nested\": {\n    \"b\": [],\n    \"a\": {}\n  }\n}"
+  },
+  {
+   "value_json": "{\"nested\": {\"b\": [], \"a\": {}}}",
+   "indent": 2,
+   "ensure_ascii": false,
+   "text": "{\n  \"nested\": {\n    \"b\": [],\n    \"a\": {}\n  }\n}"
+  },
+  {
+   "value_json": "{\"z\": 1, \"a\": 2}",
+   "indent": null,
+   "ensure_ascii": true,
+   "text": "{\"z\": 1, \"a\": 2}"
+  },
+  {
+   "value_json": "{\"z\": 1, \"a\": 2}",
+   "indent": null,
+   "ensure_ascii": false,
+   "text": "{\"z\": 1, \"a\": 2}"
+  },
+  {
+   "value_json": "{\"z\": 1, \"a\": 2}",
+   "indent": 1,
+   "ensure_ascii": true,
+   "text": "{\n \"z\": 1,\n \"a\": 2\n}"
+  },
+  {
+   "value_json": "{\"z\": 1, \"a\": 2}",
+   "indent": 1,
+   "ensure_ascii": false,
+   "text": "{\n \"z\": 1,\n \"a\": 2\n}"
+  },
+  {
+   "value_json": "{\"z\": 1, \"a\": 2}",
+   "indent": 2,
+   "ensure_ascii": true,
+   "text": "{\n  \"z\": 1,\n  \"a\": 2\n}"
+  },
+  {
+   "value_json": "{\"z\": 1, \"a\": 2}",
+   "indent": 2,
+   "ensure_ascii": false,
+   "text": "{\n  \"z\": 1,\n  \"a\": 2\n}"
+  },
+  {
+   "value_json": "[NaN, 1.5]",
+   "indent": null,
+   "ensure_ascii": true,
+   "text": "[NaN, 1.5]"
+  },
+  {
+   "value_json": "[NaN, 1.5]",
+   "indent": null,
+   "ensure_ascii": false,
+   "text": "[NaN, 1.5]"
+  },
+  {
+   "value_json": "[NaN, 1.5]",
+   "indent": 1,
+   "ensure_ascii": true,
+   "text": "[\n NaN,\n 1.5\n]"
+  },
+  {
+   "value_json": "[NaN, 1.5]",
+   "indent": 1,
+   "ensure_ascii": false,
+   "text": "[\n NaN,\n 1.5\n]"
+  },
+  {
+   "value_json": "[NaN, 1.5]",
+   "indent": 2,
+   "ensure_ascii": true,
+   "text": "[\n  NaN,\n  1.5\n]"
+  },
+  {
+   "value_json": "[NaN, 1.5]",
+   "indent": 2,
+   "ensure_ascii": false,
+   "text": "[\n  NaN,\n  1.5\n]"
+  },
+  {
+   "value_json": "[Infinity, -Infinity]",
+   "indent": null,
+   "ensure_ascii": true,
+   "text": "[Infinity, -Infinity]"
+  },
+  {
+   "value_json": "[Infinity, -Infinity]",
+   "indent": null,
+   "ensure_ascii": false,
+   "text": "[Infinity, -Infinity]"
+  },
+  {
+   "value_json": "[Infinity, -Infinity]",
+   "indent": 1,
+   "ensure_ascii": true,
+   "text": "[\n Infinity,\n -Infinity\n]"
+  },
+  {
+   "value_json": "[Infinity, -Infinity]",
+   "indent": 1,
+   "ensure_ascii": false,
+   "text": "[\n Infinity,\n -Infinity\n]"
+  },
+  {
+   "value_json": "[Infinity, -Infinity]",
+   "indent": 2,
+   "ensure_ascii": true,
+   "text": "[\n  Infinity,\n  -Infinity\n]"
+  },
+  {
+   "value_json": "[Infinity, -Infinity]",
+   "indent": 2,
+   "ensure_ascii": false,
+   "text": "[\n  Infinity,\n  -Infinity\n]"
+  },
+  {
+   "value_json": "[1, 1.0]",
+   "indent": null,
+   "ensure_ascii": true,
+   "text": "[1, 1.0]"
+  },
+  {
+   "value_json": "[1, 1.0]",
+   "indent": null,
+   "ensure_ascii": false,
+   "text": "[1, 1.0]"
+  },
+  {
+   "value_json": "[1, 1.0]",
+   "indent": 1,
+   "ensure_ascii": true,
+   "text": "[\n 1,\n 1.0\n]"
+  },
+  {
+   "value_json": "[1, 1.0]",
+   "indent": 1,
+   "ensure_ascii": false,
+   "text": "[\n 1,\n 1.0\n]"
+  },
+  {
+   "value_json": "[1, 1.0]",
+   "indent": 2,
+   "ensure_ascii": true,
+   "text": "[\n  1,\n  1.0\n]"
+  },
+  {
+   "value_json": "[1, 1.0]",
+   "indent": 2,
+   "ensure_ascii": false,
+   "text": "[\n  1,\n  1.0\n]"
+  }
+ ],
+ "key_order": {
+  "b": 2,
+  "a": 1
+ }
+}

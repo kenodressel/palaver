@@ -4,3 +4,13 @@ native/Tests/PalaverDaemonTests/OldSwapTests.swift and tools/smoke_install.sh ru
 (it must come out identical):
 
   git show 8956274:palaver/updater.py | python3 -c 'import ast, sys; t = ast.parse(sys.stdin.read()); sys.stdout.write(next(n.value.value for n in t.body if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "_SWAP"))' > tests/fixtures/updater_0.3.14/swap.sh.txt
+
+release.py.txt, install_layout.py.txt and unpack.py.txt: what every release from 0.1.0 to 0.3.14 checks of an
+update's manifest, its runtime archive and its app (release.py is the same file in every release up to
+0.5.0rcN; unpack.py.txt holds updater.py's unpack_runtime and Installer._unpack_app). tests/test_release_compat.py
+runs them on what tools/build_release.py makes for 0.6 and later. Regenerate (identical output):
+
+  git show 8956274:palaver/release.py > tests/fixtures/updater_0.3.14/release.py.txt
+  git show 8956274:palaver/install_layout.py > tests/fixtures/updater_0.3.14/install_layout.py.txt
+  git show 8956274:palaver/updater.py | python3 tests/fixtures/updater_0.3.14/funcs.py unpack_runtime _unpack_app \
+    > tests/fixtures/updater_0.3.14/unpack.py.txt

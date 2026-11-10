@@ -1,56 +1,40 @@
 """The setup assistant (#55) in the window: the first start opens it; three
 steps (you and your calendar, the recommended package, the test), Customize,
-Skip, Back, re-open from Settings. The Mac is a fake (tests/fake_probe.py): no real checks, no
+Skip, Back, re-open from Settings. The Mac is a fake (conftest's probe): no real checks, no
 downloads, no microphone, no sound."""
 
 from __future__ import annotations
 
 import json
 import re
-import threading
 from datetime import datetime, timedelta
 
 import pytest
 from playwright.sync_api import expect
 
-from palaver import onboarding as ob, settings
+from palaver import settings
 from palaver.calendar_events import Attendee, Event
-from palaver.webapp import api
-from palaver.webapp.server import App, make_server
-from tests.fake_probe import FakeProbe
 
-from .conftest import Served, FakeNotes
-from .helpers import expect_toast, goto, hash_of, heading, toast
+from .conftest import _serve
+from .helpers import expect_toast, goto, hash_of, heading, reload
+from .stub_hub import E5, E5_REVISION, MIB, StubHub
 
 
-def _calendar(start, end):
+def _events() -> list[dict]:
     at = datetime.now().astimezone() - timedelta(days=1)
     me = Attendee("Timo Strauss", "timo@kloud.io", is_self=True)
     return [Event("Contoso Northwind Weekly", at, at + timedelta(hours=1),
-                  (me, Attendee("Stefan Dornbusch", "stefan@contoso.at")))]
+                  (me, Attendee("Stefan Dornbusch", "stefan@contoso.at"))).to_dict()]
 
 
 @pytest.fixture
 def fresh(tmp_path):
-    """The app on its first start: no recordings yet, never set up."""
-    root = tmp_path / "Recordings"
-    root.mkdir()
-    probe = FakeProbe()
-    served = Served("", root, FakeNotes(), probe=probe)
-    app = App(root, "User", calendar=_calendar, probe=probe, recording=served.recording)
-    srv = make_server(app, port=0)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    served.url = f"http://127.0.0.1:{srv.server_address[1]}/"
-    served.server = srv
+    """The app on its first start: no recordings yet, never set up, no name in config.toml;
+    nothing downloaded; yesterday's meeting in the calendar."""
+    srv, served = _serve(tmp_path / "Recordings", recordings=False, user="User", events=_events())
+    served.probe.set(downloaded=[])
     yield served
     served.close()
-
-
-@pytest.fixture
-def no_mcp_install(monkeypatch):
-    added = []
-    monkeypatch.setattr(api, "install_mcp", lambda target="code", cli_options=(): added.append(target) or api.mcp_status())
-    return added
 
 
 def primary(page):
@@ -73,7 +57,7 @@ def customize_all(page):
     page.locator("#main .setup-customize-all").click()
 
 
-def test_the_first_start_takes_three_steps(page, fresh, no_mcp_install):
+def test_the_first_start_takes_three_steps(page, fresh):
     page.goto(fresh.url)
     step_title(page, "You and your calendar")
     expect(page.locator(".setup-count")).to_have_text("Setup · step 1 of 3")
@@ -114,7 +98,7 @@ def test_the_first_start_takes_three_steps(page, fresh, no_mcp_install):
     step_title(page, "Test recording")
     expect(page.locator("#setup-downloads")).to_contain_text("downloaded")  # the click started them
     assert sorted(fresh.probe.fetched) == ["e5", "gemma", "speech"]
-    assert fresh.probe.autostart_on and no_mcp_install == ["code"]
+    assert fresh.probe.autostart_on and fresh.mcp_installs == ["code"]
     expect(page.locator("#main")).not_to_contain_text("headphone")
     assert fresh.probe.recorder.started == []  # never by itself
     primary(page).click()  # Start test recording
@@ -149,7 +133,7 @@ def test_skip_a_step_changes_nothing_and_skip_setup_is_remembered(page, fresh):
     page.get_by_role("button", name="Skip setup").click()
     expect_toast(page, "Setup skipped. It is in Settings when you want it.")
     assert settings.read_raw()["setup"]["skipped"]
-    page.reload()
+    reload(page)
     page.wait_for_load_state("networkidle")
     expect(page.locator("#main .setup")).to_have_count(0)  # not offered again
 
@@ -161,7 +145,7 @@ def test_the_test_can_be_skipped(page, fresh):
     assert fresh.probe.recorder.started == []
 
 
-def test_customize_picks_an_alternative(page, fresh, no_mcp_install):
+def test_customize_picks_an_alternative(page, fresh):
     page.goto(fresh.url + "#/setup/recommended")
     customize_all(page)
     lm = rec(page, "language_model")
@@ -213,7 +197,7 @@ def test_a_new_mac_offers_a_review(page, app_server):
     step_title(page, "Recommended for this Mac")
 
 
-def test_reopening_keeps_a_deliberate_choice(page, fresh, no_mcp_install):
+def test_reopening_keeps_a_deliberate_choice(page, fresh):
     settings.update({"realtime": False, "setup": {"done": "2026-10-01T09:00:00+02:00",
                                                   "hardware": "Apple M4 Pro, 48 GB"}})
     page.goto(fresh.url + "#/setup/recommended")
@@ -226,8 +210,8 @@ def test_reopening_keeps_a_deliberate_choice(page, fresh, no_mcp_install):
     assert settings.read_raw()["realtime"] is False  # kept
 
 
-def test_a_failed_download_can_be_tried_again(page, fresh, no_mcp_install):
-    fresh.probe.fail_once = {"speech"}
+def test_a_failed_download_can_be_tried_again(page, fresh):
+    fresh.probe.set(fail_once=["speech"])
     page.goto(fresh.url + "#/setup/recommended")
     primary(page).click()
     step_title(page, "Test recording")
@@ -239,7 +223,51 @@ def test_a_failed_download_can_be_tried_again(page, fresh, no_mcp_install):
     assert fresh.probe.fetched.count("speech") == 2
 
 
-def test_the_assistant_asks_for_no_hugging_face_token(page, fresh, no_mcp_install):
+@pytest.fixture
+def from_hub(tmp_path):
+    """The first start with a stub Hugging Face hub (HF_ENDPOINT) and its CDN, a Hugging Face token in the Keychain,
+    and the models other than the speech models really downloading (the probe's hub_downloads); the speech models
+    and Gemma are here, so only e5 is fetched."""
+    hub = StubHub()
+    srv, served = _serve(tmp_path / "Recordings", recordings=False, user="User", events=_events(),
+                         env={"HF_ENDPOINT": hub.url, "PALAVER_TEST_HF_CDN": hub.cdn_url})
+    (served._fake.folder / "keychain.json").write_text(json.dumps({"HF_TOKEN": "hf_E2eStubToken0123456789"}))
+    served.probe.set(downloaded=["speech", "gemma"], hub_downloads=True)
+    yield served, hub
+    served.close()
+    hub.close()
+
+
+def test_the_downloads_page_follows_a_real_download_from_the_hub(page, from_hub):
+    """A model downloads in palaver-server itself, from the stub hub into the Hugging Face cache as huggingface_hub
+    lays it out: the page shows the bytes so far, then "downloaded"."""
+    served, hub = from_hub
+    hub.hold(21 * MIB)
+    page.goto(served.url + "#/setup/recommended")
+    primary(page).click()
+    step_title(page, "Test recording")
+    row = page.locator("#setup-downloads .setup-check", has_text="multilingual-e5-small")
+    expect(row).to_contain_text("20 MB of 470 MB")  # 21 MiB of the weights are in the cache so far
+    cache = served.home / ".cache" / "huggingface" / "hub" / "models--intfloat--multilingual-e5-small"
+    assert [p.name for p in (cache / "blobs").iterdir() if p.name.endswith(".incomplete")]
+    hub.release()
+    expect(row).to_contain_text("downloaded")
+    assert served.probe.fetched == ["e5"]
+
+    snap = cache / "snapshots" / E5_REVISION
+    assert sorted(p.name for p in snap.iterdir()) == ["config.json", "model.safetensors", "sentencepiece.bpe.model"]
+    weights = snap / "model.safetensors"
+    assert weights.is_symlink() and str(weights.readlink()) == f"../../blobs/{hub.lfs['model.safetensors']}"
+    assert weights.read_bytes() == hub.files["model.safetensors"]
+    assert not any(p.name.endswith(".incomplete") for p in (cache / "blobs").iterdir())
+    assert not any("README" in path for _, path, _ in hub.requests)  # only the files the model needs
+    assert any(path.startswith(f"/api/models/{E5}/revision/") for _, path, _ in hub.requests)
+    # The token went with every request to the hub, never to the CDN.
+    assert {auth for _, _, auth in hub.requests} == {"Bearer hf_E2eStubToken0123456789"}
+    assert hub.cdn_requests and {auth for _, _, auth in hub.cdn_requests} == {None}
+
+
+def test_the_assistant_asks_for_no_hugging_face_token(page, fresh):
     page.goto(fresh.url + "#/setup/recommended")
     expect(page.locator("#main")).to_contain_text("Speech models")
     expect(page.locator(".setup-token")).to_have_count(0)
@@ -249,8 +277,8 @@ def test_the_assistant_asks_for_no_hugging_face_token(page, fresh, no_mcp_instal
     assert fresh.probe.fetched.count("speech") == 1
 
 
-def test_a_cloud_model_that_is_not_set_up_leaves_notes_off(page, fresh, no_mcp_install):
-    fresh.probe._hardware = ob.Hardware("Apple M2 Pro", 16, 200)
+def test_a_cloud_model_that_is_not_set_up_leaves_notes_off(page, fresh):
+    fresh.probe.set(hardware={"chip": "Apple M2 Pro", "memory_gb": 16, "free_disk_gb": 200})
     page.goto(fresh.url + "#/setup/recommended")
     expect(pack(page, "language_model")).to_contain_text("None yet: set up a cloud model")
     expect(pack(page, "language_model")).to_contain_text("needs setting up in Settings")
@@ -291,7 +319,12 @@ def test_a_calendar_connected_from_the_menu_shows_and_keeps_what_was_typed(page,
 
 
 def test_a_refused_calendar_opens_system_settings(page, fresh):
-    fresh.probe._permissions["calendar"] = {"state": "denied", "detail": "not allowed"}
+    fresh.probe.set(permissions={
+        "microphone": {"state": "granted", "detail": "allowed"},
+        "system_audio": {"state": "unverified", "detail": "not verified yet"},
+        "calendar": {"state": "denied", "detail": "not allowed"},
+        "notifications": {"state": "unknown", "detail": "Palaver can't check this itself"},
+    })
     page.goto(fresh.url + "#/setup/you")
     row = page.locator("#main .setup-check", has_text="Calendar")
     row.get_by_role("button", name="Open System Settings").click()
@@ -300,6 +333,6 @@ def test_a_refused_calendar_opens_system_settings(page, fresh):
 
 
 def test_an_existing_user_without_the_speech_models_is_told_their_meetings_wait(page, app_server):
-    app_server.probe._downloaded.discard("speech")
+    app_server.probe.set(downloaded=[])
     goto(page, app_server)
     expect_toast(page, "Speech models are not downloaded yet.")

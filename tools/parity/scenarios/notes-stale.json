@@ -1,0 +1,26 @@
+{
+  "name": "notes-stale",
+  "steps": [
+    {"op": "notes-stale", "args": {"folder": "2026-10-28T14-00-00", "guesses": [{"label": "SPEAKER_00", "name": "Valerie", "evidence": ""}, {"label": "SPEAKER_01", "name": "Timo Strauß", "evidence": ""}, {"label": "SPEAKER_02", "name": "Anna", "evidence": ""}], "names": {"value": {"summary": "SPEAKER_00 and SPEAKER_01 met SPEAKER_10", "steps": [{"owner": "SPEAKER_01", "task": "x"}]}, "names": {"SPEAKER_00": "Valerie", "SPEAKER_01": "Timo Strauß"}}}},
+    {"op": "notes-stale", "args": {"folder": "2026-10-28T14-00-00", "write": {"title": "Rollout", "summary": "ä"}, "stamp": true}},
+    {"op": "notes-stale", "args": {"folder": "2026-10-28T14-00-00", "write": {"title": "Rollout", "transcript_hash": "0000000000000000"}}},
+    {"op": "notes-stale", "args": {"folder": "2026-10-28T14-00-00", "write": {"title": "Rollout"}, "stamp": true}},
+    {"op": "my-notes", "args": {"action": "save", "folder": "2026-10-28T14-00-00", "paragraphs": [{"text": "Budget frozen", "at": 12}, {"text": "Ask Timo Strauß", "at": null}]}},
+    {"op": "notes-stale", "args": {"folder": "2026-10-28T14-00-00"}},
+    {"op": "notes-stale", "args": {"folder": "2026-10-28T14-00-00", "write": {"title": "Rollout"}, "stamp": true}},
+    {"op": "my-notes", "args": {"action": "clear", "folder": "2026-10-28T14-00-00"}},
+    {"op": "notes-stale", "args": {"folder": "2026-10-28T14-00-00"}},
+    {"op": "notes-stale", "args": {"folder": "2026-10-28T14-00-00", "raw": "not json"}},
+    {"op": "notes-stale", "args": {"folder": "2026-10-22T15-00-00", "write": {"title": "Weekly"}, "stamp": true}},
+    {"op": "shared-mic", "args": {"folder": "2026-10-22T15-00-00", "action": "set-lane", "label": "mic", "on": true, "name": "Lab"}},
+    {"op": "notes-stale", "args": {"folder": "2026-10-22T15-00-00"}},
+    {"op": "notes-stale", "args": {"folder": "2026-10-22T15-00-00", "write": {"title": "Weekly"}, "stamp": true}},
+    {"op": "shared-mic", "args": {"folder": "2026-10-22T15-00-00", "action": "set-meeting", "on": true}},
+    {"op": "notes-stale", "args": {"folder": "2026-10-22T15-00-00"}},
+    {"op": "notes-stale", "args": {"folder": "2026-10-30T10-00-00", "write": {"title": "Kickoff", "my_notes_hash": null, "shared_lanes": "x"}}},
+    {"op": "notes-stale", "args": {"folder": "2026-10-29T15-00-00"}},
+    {"op": "notes-stale", "args": {"folder": "no-such-meeting"}, "error": true}
+  ],
+  "compare": ["Recordings", "config", "home", "events.json"],
+  "result": true
+}

@@ -31,11 +31,11 @@ from .paths import RecordingPaths, is_recording_folder_name
 
 _SPEAKER_FILES = "speakers*.json"
 # Caches made from a meeting's files in the background (the search index,
-# #46), the lock my notes are written under (#44), and the temporary files
-# of a write in progress (my notes save while you type): not part of what a
+# #46), the locks my notes (#44) and the speaker files are written under, and the
+# temporary files of a write in progress (my notes save while you type): not part of what a
 # change touched, never snapshot or compared; a restored meeting gets them
 # made again.
-_DERIVED = ("search-index.*", ".my-notes.lock", "*.tmp")
+_DERIVED = ("search-index.*", ".my-notes.lock", ".speakers.lock", "*.tmp")
 
 
 def _derived(path: Path) -> bool:

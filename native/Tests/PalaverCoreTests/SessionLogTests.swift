@@ -40,6 +40,15 @@ import Testing
         let line = log.line(level: "INFO", [("event", "x"), ("end", Double?.none as Any), ("s", "a😀")])
         #expect(line.hasSuffix("\"end\": null, \"s\": \"a\\ud83d\\ude00\"}"))
     }
+
+    @Test func jsonValueFieldsAreWrittenAsJSON() {
+        let (log, _) = log()
+        let fields: JSONValue = .object([("n", .int(2)), ("x", .double(1.0)), ("s", .string("ä")), ("none", .null),
+                                         ("list", .array([.bool(true), .string("b")]))])
+        let line = log.line(level: "INFO", [("event", "x"), ("fields", fields), ("seconds", JSONValue.double(0.5))])
+        #expect(line.hasSuffix("\"event\": \"x\", \"fields\": {\"n\": 2, \"x\": 1.0, \"s\": \"\\u00e4\", \"none\": null, "
+                               + "\"list\": [true, \"b\"]}, \"seconds\": 0.5}"))
+    }
 }
 
 @Suite struct SessionLogSharingTests {

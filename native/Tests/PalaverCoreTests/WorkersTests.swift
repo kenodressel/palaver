@@ -55,30 +55,6 @@ private func fakeTaskpolicy() throws -> String {
     #expect(try String(contentsOf: log, encoding: .utf8) == "hello\n")
 }
 
-private func fakePython(_ body: String) throws -> String {
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("palaver-test-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    let f = dir.appendingPathComponent("python")
-    try "#!/bin/sh\n\(body)\n".write(to: f, atomically: true, encoding: .utf8)
-    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: f.path)
-    return f.path
-}
-
-@Test func pythonQueryRunsAppQueryAndParsesJson() async throws {
-    // The stand-in prints its own arguments inside the JSON.
-    let py = try fakePython(#"printf '{"args": "%s"}\n' "$*""#)
-    let r = try await pythonQuery(["missing-models", "/m/a"], python: py, extraArgs: ["--config", "/c.toml"])
-    #expect(r["args"] as? String == "-m palaver --config /c.toml app query missing-models /m/a --json")
-}
-
-@Test func pythonQueryTurnsAnErrorAnswerOrNoJsonIntoAnError() async throws {
-    let bad = try fakePython(#"echo '{"error": "no calendar"}'; exit 1"#)
-    await #expect(throws: WorkerError.self) { try await pythonQuery(["next-event"], python: bad) }
-    let garbage = try fakePython("echo not json")
-    await #expect(throws: WorkerError.self) { try await pythonQuery(["next-event"], python: garbage) }
-    await #expect(throws: WorkerError.self) { try await pythonQuery(["x"], python: "/nonexistent/python") }
-}
-
 // MARK: fix round 1
 
 @Test func spawnWorkerLeaksNoDescriptors() throws {

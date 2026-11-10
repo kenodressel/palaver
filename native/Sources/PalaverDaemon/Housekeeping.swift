@@ -1,44 +1,130 @@
-// Housekeeping and the calendar retry: Python workers the app starts (palaver/app_update.py), never
-// more than one of each at a time. menubar.py ran these as threads: Cleanup.tick (audio older than
+// Housekeeping and the calendar retry. menubar.py ran these as threads: Cleanup.tick (audio older than
 // Settings say, hourly), drop_retired and mcp_access.migrate and prune_runtimes at start, the 5 minute
-// attach retry over 36 hours.
+// attach retry over 36 hours. Housekeeping runs in this process (app_update.py `housekeeping`'s work, in
+// Swift); the calendar's attach is palaver-worker's `calendar-attach`. Never more than one of each at a time.
 import Foundation
 import PalaverCore
+import PalaverDomain
 
-/// Starts `<python> -m palaver [options] <cmd> <extra...>` as a worker (`WorkerLauncher.launch`).
+/// Starts `<python> -m palaver [options] <cmd> <extra...>` (or palaver-worker's command) as a worker
+/// (`WorkerLauncher.launch`).
 public typealias WorkerStarter = @Sendable (_ cmd: String, _ extra: [String]) throws -> WorkerProcess
 
-/// `palaver app housekeeping` at start; `palaver app housekeeping --hourly` on the first tick and then
-/// every hour (storage.Cleanup).
+/// At start: the retired models go (and what `atStart` adds); on the first tick and then every hour: the audio
+/// older than Settings say (storage.Cleanup). Each part on a thread of its own, never two of a part at once.
 public final class Housekeeping: @unchecked Sendable {
     public static let every = 3600.0
-    private let start: WorkerStarter
+    /// One part of the work; it logs what it did itself.
+    public typealias Work = @Sendable () -> Void
+    /// Runs `work` in the background and calls `done` after it (a thread by default; tests run it at once).
+    public typealias Runner = @Sendable (_ name: String, _ work: @escaping Work, _ done: @escaping @Sendable () -> Void) -> Void
+
+    private let startup: Work
+    private let hourly: Work
+    private let run: Runner
     private let now: @Sendable () -> Double
-    private let log: @Sendable (String) -> Void
     private let lock = NSLock()
     private var last: Double?
-    private var hourly: WorkerProcess?
-    private var startup: WorkerProcess?
+    private var hourlyRunning = false
+    private var started = false
 
-    public init(start: @escaping WorkerStarter, now: @escaping @Sendable () -> Double = monotonicNow,
-                log: @escaping @Sendable (String) -> Void = { _ in }) {
-        self.start = start; self.now = now; self.log = log
+    public init(atStart startup: @escaping Work, hourly: @escaping Work, run: @escaping Runner = Housekeeping.thread,
+                now: @escaping @Sendable () -> Double = monotonicNow) {
+        self.startup = startup; self.hourly = hourly; self.run = run; self.now = now
     }
 
-    /// At launch: retired models, MCP entries, old runtimes.
+    /// app_update.housekeeping's work: at start the retired models (`Storage.dropRetired`, unless config.toml still
+    /// names one), then each of `extras` (the MCP entries, old runtimes: their batches add them); hourly the audio
+    /// older than Settings' days (`Storage.dropOldAudio`, nothing when the setting is off).
+    public static func inProcess(config: @escaping @Sendable () -> Config, stores: @escaping @Sendable () -> StorePaths = { .current() },
+                                 extras: [(String, @Sendable () throws -> Void)] = [],
+                                 log: @escaping @Sendable (String) -> Void = { _ in }, run: @escaping Runner = Housekeeping.thread,
+                                 now: @escaping @Sendable () -> Double = monotonicNow) -> Housekeeping {
+        Housekeeping(atStart: {
+            let freed = Storage.dropRetired(config: config(), stores: stores())
+            if freed > 0 {
+                log("deleted the models no longer offered: \(String(format: "%.1f", Double(freed) / 1e9)) GB free again")
+            }
+            for (what, work) in extras {
+                do { try work() } catch { log("\(what) failed: \(error)") }
+            }
+        }, hourly: {
+            let days = Storage.audioDays(stores: stores())
+            guard days > 0 else { return }
+            do {
+                let (meetings, bytes) = try Storage.dropOldAudio(config().outputDir, days: days)
+                if meetings > 0 {
+                    log("deleted the audio of \(meetings) meeting(s) older than \(days) days: "
+                        + "\(String(format: "%.1f", Double(bytes) / 1e6)) MB free again")
+                }
+            } catch {
+                log("deleting the audio older than \(days) days failed: \(error)")
+            }
+        }, run: run, now: now)
+    }
+
+    /// The extra that moves Claude's MCP entries (phase 4 batch 6): every Claude Code and Claude Desktop entry that
+    /// starts Palaver's Python (or an app's `bin/palaver` that is gone) now starts `bundle`'s `bin/palaver mcp`
+    /// (McpSetup.migrateAtStart); from a checkout, a translocated or not installed bundle nothing.
+    public static func movingMcpEntries(bundle: URL?, stores: @escaping @Sendable () -> StorePaths = { .current() },
+                                        log: @escaping @Sendable (String) -> Void) -> (String, @Sendable () throws -> Void) {
+        ("moving Claude's MCP entries", { McpSetup.migrateAtStart(bundle: bundle, stores: stores(), log: log) })
+    }
+
+    /// The extra that deletes the old Python runtime folder (phase 4 batch 9, RuntimeCleanup): after the MCP entries'
+    /// move, once this version's started-ok is written and the swap's previous-app is gone (it waits up to `wait`
+    /// seconds: the first tick writes started-ok right after the start), and only when nothing still needs that runtime.
+    public static func removingOldRuntime(_ facts: RuntimeCleanup.Facts, wait: Double = 300,
+                                          sleep: @escaping @Sendable (Double) -> Void = { Thread.sleep(forTimeInterval: $0) },
+                                          log: @escaping @Sendable (String) -> Void) -> (String, @Sendable () throws -> Void) {
+        ("deleting the old Python runtime", {
+            guard FileManager.default.fileExists(atPath: facts.root.path), let version = facts.bundleVersion else { return }
+            let ok = facts.support.appendingPathComponent("started-ok")
+            let previous = facts.support.appendingPathComponent("previous-app")
+            // started-ok, then the swap's own end: it deletes previous-app within 0.2 s of seeing started-ok.
+            var waited = 0.0
+            while waited < wait,
+                  (try? String(contentsOf: ok, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) != version
+                    || FileManager.default.fileExists(atPath: previous.path) {
+                sleep(1)
+                waited += 1
+            }
+            RuntimeCleanup.run(facts, log: log)
+        })
+    }
+
+    /// A thread of its own, named `palaver.<name>`.
+    public static let thread: Runner = { name, work, done in
+        let t = Thread { work(); done() }
+        t.name = "palaver.\(name)"
+        t.qualityOfService = .background
+        t.start()
+    }
+
+    /// At launch, once.
     public func atStart() {
-        lock.lock(); defer { lock.unlock() }
-        do { startup = try start("app", ["housekeeping"]) } catch { log("housekeeping did not start: \(error)") }
+        let first: Bool = lock.withLock {
+            defer { started = true }
+            return !started
+        }
+        if first { run("housekeeping", startup, {}) }
     }
 
     /// Each second: the hourly part, when due and the last one has ended.
     public func tick() {
-        lock.lock(); defer { lock.unlock() }
-        let t = now()
-        if let last, t - last < Self.every { return }
-        if let hourly, hourly.poll() == nil { return }
-        last = t
-        do { hourly = try start("app", ["housekeeping", "--hourly"]) } catch { log("hourly housekeeping did not start: \(error)") }
+        let due: Bool = lock.withLock {
+            let t = now()
+            if let last, t - last < Self.every { return false }
+            if hourlyRunning { return false }
+            last = t
+            hourlyRunning = true
+            return true
+        }
+        guard due else { return }
+        run("audio-cleanup", hourly, { [weak self] in
+            guard let self else { return }
+            self.lock.withLock { self.hourlyRunning = false }
+        })
     }
 }
 
@@ -96,7 +182,7 @@ public final class CalendarOnboarding: @unchecked Sendable {
 /// refresh; on connect (with [calendar].enabled) every earlier recording gets its event; then every 5
 /// minutes the last 36 hours again (the Calendar app may sync an event after the recording was
 /// processed), skipped while transcribing (processing looks the event up itself). [calendar].enabled is
-/// decided by the Python command (it answers "skipped"), not here.
+/// decided by the command (it answers "skipped"), not here.
 public final class CalendarAttach: @unchecked Sendable {
     public static let retryEvery = 300.0
     public static let window = 36.0  // hours
@@ -141,8 +227,9 @@ public final class CalendarAttach: @unchecked Sendable {
 
     private func attach(since hours: Double?) {
         if let running, running.poll() == nil { return }
-        let extra = ["attach"] + (hours.map { ["--since", String(Int($0))] } ?? [])
-        do { running = try start("calendar", extra) } catch { log("attaching calendar events did not start: \(error)") }
+        // `palaver-worker calendar-attach [--since H]` (Python's `palaver calendar attach` in the fallback).
+        let extra = hours.map { ["--since", String(Int($0))] } ?? []
+        do { running = try start("calendar-attach", extra) } catch { log("attaching calendar events did not start: \(error)") }
     }
 }
 

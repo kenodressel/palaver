@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from ._xdg import xdg_config_home
+from .store_lock import locked
 from .paths import is_recording_folder_name
 
 # Below this a link gets the "unsure" look (a dotted chip) and is asked about.
@@ -141,10 +142,11 @@ class Evidence:
         self._data.setdefault("events", {})
 
     def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(self._data, indent=2, ensure_ascii=False))
-        tmp.replace(self.path)
+        with locked(self.path):
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(self._data, indent=2, ensure_ascii=False))
+            tmp.replace(self.path)
 
     @staticmethod
     def _series(event) -> str:

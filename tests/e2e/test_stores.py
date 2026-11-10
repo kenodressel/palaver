@@ -8,7 +8,8 @@ import pytest
 from playwright.sync_api import expect  # noqa: E402
 
 from .helpers import (  # noqa: E402
-    expect_toast, goto, heading, list_item, menu_item, more, open_meeting, run_from_menu, toast, undo_in_toast,
+    expect_toast, goto, heading, list_item, menu_item, more, open_meeting, reload, run_from_menu, toast,
+    undo_in_toast,
 )
 from .recordings import A, B  # noqa: E402
 
@@ -42,7 +43,7 @@ def test_project_chip_add_remove_and_undo(page, app_server):
     assert app_server.api("/api/projects")["projects"] == []  # the project made by name goes too
 
     pid = _project(app_server, "Pelican", A)
-    page.reload()
+    reload(page)
     expect(page.locator("#main .project-chip")).to_have_count(1)
     page.get_by_role("button", name="Remove from Pelican").click()
     expect(page.locator("#main .project-chip")).to_have_count(0)
@@ -247,7 +248,7 @@ def test_a_suggested_spelling_can_be_taken_out_with_a_click(page, app_server):
     page.get_by_role("button", name="“Team” is not “Timo”").click()
     expect_toast(page, "“Team” is no longer suggested for “Timo”")
     assert sent == [{"keys": ["variant:team:timo"]}]
-    page.reload()  # the card again, as stubbed
+    reload(page)  # the card again, as stubbed
     page.get_by_role("button", name="Not this").click()
     expect_toast(page, "“Timo” is no longer suggested")
     assert sent[-1] == {"keys": ["variant:team:timo", "variant:tmo:timo"]}

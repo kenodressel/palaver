@@ -14,13 +14,18 @@ struct AppExtras {
     let permissions: PermissionRequester
 
     /// `daemonStatus`: Daemon.status() as JSON; `testState`: the setup assistant's test recording state;
-    /// `transcribing`: whether a recording is processed now (the calendar retry waits). The Python
-    /// commands run with `python` (palaver-python) and the app's `cliOptions`/`env`.
+    /// `transcribing`: whether a recording is processed now (the calendar retry waits). Updates run in this
+    /// process (SwiftUpdateBackend).
     init(paths: Paths, config: @escaping @Sendable () -> Config, settings: @escaping @Sendable () -> Settings,
-         python: String, cliOptions: [String], env: [String: String], launcher: WorkerLauncher,
+         launcher: WorkerLauncher,
          daemonStatus: @escaping @Sendable () -> JSONValue, testState: @escaping @Sendable () -> String?,
-         transcribing: @escaping @Sendable () -> Bool, bundleVersion: String?, log: @escaping @Sendable (String) -> Void) {
-        let backend = PythonUpdateBackend(python: python, cliOptions: cliOptions, env: env, log: log)
+         transcribing: @escaping @Sendable () -> Bool, bundleVersion: String?, bundle: URL?,
+         log: @escaping @Sendable (String) -> Void) {
+        let environment = ProcessInfo.processInfo.environment
+        let backend = SwiftUpdateBackend(.init(
+            paths: paths, bundle: bundleVersion == nil ? nil : bundle,
+            downloads: ReleaseDownloads(manifestURL: ReleaseDownloads.manifestURL(environment: environment)),
+            outputDir: { config().outputDir }))
         let jobsRoot = { config().outputDir.appendingPathComponent(".jobs") }
         let marker = paths.support.appendingPathComponent("downloading-models")
         let updateJson = paths.support.appendingPathComponent("update.json")
@@ -39,7 +44,13 @@ struct AppExtras {
             },
             startedOk: paths.startedOk, bundleVersion: bundleVersion, log: log))
         let start: WorkerStarter = { cmd, extra in try launcher.launch(cmd, nil, qos: .background, extra: extra) }
-        housekeeping = Housekeeping(start: start, log: log)
+        // In this process (no Python child): at start also Claude's MCP entries moved to `bin/palaver mcp` (batch 6),
+        // then the old Python runtime deleted once nothing needs it (batch 9).
+        let runtime = RuntimeCleanup.Facts.app(bundle: bundle, bundleVersion: bundleVersion, support: paths.support,
+                                               environment: environment)
+        housekeeping = Housekeeping.inProcess(config: config, extras: [Housekeeping.movingMcpEntries(bundle: bundle, log: log),
+                                                                       Housekeeping.removingOldRuntime(runtime, log: log)],
+                                              log: log)
         let access = EventKitCalendarAccess()
         calendarAttach = CalendarAttach(access: access, transcribing: transcribing,
                                         start: start, log: log)

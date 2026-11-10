@@ -1,0 +1,27 @@
+{
+  "label": "split",
+  "time": "2026-11-04T22:10:33.655776+01:00",
+  "meetings": {
+    "2026-10-22T10-00-00": {
+      "partial": false,
+      "audio": true,
+      "fingerprint": "779f472e48475a1eddc9790e767a239bb7692ac46e3658263313795dc2385960"
+    }
+  },
+  "stores": [
+    {
+      "path": "/PALAVER-UNDO-ROOT/root/config/palaver/projects.json",
+      "index": 0,
+      "existed": true,
+      "dir": false,
+      "fingerprint": "file:6a139ef1df22d6cc418265ab972721da55600c65fd6394c84c575e2576b2b0db"
+    }
+  ],
+  "moves": [],
+  "created": [
+    "2026-10-22T10-00-30"
+  ],
+  "created_fingerprints": {
+    "2026-10-22T10-00-30": "50d93ba7ce1ecee47f669833c7c7a114fc7aa4173d1ccc156ee3254a23ed0e9a"
+  }
+}

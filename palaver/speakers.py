@@ -36,6 +36,7 @@ from .models import SpeakerTurn, Utterance
 from .paths import RecordingPaths
 from . import shared_mic
 from .render import render_markdown
+from .store_lock import meeting_lock
 from .voices import MIN_TALK_SECONDS, VoiceBank
 
 MAX_SAMPLE_SECONDS = 8.0
@@ -88,12 +89,13 @@ def load_ignored(paths: RecordingPaths) -> set[str]:
 
 
 def set_ignored(paths: RecordingPaths, label: str, ignored: bool = True) -> None:
-    labels = load_ignored(paths)
-    labels = labels | {label} if ignored else labels - {label}
-    if labels:
-        paths.speakers_ignored.write_text(json.dumps(sorted(labels)))
-    else:
-        paths.speakers_ignored.unlink(missing_ok=True)
+    with meeting_lock(paths.folder):
+        labels = load_ignored(paths)
+        labels = labels | {label} if ignored else labels - {label}
+        if labels:
+            paths.speakers_ignored.write_text(json.dumps(sorted(labels)))
+        else:
+            paths.speakers_ignored.unlink(missing_ok=True)
 
 
 def load_unknown(paths: RecordingPaths) -> set[str]:
@@ -106,12 +108,13 @@ def load_unknown(paths: RecordingPaths) -> set[str]:
 
 
 def set_unknown(paths: RecordingPaths, label: str, unknown: bool = True) -> None:
-    labels = load_unknown(paths)
-    labels = labels | {label} if unknown else labels - {label}
-    if labels:
-        paths.speakers_unknown.write_text(json.dumps(sorted(labels)))
-    else:
-        paths.speakers_unknown.unlink(missing_ok=True)
+    with meeting_lock(paths.folder):
+        labels = load_unknown(paths)
+        labels = labels | {label} if unknown else labels - {label}
+        if labels:
+            paths.speakers_unknown.write_text(json.dumps(sorted(labels)))
+        else:
+            paths.speakers_unknown.unlink(missing_ok=True)
 
 
 def without_ignored(paths: RecordingPaths, utterances: list[Utterance]) -> list[Utterance]:
@@ -142,14 +145,15 @@ def _is_rejected(rejected: dict[str, list[str]], label: str, name: str) -> bool:
 
 def set_rejected_name(paths: RecordingPaths, label: str, name: str, rejected: bool = True) -> None:
     """"``label`` is not ``name``", or (``rejected=False``) it may be after all."""
-    names = load_rejected_names(paths)
-    kept = [n for n in names.get(label, []) if n.casefold() != name.casefold()]
-    names[label] = kept + [name] if rejected else kept
-    names = {k: v for k, v in names.items() if v}
-    if names:
-        paths.speakers_rejected.write_text(json.dumps(names, indent=2, ensure_ascii=False))
-    else:
-        paths.speakers_rejected.unlink(missing_ok=True)
+    with meeting_lock(paths.folder):
+        names = load_rejected_names(paths)
+        kept = [n for n in names.get(label, []) if n.casefold() != name.casefold()]
+        names[label] = kept + [name] if rejected else kept
+        names = {k: v for k, v in names.items() if v}
+        if names:
+            paths.speakers_rejected.write_text(json.dumps(names, indent=2, ensure_ascii=False))
+        else:
+            paths.speakers_rejected.unlink(missing_ok=True)
 
 
 def load_inferred_names(paths: RecordingPaths) -> dict[str, str]:
@@ -187,27 +191,29 @@ def merge_speakers(
     """Fold ``label`` into ``into`` (one person the diarizer split in two);
     ``into=None`` splits it off again. A name given only to ``label`` moves
     to ``into``. Rewrites the transcript."""
-    merges = load_merges(paths)
-    names = load_speaker_names(paths)
-    if into is None:
-        merges.pop(label, None)
-    else:
-        into = merges.get(into, into)
-        if into == label:
-            raise ValueError("a speaker cannot be merged into itself")
-        merges = {k: (into if v == label else v) for k, v in merges.items()}
-        merges[label] = into
-        own = names.pop(label, None)
-        if own and own != label and into not in names:
-            names[into] = own
-        # What the user said the merged voice is not, the person is not either.
-        for name in load_rejected_names(paths).get(label, []):
-            set_rejected_name(paths, into, name)
-    if merges:
-        paths.speakers_merged.write_text(json.dumps(merges, indent=2, ensure_ascii=False))
-    else:
-        paths.speakers_merged.unlink(missing_ok=True)
-    shared_mic.follow_merges(paths)  # a room merged into a voice: the room wins (#56)
+    # The meeting's lock is let go before save_speaker_names: it takes the voice bank's (never two at once).
+    with meeting_lock(paths.folder):
+        merges = load_merges(paths)
+        names = load_speaker_names(paths)
+        if into is None:
+            merges.pop(label, None)
+        else:
+            into = merges.get(into, into)
+            if into == label:
+                raise ValueError("a speaker cannot be merged into itself")
+            merges = {k: (into if v == label else v) for k, v in merges.items()}
+            merges[label] = into
+            own = names.pop(label, None)
+            if own and own != label and into not in names:
+                names[into] = own
+            # What the user said the merged voice is not, the person is not either.
+            for name in load_rejected_names(paths).get(label, []):
+                set_rejected_name(paths, into, name)
+        if merges:
+            paths.speakers_merged.write_text(json.dumps(merges, indent=2, ensure_ascii=False))
+        else:
+            paths.speakers_merged.unlink(missing_ok=True)
+        shared_mic.follow_merges(paths)  # a room merged into a voice: the room wins (#56)
     save_speaker_names(paths, names, bank)
 
 
@@ -307,35 +313,38 @@ def save_speaker_names(
     them; mapping a label to itself rejects a recognized name. Returns the
     number of voice samples added."""
     # Unchanged names keep their file as it is: an undo taken before still finds it unchanged.
-    try:
-        same = paths.speakers.exists() and load_speaker_names(paths) == names
-    except (ValueError, AttributeError):
-        same = False
-    if not same:
-        paths.speakers.write_text(json.dumps(names, indent=2, ensure_ascii=False))
+    with meeting_lock(paths.folder):
+        try:
+            same = paths.speakers.exists() and load_speaker_names(paths) == names
+        except (ValueError, AttributeError):
+            same = False
+        if not same:
+            paths.speakers.write_text(json.dumps(names, indent=2, ensure_ascii=False))
+    # Learning voices takes the voice bank's lock, so not under the meeting's: one lock at a time.
     turns = [SpeakerTurn.from_dict(d) for d in json.loads(paths.system_turns.read_text())]
     merges = load_merges(paths)
     ignored = load_ignored(paths)
-    shared = shared_mic.display(paths)
+    shared = shared_mic.display(paths)  # for who learns; the transcript reads it again under the lock
     # A merged-away label teaches no voice: it is often the odd part the
     # diarizer split off, not a good sample of the person. Nor does noise,
     # nor a room of several people (#56).
     enrolled = _remember_voices(paths, {label: n for label, n in names.items()
                                         if label not in merges and label not in ignored and label not in shared},
                                 talk_seconds(turns), bank or VoiceBank()) if learn else 0
-    effective = transcript_names(paths, names)
-    utterances = [Utterance.from_dict(d) for d in json.loads(paths.transcript_json.read_text())]
-    renamed = apply_speaker_names(utterances, effective)
-    paths.transcript_json.write_text(json.dumps([u.to_dict() for u in renamed], indent=2))
-    meta = json.loads(paths.meta.read_text())
-    paths.transcript_md.write_text(
-        render_markdown(
-            shared_mic.shown(paths, without_ignored(paths, renamed)),
-            datetime.fromisoformat(meta["start_time"]),
-            float(meta["duration_seconds"]),
-            meta.get("gaps"),
+    with meeting_lock(paths.folder):
+        effective = transcript_names(paths)  # as stored now (read again under the lock), not the caller's copy
+        utterances = [Utterance.from_dict(d) for d in json.loads(paths.transcript_json.read_text())]
+        renamed = apply_speaker_names(utterances, effective)
+        paths.transcript_json.write_text(json.dumps([u.to_dict() for u in renamed], indent=2))
+        meta = json.loads(paths.meta.read_text())
+        paths.transcript_md.write_text(
+            render_markdown(
+                shared_mic.shown(paths, without_ignored(paths, renamed)),
+                datetime.fromisoformat(meta["start_time"]),
+                float(meta["duration_seconds"]),
+                meta.get("gaps"),
+            )
         )
-    )
     return enrolled
 
 
@@ -415,26 +424,28 @@ def name_live_speaker(paths: RecordingPaths, label: str, name: str) -> None:
     voice = live.get("embeddings", {}).get(label)
     if voice is None:
         raise LookupError(label)
-    current = match_live_names({label: voice}, load_live_names(paths)).get(label)
-    named = [n for n in load_live_names(paths) if n["name"] != current and n["name"] != name.strip()]
-    if name.strip():
-        named.append({"name": name.strip(), "embedding": voice})
-    paths.speakers_live.write_text(json.dumps(named, ensure_ascii=False))
+    with meeting_lock(paths.folder):
+        current = match_live_names({label: voice}, load_live_names(paths)).get(label)
+        named = [n for n in load_live_names(paths) if n["name"] != current and n["name"] != name.strip()]
+        if name.strip():
+            named.append({"name": name.strip(), "embedding": voice})
+        paths.speakers_live.write_text(json.dumps(named, ensure_ascii=False))
 
 
 def adopt_live_names(paths: RecordingPaths) -> dict[str, str]:
     """Names given while recording, onto the final speakers (as if given
     afterwards); a name given afterwards wins. Returns what was adopted."""
-    named = load_live_names(paths)
-    if not named or not paths.speaker_embeddings.exists():
-        return {}
-    found = match_live_names(json.loads(paths.speaker_embeddings.read_text()), named)
-    names = load_speaker_names(paths)
-    adopted = {label: name for label, name in found.items() if label not in names}
-    if adopted:
-        paths.speakers.write_text(json.dumps({**names, **adopted}, indent=2, ensure_ascii=False))
-    paths.speakers_live.unlink(missing_ok=True)
-    return adopted
+    with meeting_lock(paths.folder):
+        named = load_live_names(paths)
+        if not named or not paths.speaker_embeddings.exists():
+            return {}
+        found = match_live_names(json.loads(paths.speaker_embeddings.read_text()), named)
+        names = load_speaker_names(paths)
+        adopted = {label: name for label, name in found.items() if label not in names}
+        if adopted:
+            paths.speakers.write_text(json.dumps({**names, **adopted}, indent=2, ensure_ascii=False))
+        paths.speakers_live.unlink(missing_ok=True)
+        return adopted
 
 
 # --- the speaker of single lines (#12) ------------------------------------------
@@ -542,10 +553,11 @@ def set_line_speaker(paths: RecordingPaths, line: Utterance, to: dict | None) ->
     """Say who said ``line`` (as transcript.json has it): ``{"label": …}``,
     ``{"name": …}`` or ``{"me": True, "name": …}``; None: the voice it was
     heard as. One correction per line: a new one replaces the old."""
-    fixes = load_line_speakers(paths)
-    current = line_fix(line, fixes)
-    fixes = [f for f in fixes if f is not current]
-    if to is not None:
-        fixes.append({"start": round(line.start, 3), "end": round(line.end, 3),
-                      "from": None if is_mic_line(line) else (line.label or line.speaker), **to})
-    _save_line_speakers(paths, fixes)
+    with meeting_lock(paths.folder):  # a speaker file of the meeting: the same lock as the others (and Swift)
+        fixes = load_line_speakers(paths)
+        current = line_fix(line, fixes)
+        fixes = [f for f in fixes if f is not current]
+        if to is not None:
+            fixes.append({"start": round(line.start, 3), "end": round(line.end, 3),
+                          "from": None if is_mic_line(line) else (line.label or line.speaker), **to})
+        _save_line_speakers(paths, fixes)

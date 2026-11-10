@@ -58,10 +58,12 @@ def test_best_next_question(page, app_server):
     expect(answer.locator(".next-questions .q")).to_have_text(
         ["Who sends the numbers tomorrow?", "What is the budget for Q1?"])
     expect(answer.locator(".why").first).to_contain_text("came without a name")
-    expect(answer.locator(".next-questions-note")).to_contain_text("Fake model · from what was said and your prep only")
-    meeting, inputs = app_server.model.asked[0]
+    # palaver-lm names the engine the user chose (the test's model answers in its place).
+    expect(answer.locator(".next-questions-note")).to_contain_text(
+        "Gemma 4 12B on this Mac · from what was said and your prep only")
+    meeting, prompt = app_server.model.asked[0]
     assert meeting == LIVE
-    assert "Ja, das passt für uns." in [line["text"] for line in inputs["lines"]]
+    assert "Ja, das passt für uns." in prompt and "## Transcript (the last minutes)" in prompt
     answer.get_by_role("button", name="Hide").click()
     expect(answer.locator(".next-questions")).to_have_count(0)
     expect(page.get_by_role("button", name="Best next question (Gemma, on this Mac)")).to_be_enabled()

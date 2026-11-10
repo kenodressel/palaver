@@ -1,0 +1,6 @@
+unpack.py.txt: updater.py's unpack_runtime and Installer._unpack_app of Palaver 0.5.0rc6 (the same in 0.5.0rc1 to
+rc6; unpack_runtime skips AppleDouble "._*" members, unlike 0.3.x). release.py and install_layout.bundle_info are
+those of 0.3.14 (tests/fixtures/updater_0.3.14). Regenerate (identical output):
+
+  git show 484c923:palaver/updater.py | python3 tests/fixtures/updater_0.3.14/funcs.py unpack_runtime _unpack_app \
+    > tests/fixtures/updater_0.5.0rc6/unpack.py.txt

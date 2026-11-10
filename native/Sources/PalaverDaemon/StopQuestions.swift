@@ -2,6 +2,7 @@
 // ended or that went silent (issue #52), and a call recorded automatically that nothing of the
 // others is heard of on this Mac (#7). Pure: fed the time, the call and the silence.
 import Foundation
+import PalaverDomain
 
 public enum DaemonTiming {
     public static let startAfter = 4.0
@@ -26,7 +27,7 @@ public enum DaemonTiming {
     public static let callTriggers = ["teams", "slack"]
 }
 
-let callNames = ["teams": "Teams call", "slack": "Slack huddle"]
+let callNames = Lifecycle.callNames
 
 /// The question for a recording that ran on: `reason` is the call app that ended ("teams",
 /// "slack"), "silence", or "silent_call" for a call recorded automatically (`app`).

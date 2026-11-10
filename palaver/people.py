@@ -34,6 +34,7 @@ from .speakers import (
     save_speaker_names,
     talk_seconds,
 )
+from .store_lock import meeting_lock
 from .voices import MATCH_THRESHOLD, MIN_TALK_SECONDS, SUGGEST_THRESHOLD, VoiceBank, recognize, said_not
 
 # Unnamed voices this similar (average over the group) count as one person.
@@ -187,13 +188,15 @@ def refresh_recognition(output_dir: Path, bank: VoiceBank | None = None, *, user
         invited = calendar_events.invited_names(paths, list(bank.names()))
         found = recognize(embeddings, talk_seconds(_turns(paths)), bank, invited=invited, rejected=rejected)
         auto = {label: {"name": name, "similarity": round(sim, 3)} for label, (name, sim) in found.items()}
-        try:
-            before = json.loads(paths.speakers_auto.read_text())
-        except (OSError, ValueError):
-            before = {}
-        if {k: v["name"] for k, v in auto.items()} == {k: v["name"] for k, v in before.items()}:
-            continue
-        paths.speakers_auto.write_text(json.dumps(auto, indent=2, ensure_ascii=False))
+        with meeting_lock(paths.folder):
+            try:
+                before = json.loads(paths.speakers_auto.read_text())
+            except (OSError, ValueError):
+                before = {}
+            if {k: v["name"] for k, v in auto.items()} == {k: v["name"] for k, v in before.items()}:
+                continue
+            paths.speakers_auto.write_text(json.dumps(auto, indent=2, ensure_ascii=False))
+        # Outside the meeting's lock: saving the names learns voices, which takes the bank's.
         save_speaker_names(paths, load_speaker_names(paths), bank)
         changed += 1
     return changed + inference.refresh(output_dir, user_name=user_name, bank=bank)
@@ -220,11 +223,12 @@ def rename_person(output_dir: Path, old: str, new: str) -> None:
     bank = VoiceBank()
     bank.rename(old, new)
     for paths in _meetings(output_dir):
-        rejected = load_rejected_names(paths)
-        moved = {label: list(dict.fromkeys(new if n.casefold() == old.casefold() else n for n in ns))
-                 for label, ns in rejected.items()}
-        if moved != rejected:  # "not Tom" is "not Thomas Berg" now
-            paths.speakers_rejected.write_text(json.dumps(moved, indent=2, ensure_ascii=False))
+        with meeting_lock(paths.folder):
+            rejected = load_rejected_names(paths)
+            moved = {label: list(dict.fromkeys(new if n.casefold() == old.casefold() else n for n in ns))
+                     for label, ns in rejected.items()}
+            if moved != rejected:  # "not Tom" is "not Thomas Berg" now
+                paths.speakers_rejected.write_text(json.dumps(moved, indent=2, ensure_ascii=False))
         names = load_speaker_names(paths)
         renamed = {label: (new if name.casefold() == old.casefold() else name) for label, name in names.items()}
         if renamed != names:

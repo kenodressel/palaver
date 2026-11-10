@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from ._xdg import xdg_config_home
+from .store_lock import locked
 
 # How common a word may be (Zipf scale, in German or English) and still be
 # a name or term: ~1 in 10 million words.
@@ -72,11 +73,12 @@ class Glossary:
         self._pattern = None
 
     def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(self._data, indent=2, ensure_ascii=False))
-        tmp.replace(self.path)
-        _CURRENT.clear()
+        with locked(self.path):
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(self._data, indent=2, ensure_ascii=False))
+            tmp.replace(self.path)
+            _CURRENT.clear()
 
     def terms(self) -> dict[str, dict[str, Any]]:
         """id → {"term", "variants": [...], "note"}."""

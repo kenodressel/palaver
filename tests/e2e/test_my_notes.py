@@ -12,7 +12,7 @@ import pytest
 
 from playwright.sync_api import expect  # noqa: E402
 
-from .helpers import expect_toast, goto, line, menu_item, open_meeting, show_tab, undo_in_toast  # noqa: E402
+from .helpers import expect_toast, goto, line, menu_item, open_meeting, reload, show_tab, undo_in_toast  # noqa: E402
 from .recordings import A, B, C, LIVE, _at  # noqa: E402
 
 pytestmark = pytest.mark.e2e
@@ -79,7 +79,7 @@ def test_typing_is_saved_and_there_after_a_reload(page, app_server):
     ]
     assert json.loads((app_server.root / A / "my-notes.json").read_text())[0]["text"] == "Ask about the **budget**"
 
-    page.reload()
+    reload(page)
     expect(_pad(page).locator(".mn-text strong")).to_have_text("budget")  # light markdown, as text
     assert "null" not in _pad(page).inner_text()
     expect(_pad(page).locator(".mn-text li")).to_have_text(["go-live in March", "two testers"])
@@ -163,7 +163,7 @@ def test_a_pasted_image_is_kept_and_its_text_read(page, app_server):
     assert (app_server.root / A / "my-notes" / second["image"]).exists()
     assert image.evaluate("img => img.naturalWidth") == 700  # served back from this Mac
 
-    page.reload()
+    reload(page)
     expect(_pad(page).locator(".mn-image img")).to_be_visible()
 
 
@@ -221,7 +221,7 @@ def test_what_the_notes_took_from_mine_is_marked(page, app_server):
     expect(page.locator("#main .note-card .decision .you-mark")).to_have_attribute("title", "From your notes")
 
     _seed(app_server, A, [{"text": "Changed my mind", "at": None}])
-    page.reload()
+    reload(page)
     expect(page.locator("#main .stale")).to_contain_text("Your notes changed after these notes were written.")
 
 
@@ -359,7 +359,7 @@ def test_typing_in_my_notes_then_another_tab_and_back_keeps_it(page, app_server)
     show_tab(page, "Summary")
     show_tab(page, "Notes")
     expect(_pad(page).locator(".mn-text")).to_have_text("Ask about the budget and the testers")
-    page.reload()
+    reload(page)
     expect(page.get_by_role("tab", name="Notes")).to_have_attribute("aria-selected", "true")  # the tab, kept
     expect(_pad(page).locator(".mn-text")).to_have_text("Ask about the budget and the testers")
 
@@ -428,7 +428,7 @@ def test_notes_not_saved_when_the_page_went_come_back(page, app_server):
     page.keyboard.type("Written while offline")
     expect(_pad(page).locator(".mn-status")).to_have_text("Not saved · trying again")
     page.unroute(f"**/api/meetings/{A}/my-notes")
-    page.reload()
+    reload(page)
     expect(_pad(page).locator(".mn-text")).to_have_text("Written while offline")
     page.wait_for_function(f"""async () => (await (await fetch('/api/meetings/{A}/my-notes')).json())
       .paragraphs.map((p) => p.text).join('|') === 'Written while offline'""")

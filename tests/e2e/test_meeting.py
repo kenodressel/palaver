@@ -10,7 +10,7 @@ from playwright.sync_api import expect  # noqa: E402
 from palaver.paths import RecordingPaths  # noqa: E402
 
 from .helpers import (  # noqa: E402
-    audio, expect_toast, goto, heading, lane, line, line_tool, list_item, open_meeting, show_tab,
+    audio, expect_toast, goto, heading, lane, line, line_tool, list_item, open_meeting, reload, show_tab,
     speakers_in_transcript,
 )
 from .recordings import A, B, LIVE, write_stream  # noqa: E402
@@ -96,7 +96,7 @@ def test_name_a_speaker(page, app_server):
     expect_toast(page, "Speaker 2 is now Bob")
     expect(line(page, 15).locator(".speaker")).to_have_text("Bob")
     expect(lane(page, "SPEAKER_01").locator(".voice-play")).to_have_count(0)  # a sure name: no play button
-    page.reload()
+    reload(page)
     expect(page.get_by_label("Name for Bob")).to_have_value("Bob")
     assert app_server.api(f"/api/meetings/{A}")["transcript"][2]["speaker"] == "Bob"
 

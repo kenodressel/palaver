@@ -5,7 +5,9 @@ import Foundation
 /// Tokens are only noted as present, never kept or logged.
 public struct Config: Equatable, Sendable {
     public var userName = "User"
-    public var outputDir = URL(fileURLWithPath: NSString(string: "~/Meetings/Recordings").expandingTildeInPath, isDirectory: true)
+    /// `~/Meetings/Recordings`: `~` is the home `Paths.home(environment:)` names (PALAVER_HOME, else $HOME, else the
+    /// account's; in a test process PALAVER_HOME: TestIsolation).
+    public var outputDir = URL(fileURLWithPath: Config.expandTilde("~/Meetings/Recordings"), isDirectory: true)
     public var retentionDays = 14
     public var maxSessionHours = 4
     public var gracePeriodSeconds = 10
@@ -21,7 +23,15 @@ public struct Config: Equatable, Sendable {
     public var notesEnabled = true
     public var notesEngine = "local"
     public var notesLocalModel = "mlx-community/gemma-4-12B-it-OptiQ-4bit"
+    /// `[notes].model`: the Claude Code CLI's model (llm.provider_defaults).
+    public var notesModel = "sonnet"
     public var calendarEnabled = true
+    /// `[model].language`: "auto" or a language code.
+    public var language = "auto"
+    /// `[model].transcriber`.
+    public var transcriber = "parakeet"
+    /// `[notes].claude`: the Claude Code CLI path, nil to find it.
+    public var claudePath: String?
     /// `[memory]` budgets in GB by key (live_gb ...); unknown keys and values <= 0 are dropped.
     public var memory: [String: Double] = [:]
 
@@ -41,9 +51,11 @@ public struct Config: Equatable, Sendable {
         func bool(_ k: String) -> Bool? { if case .bool(let b)? = t[k] { return b } else { return nil } }
 
         if let v = str("user.name") { userName = v }
-        if let v = str("recording.output_dir"), !v.isEmpty {
-            outputDir = URL(fileURLWithPath: NSString(string: v).expandingTildeInPath, isDirectory: true)
-        }
+        let given = str("recording.output_dir").flatMap { $0.isEmpty ? nil : $0 } ?? "~/Meetings/Recordings"
+        outputDir = URL(fileURLWithPath: Config.expandTilde(given, environment: environment), isDirectory: true)
+        #if DEBUG
+        TestIsolation.check(outputDir, "output_dir")
+        #endif
         if let v = int("recording.retention_days") { retentionDays = v }
         if let v = int("recording.max_session_hours"), v > 0 { maxSessionHours = v }
         if let v = int("recording.grace_period_seconds"), v >= 0 { gracePeriodSeconds = v }
@@ -58,6 +70,10 @@ public struct Config: Equatable, Sendable {
         if let v = bool("notes.enabled") { notesEnabled = v }
         if let v = str("notes.engine"), v == "local" || v == "claude" { notesEngine = v }
         if let v = str("notes.local_model"), !v.isEmpty { notesLocalModel = v }
+        if let v = str("notes.model") { notesModel = v }
+        if let v = str("model.language") { language = v }
+        if let v = str("model.transcriber") { transcriber = v }
+        claudePath = str("notes.claude")
         if let v = bool("calendar.enabled") { calendarEnabled = v }
         for key in Config.memoryKeys {
             switch t["memory." + key] {
@@ -66,6 +82,17 @@ public struct Config: Equatable, Sendable {
             default: break
             }
         }
+    }
+
+    /// `os.path.expanduser`: `~` is the home of `environment` (`Paths.home(environment:)`: PALAVER_HOME, else $HOME,
+    /// else the account's), the one the stores are in; in a test process it is PALAVER_HOME (TestIsolation), so a test
+    /// never reaches the real ~/Meetings. `~user` is that user's.
+    static func expandTilde(_ s: String, environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
+        guard s == "~" || s.hasPrefix("~/") else { return NSString(string: s).expandingTildeInPath }
+        #if DEBUG
+        if (environment["PALAVER_HOME"] ?? "").isEmpty, let home = TestIsolation.testHome() { return home + String(s.dropFirst()) }
+        #endif
+        return Paths.home(environment: environment).path + String(s.dropFirst())
     }
 
     /// The file at `url`; the defaults when it is missing or unreadable.
