@@ -113,6 +113,13 @@ def no_real_keychain(monkeypatch):
     monkeypatch.setattr(keyring, "delete_password", _refuse)
 
 
+@pytest.fixture(autouse=True)
+def no_release_identity(monkeypatch):
+    """Tests sign ad hoc, never with the release certificate in the real Keychain, though the shell that runs
+    `make test` before `make release` exports PALAVER_SIGN_IDENTITY."""
+    monkeypatch.delenv("PALAVER_SIGN_IDENTITY", raising=False)
+
+
 class FakeKeychain(dict):
     """The login Keychain in tests: account -> secret, in memory."""
 

@@ -104,6 +104,45 @@ let teamsId = "com.microsoft.teams2.helper"
     #expect(d() == .teams)
 }
 
+@Test func theRecordedCallStaysTheCallWhileItsAppHoldsTheMic() {
+    // A Slack call answered (or ringing with the mic) during a recorded Teams call is not the call.
+    let l = FakeLister()
+    let clock = Cell(0.0)
+    let d = CallDetector(lister: l, clock: { clock.value })
+    let teams = proc(teamsId, true, out: true), huddle = proc(slackId, true, out: true)
+    l.list = [teams]
+    #expect(d.detect(recording: nil) == .teams)
+    clock.value = 60; l.list = [teams, huddle]
+    #expect(d.detect(recording: .teams) == .teams)
+    clock.value = 70
+    #expect(d.detect(recording: .teams) == .teams)
+    #expect(d.detect(recording: nil) == .slack)  // nothing recorded: the last taker, as before
+    clock.value = 80; l.list = [huddle]
+    #expect(d.detect(recording: .teams) == .slack)  // Teams hung up: the huddle is the call now
+}
+
+@Test func aRecordedMutedHuddleStaysTheCallWhenTeamsTakesTheMic() {
+    let l = FakeLister()
+    let d = CallDetector(lister: l)
+    l.list = [proc(slackId, true, out: true)]
+    #expect(d.detect(recording: nil) == .slack)
+    l.list = [proc(slackId, false, out: true)]  // muted: the others still play
+    #expect(d.detect(recording: .slack) == .slack)
+    l.list = [proc(slackId, false, out: true), proc(teamsId, true, out: true)]
+    #expect(d.detect(recording: .slack) == .slack)
+    l.list = [proc(teamsId, true, out: true)]
+    #expect(d.detect(recording: .slack) == .teams)  // the huddle ended
+}
+
+@Test func theRecordedAppCountsOnlyWhileItsSwitchIsOn() {
+    let on = Cell(true)
+    let l = FakeLister(); l.list = [proc(teamsId, true), proc(slackId, true)]
+    let d = CallDetector(lister: l, teams: { on.value }, clock: { 5 })
+    #expect(d.detect(recording: .teams) == .teams)
+    on.value = false
+    #expect(d.detect(recording: .teams) == .slack)
+}
+
 @Test func bothTakingTheMicAtOnceGoToTeams() {
     let l = FakeLister(); l.list = [proc(slackId, true), proc(teamsId, true)]
     #expect(CallDetector(lister: l, clock: { 5 })() == .teams)
@@ -160,4 +199,40 @@ private func apps(slack: [(Double, Double)] = [], teams: [(Double, Double)] = []
 @Test func theRealListerReadsWithoutThrowing() throws {
     // Read-only; no permission, no audio.
     _ = try CoreAudioProcessLister().processes()
+}
+
+// Keno's daemon.log, 2026-11-10: Teams' modulehost holds mic+speaker in a call; at the hang-up its
+// speaker goes, the mic stays ~9 s; teams2.helper plays on. Mid-call it drops to mic-only for 1-2 s.
+private let module = "com.microsoft.teams2.modulehost"
+
+@Test func aRecordedCallsMicWithoutItsSpeakerIsAHangUp() {
+    let l = FakeLister()
+    let d = CallDetector(lister: l)
+    let helperSpeaker = proc(teamsId, false, out: true)
+    l.list = [helperSpeaker, proc(module, true, out: true)]
+    #expect(d.detect(recording: .teams) == .teams)
+    l.list = [helperSpeaker, proc(module, true)]  // hung up: the mic stays, the call's speaker is gone
+    #expect(d.detect(recording: .teams) == nil)
+    l.list = [proc(module, true)]
+    #expect(d.detect(recording: nil) == nil)  // stopped: the stale hold starts nothing
+    l.list = [proc(module, true, out: true)]
+    #expect(d.detect(recording: nil) == .teams)  // the next meeting, mic never let go
+}
+
+@Test func micOnlyCountsAsAHangUpOnlyAfterTheRecordedCallPlayed() {
+    let l = FakeLister()
+    let d = CallDetector(lister: l)
+    l.list = [proc(module, true)]
+    #expect(d.detect(recording: nil) == .teams)  // mic only, never played: a call as always
+    #expect(d.detect(recording: .teams) == .teams)
+    l.list = [proc(module, true, out: true)]
+    #expect(d.detect(recording: nil) == .teams)  // played, but nothing recorded it
+    l.list = [proc(module, true)]
+    #expect(d.detect(recording: .teams) == .teams)
+    l.list = [proc(module, true, out: true)]
+    #expect(d.detect(recording: .teams) == .teams)
+    l.list = []
+    #expect(d.detect(recording: .teams) == nil)
+    l.list = [proc(module, true)]  // let go in between: a new hold, mic only
+    #expect(d.detect(recording: nil) == .teams)
 }

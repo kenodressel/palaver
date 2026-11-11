@@ -8,7 +8,7 @@ private let home = ProcessInfo.processInfo.environment["PALAVER_HOME"] ?? "<PALA
 @Test func configDefaultsWithoutAFile() {
     let c = Config.load(URL(fileURLWithPath: "/nonexistent/config.toml"), environment: [:])
     #expect(c.outputDir.path == home + "/Meetings/Recordings")
-    #expect(c.retentionDays == 14 && c.maxSessionHours == 4 && c.gracePeriodSeconds == 10)
+    #expect(c.retentionDays == 14 && c.maxSessionHours == 4 && c.gracePeriodSeconds == 5)
     #expect(c.recordSlack && c.processingLive && c.notesEnabled && c.calendarEnabled)
     #expect(c.notesEngine == "local" && c.notionMode == "page" && c.userName == "User" && c.notesModel == "sonnet")
     #expect(!c.notionAutoSync)  // no token: nothing to upload to
@@ -87,7 +87,7 @@ private let home = ProcessInfo.processInfo.environment["PALAVER_HOME"] ?? "<PALA
         key without equals
         = 3
         """, environment: [:])
-    #expect(c.maxSessionHours == 4 && c.gracePeriodSeconds == 10 && c.recordSlack)
+    #expect(c.maxSessionHours == 4 && c.gracePeriodSeconds == 5 && c.recordSlack)
     #expect(c.retentionDays == 3)
     #expect(c.notesEngine == "local" && c.notionMode == "page")
     #expect(c.memory.isEmpty)

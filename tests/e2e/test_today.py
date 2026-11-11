@@ -13,7 +13,7 @@ import pytest
 from playwright.sync_api import expect  # noqa: E402
 
 from .helpers import cmd, expect_toast, goto, hash_of, heading, list_item, open_meeting, undo_in_toast  # noqa: E402
-from .recordings import A, B, C, LIVE  # noqa: E402
+from .recordings import A, B, C, LIVE, live_part  # noqa: E402
 
 pytestmark = pytest.mark.e2e
 
@@ -269,6 +269,45 @@ def test_a_poll_keeps_today_as_it_is_and_the_focus_where_it_was(page, shared_ser
     # Nothing changed: nothing rebuilt, so no card fades in again.
     assert page.evaluate("""[...document.querySelectorAll('#main .live-now, #main .need-card, #main .recent .item')]
       .every((el) => el.__mark === 1)""")
+
+
+def test_recents_dots_come_with_the_needs_not_with_the_next_poll(page, shared_server):
+    """What needs the user follows the list (a fresh server takes a while for it): once it is in, Recent shows its
+    dots, and the next poll rebuilds nothing."""
+    held, let_go = [], []
+    page.route("**/api/needs", lambda route: route.continue_() if let_go else held.append(route))
+    goto(page, shared_server)
+    recent = page.locator(f'#main .recent .item[data-id="{A}"]')
+    expect(recent).to_be_visible()
+    page.wait_for_function("window.__requests > 0")  # the needs, asked for
+    expect(recent.locator(".needs-dot")).to_have_count(0)
+    let_go.append(True)
+    for route in held:
+        route.continue_()
+    expect(recent.locator(".needs-dot")).to_have_count(1)
+    expect(page.locator("#main .need-card").first).to_be_visible()
+    page.evaluate("for (const el of document.querySelectorAll('#main .recent .item')) el.__mark = 1")
+    page.evaluate("window.palaver.poll()")
+    page.wait_for_timeout(500)
+    assert page.evaluate("[...document.querySelectorAll('#main .recent .item')].every((el) => el.__mark === 1)")
+
+
+def test_the_call_being_recorded_is_still_live_after_a_minute(app_server):
+    """A module's server is there for all of its tests, a minute and more on a loaded Mac: its call stays one being
+    recorded, as the recorder keeps writing to its .part file (one untouched for a minute is a recording that ended,
+    and Today's "Live now" went)."""
+    import os
+    import time
+
+    part = live_part(app_server.root / LIVE)
+    long_ago = time.time() - 120
+    os.utime(part, (long_ago, long_ago))
+    deadline = time.monotonic() + 3 * app_server.PART_EVERY_S
+    while part.stat().st_mtime < time.time() - 60 and time.monotonic() < deadline:
+        time.sleep(0.2)
+    assert part.stat().st_mtime > time.time() - 60, "nobody writes to the call's .part file"
+    live = next(m for m in app_server.api("/api/meetings") if m["id"] == LIVE)
+    assert live["status"] == "recording" and not live["finishing"]
 
 
 def test_an_answer_leaves_a_name_typed_in_another_card(page, app_server):

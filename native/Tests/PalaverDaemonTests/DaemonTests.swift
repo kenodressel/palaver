@@ -122,6 +122,113 @@ extension DaemonTicks {
             #expect(p(h.launched) == [h.rec(0).path, h.rec(1).path])
         }
 
+        @Test func aSlackCallDuringARecordedTeamsCallDoesNotCutIt() async throws {
+            // The tester's report: Slack takes the mic (a call answered, or ringing) while Teams is in its call.
+            let r = try HeldRig(tempDir(), slack: [(300, 1500)], teams: [(10, 1000)], heard: [(10, 1500)])
+            let h = r.h
+            await h.run { $0 > 900 }
+            #expect(h.sessions.items.map { $0!.trigger } == ["teams"])
+            #expect(!h.sessions[0].stopped)
+            await h.run { $0 > 1100 }  // Teams hung up; the Slack call goes on: its own meeting, as before
+            #expect(h.sessions.items.map { $0!.trigger } == ["teams", "slack"])
+            #expect(h.sessions[0].stopped && h.sessions[0].stopReason == "call_ended")
+            await h.run { $0 > 1600 }
+            #expect(h.sessions[1].stopped && p(h.launched) == [h.rec(0).path, h.rec(1).path])
+        }
+
+        @Test func aSlackRingtoneDuringARecordedTeamsCallDoesNotCutIt() async throws {
+            let r = try HeldRig(tempDir(), teams: [(10, 1000)], slackSpeaker: [(300, 330)], heard: [(10, 1000)])
+            await r.h.run { $0 > 900 }
+            #expect(r.h.sessions.count == 1 && !r.h.sessions[0].stopped)
+        }
+
+        @Test func aTeamsCallDuringARecordedMutedHuddleDoesNotCutIt() async throws {
+            let r = try HeldRig(tempDir(), slack: [(10, 100)], teams: [(300, 400)], slackSpeaker: [(100, 1000)],
+                                heard: [(10, 1000)])
+            let h = r.h
+            await h.run { $0 > 900 }
+            #expect(h.sessions.items.map { $0!.trigger } == ["slack"])
+            #expect(!h.sessions[0].stopped)
+            await h.run { $0 > 1100 }
+            #expect(h.sessions.count == 1 && h.sessions[0].stopReason == "call_ended")
+        }
+
+        /// The default grace (config.toml's grace_period_seconds left out), as the app's trigger has it.
+        static let grace = Double(Config().gracePeriodSeconds)
+
+        @Test func theRecordingStopsWithinSecondsOfTheCallsEnd() async throws {
+            let r = try HeldRig(tempDir(), teams: [(10, 500)], heard: [(10, 500)], grace: Self.grace)
+            await r.h.run { $0 > 506 }  // Teams let go at 500
+            #expect(r.h.sessions.count == 1 && r.h.sessions[0].stopped && r.h.sessions[0].stopReason == "call_ended")
+        }
+
+        @Test func aDeviceSwitchReleasingTheMicBrieflySplitsNothing() async throws {
+            let r = try HeldRig(tempDir(), teams: [(10, 300), (303, 600)], heard: [(10, 600)], grace: Self.grace)
+            await r.h.run { $0 > 500 }
+            #expect(r.h.sessions.count == 1 && !r.h.sessions[0].stopped)
+        }
+
+        @Test func meetingAfterMeetingRecordsTwo() async throws {
+            // Leave one Teams meeting, join the next 10 s later: two meetings, not one running on.
+            let r = try HeldRig(tempDir(), teams: [(10, 300), (310, 600)], heard: [(10, 600)], grace: Self.grace)
+            await r.h.run { $0 > 400 }
+            #expect(r.h.sessions.count == 2 && r.h.sessions[0].stopped && !r.h.sessions[1].stopped)
+        }
+
+        // Keno's daemon.log, 2026-11-10 (t = 0 at 15:59:00 for the first meeting, at 16:05:00 for the second).
+        static let helper = "com.microsoft.teams2.helper", module = "com.microsoft.teams2.modulehost"
+        /// Spans of (from, to, helper plays, modulehost's mic, modulehost's speaker).
+        static func teamsAudio(_ spans: [(Double, Double, Bool, Bool, Bool)]) -> @Sendable (Double) -> [AudioProcess] {
+            { now in
+                guard let s = spans.first(where: { $0.0 <= now && now < $0.1 }) else { return [] }
+                var out: [AudioProcess] = []
+                if s.2 { out.append(AudioProcess(bundleId: helper, runningInput: false, runningOutput: true)) }
+                if s.3 || s.4 { out.append(AudioProcess(bundleId: module, runningInput: s.3, runningOutput: s.4)) }
+                return out
+            }
+        }
+
+        @Test func aTeamsHangUpStopsAboutFiveSecondsLaterThoughTeamsKeepsTheMic() async throws {
+            // 15:59:57 helper speaker + modulehost mic+speaker; 16:00:00 the speaker goes (the hang-up);
+            // 16:00:08 modulehost mic alone; 16:00:09 none. Before: stopped at 16:00:19.
+            let audio = Self.teamsAudio([(10, 60, true, true, true), (60, 68, true, true, false), (68, 69, false, true, false)])
+            let r = try HeldRig(tempDir(), heard: [(10, 60)], grace: Self.grace, audio: audio)
+            await r.h.run { $0 > 64 }
+            #expect(r.h.sessions.count == 1 && !r.h.sessions[0].stopped)
+            await r.h.run { $0 > 66 }  // 2 s ticks here; the app's 1 s tick stops at 16:00:05
+            #expect(r.h.sessions[0].stopped && r.h.sessions[0].stopReason == "call_ended")
+            await r.h.run { $0 > 200 }
+            #expect(r.h.sessions.count == 1)  // the mic Teams kept starts nothing
+        }
+
+        @Test func teamsEndingWithOnlyTheHelperPlayingStopsAfterTheGrace() async throws {
+            // ...16:05:11 modulehost mic+speaker; 16:22:47 only teams2.helper's speaker. Before: 16:22:57.
+            let audio = Self.teamsAudio([(10, 1067, true, true, true), (1067, 1100, true, false, false)])
+            let r = try HeldRig(tempDir(), heard: [(10, 1067)], grace: Self.grace, audio: audio)
+            await r.h.run { $0 > 1072 }
+            #expect(!r.h.sessions[0].stopped)
+            await r.h.run { $0 > 1074 }  // first seen at the 1068 tick: 5-6 s after it, as the hang-up
+            #expect(r.h.sessions.count == 1 && r.h.sessions[0].stopped && r.h.sessions[0].stopReason == "call_ended")
+        }
+
+        @Test func teamsFlickeringToMicOnlyMidCallStopsNothing() async throws {
+            // 16:04:20 modulehost mic, 16:04:21 modulehost speaker, 16:04:22 mic+speaker; 16:05:10 mic,
+            // 16:05:11 mic+speaker. Here each 2 s (the ticks), and once 4 s of mic only.
+            let audio = Self.teamsAudio([(10, 300, true, true, true), (300, 302, true, true, false), (302, 304, true, false, true),
+                                         (304, 400, true, true, true), (400, 402, true, true, false), (402, 500, true, true, true),
+                                         (500, 504, true, true, false), (504, 900, true, true, true)])
+            let r = try HeldRig(tempDir(), heard: [(10, 900)], grace: Self.grace, audio: audio)
+            await r.h.run { $0 > 800 }
+            #expect(r.h.sessions.count == 1 && !r.h.sessions[0].stopped)
+        }
+
+        @Test func theNextTeamsMeetingWhileTeamsStillHeldTheMicIsItsOwn() async throws {
+            let audio = Self.teamsAudio([(10, 60, true, true, true), (60, 100, true, true, false), (100, 600, true, true, true)])
+            let r = try HeldRig(tempDir(), heard: [(10, 60), (100, 600)], grace: Self.grace, audio: audio)
+            await r.h.run { $0 > 200 }
+            #expect(r.h.sessions.count == 2 && r.h.sessions[0].stopped && !r.h.sessions[1].stopped)
+        }
+
         @Test func aSlackHuddleIsRecordedAsOne() async throws {
             let h = try Harness(tempDir(), activity: slack { 10 <= $0 && $0 < 700 })
             await h.run { $0 > 760 }

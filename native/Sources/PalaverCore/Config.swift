@@ -10,7 +10,12 @@ public struct Config: Equatable, Sendable {
     public var outputDir = URL(fileURLWithPath: Config.expandTilde("~/Meetings/Recordings"), isDirectory: true)
     public var retentionDays = 14
     public var maxSessionHours = 4
-    public var gracePeriodSeconds = 10
+    /// How long the call app must have let go of its call (Teams: the mic; Slack: the mic and, muted,
+    /// the speaker; either: the mic held without its call's speaker, a hang-up, CallDetector) before
+    /// the recording stops. Covers a device switch or an audio restart, which let
+    /// go for a second or two; the app's 1 s tick adds up to 1 s. Was 10 (stop 10-11 s after the call
+    /// ended; meeting after meeting within 10 s ran on as one).
+    public var gracePeriodSeconds = 5
     public var recordSlack = true
     public var processingLive = true
     public var notionMode = "page"

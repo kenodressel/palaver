@@ -51,8 +51,9 @@ struct Ending {
 
 /// Everything the daemon works with. Tests pass fakes; `DaemonFactory` the real ones.
 public struct DaemonDeps {
-    /// The call app in a call now; may throw (the last answer then stands).
-    public var detect: () throws -> CallApp?
+    /// The call app in a call now; may throw (the last answer then stands). Given the app whose
+    /// call is recorded (nil: none, or a manual recording): it stays the call while it is in it.
+    public var detect: (CallApp?) throws -> CallApp?
     /// The detector's ignored holds (#7): ignore an app's hold until it lets go; those ignored now.
     public var ignore: ((String) -> Void)?
     public var ignored: () -> [String] = { [] }
@@ -111,7 +112,7 @@ public struct DaemonDeps {
     public var pid: Int32 = getpid()
     public var palaverAlive: (Int32?) -> Bool = { Processes.palaverAlive($0) }
 
-    public init(detect: @escaping () throws -> CallApp?, newSession: @escaping (String) -> RecordingSessionLike,
+    public init(detect: @escaping (CallApp?) throws -> CallApp?, newSession: @escaping (String) -> RecordingSessionLike,
                 launchProcessing: @escaping (URL) throws -> WorkerProcess, statePath: URL, trigger: Trigger,
                 clock: @escaping () -> Double) {
         self.detect = detect
@@ -515,7 +516,8 @@ public final class Daemon {
     private func detectCall() -> CallApp? {
         let found: CallApp?
         do {
-            found = try deps.detect()
+            // Another app's call (a Slack call ringing or answered) never cuts the one recorded.
+            found = try deps.detect(session != nil && !manual ? CallApp(rawValue: callApp) : nil)
         } catch {
             if !detectorFailing { warning("call detection failed; keeping the last state: \(error)") }
             detectorFailing = true

@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pytest
 
-from .recordings import A, USER, build_recordings
+from .recordings import A, LIVE, USER, build_recordings, live_part
 
 # Every page runs this first: media is muted (no test is ever heard), and the
 # clipboard is a stand-in (no test touches the real pasteboard).
@@ -46,6 +46,20 @@ PAGE_SETUP = """
     Object.defineProperty(navigator, "clipboard", { configurable: true,
       value: { writeText: async (text) => { window.__copied.push(String(text)); } } });
   } catch (e) { /* the page's fallback is execCommand("copy") */ }
+  // The page's open requests, for helpers.reload: WebKit reports a fetch a reload cuts off as a page error. Once
+  // that reload is decided (__leaving) the page starts none until it goes (pagehide, where it saves what is typed).
+  window.__requests = 0;
+  window.__leaving = false;
+  const fetch0 = window.fetch;
+  window.fetch = function (...args) {
+    if (window.__leaving) return new Promise(() => {});
+    window.__requests += 1;
+    const answer = fetch0.apply(window, args);
+    const done = () => { window.__requests -= 1; };
+    answer.then(done, done);
+    return answer;
+  };
+  window.addEventListener("pagehide", () => { window.__leaving = false; });
 })();
 """
 
@@ -378,6 +392,20 @@ class SwiftServed(_Api):
         self._runs_done: set[str] = set()
         self._watcher: threading.Thread | None = None
         self._closed = threading.Event()
+        if live_worker:  # the call is being recorded while the server runs, however long a module's tests take
+            threading.Thread(target=self._keep_recording, name="live-part", daemon=True).start()
+
+    # The server takes a .part file not written to for a minute (MeetingStatus.livePartSeconds) for a recording that
+    # ended: the recorder writes to it every few hundred ms. Gone (the test ended the call): left gone.
+    PART_EVERY_S = 5.0
+
+    def _keep_recording(self) -> None:
+        part = live_part(self.root / LIVE)
+        while not self._closed.wait(self.PART_EVERY_S):
+            try:
+                os.utime(part)
+            except FileNotFoundError:
+                pass
 
     @property
     def model_runs(self) -> list[list[str]]:

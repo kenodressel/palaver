@@ -91,13 +91,18 @@ def make_meeting(folder: Path, *, start: datetime, lines: list[Line], duration: 
     return paths
 
 
+def live_part(folder: Path) -> Path:
+    """The recording's system track while it is being written (SwiftServed keeps it written to)."""
+    return Path(str(RecordingPaths(folder).system_wav) + ".part")
+
+
 def make_live(folder: Path, *, start: datetime, pid: int | None) -> RecordingPaths:
     """A meeting being recorded: what the live worker has so far (live.json),
     a .part file, and a live worker that is "running" (``pid``; None: no
     live.pid, as in the parity corpus)."""
     paths = RecordingPaths(folder)
     folder.mkdir(parents=True)
-    Path(str(paths.system_wav) + ".part").write_bytes(b"\0" * 100)
+    live_part(folder).write_bytes(b"\0" * 100)
     paths.meta.write_text(json.dumps({"start_time": start.isoformat()}))
     if pid is not None:
         (folder / "live.pid").write_text(str(pid))

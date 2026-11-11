@@ -5,7 +5,9 @@ import pytest
 
 from playwright.sync_api import expect  # noqa: E402
 
-from .helpers import cmd, goto, hash_of, heading, list_item, open_meeting, reload, show_tab, unfocus  # noqa: E402
+from .helpers import (  # noqa: E402
+    RELOAD_WHEN_QUIET, cmd, goto, hash_of, heading, list_item, open_meeting, reload, show_tab, unfocus,
+)
 from .recordings import A, B, LIVE  # noqa: E402
 
 pytestmark = pytest.mark.e2e
@@ -91,6 +93,32 @@ def test_a_reload_stays_on_the_page_and_tab(page, shared_server):
     expect(_tab(page, "Transcript")).to_have_attribute("aria-selected", "true")
     assert page.evaluate("window.palaver.command('back')")  # the history is still there (a swipe, ⌘[ or the menu)
     expect(heading(page)).to_have_text("Team standup")
+
+
+def test_the_tests_reload_waits_for_an_open_request_and_cuts_none_off(page, shared_server):
+    """helpers.reload: a request still open when the page reloads is a page error in WebKit (the guard fails the
+    test), and the page polls every 3 s. The reload waits for it; the page reported nothing (the guard)."""
+    goto(page, shared_server)
+    held, let_go = [], []
+
+    def ping(route):  # a ping stays open until let go
+        if let_go:
+            route.fulfill(json={"ok": True})
+        else:
+            held.append(route)
+
+    page.route("**/api/ping", ping)
+    page.evaluate("window.__mark = 1; fetch('/api/ping'); 0")  # not awaited
+    page.wait_for_function("window.__requests > 0")
+    with page.expect_navigation():
+        page.evaluate(RELOAD_WHEN_QUIET)
+        page.wait_for_timeout(400)
+        assert page.evaluate("window.__mark") == 1  # not reloaded while the ping is open
+        let_go.append(True)
+        for route in held:
+            route.fulfill(json={"ok": True})
+    assert page.evaluate("window.__mark") is None  # a new page
+    expect(page.locator("#main > *").first).to_be_visible()
 
 
 def test_cmd_bracket_in_a_text_field_is_the_fields(page, shared_server):

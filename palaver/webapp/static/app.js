@@ -5773,6 +5773,11 @@ async function refreshToday() {
   const rec = state.meetings.find((m) => m.status === "recording");
   const live = rec ? await api(`/api/meetings/${encodeURIComponent(rec.id)}`).catch(() => state.todayLive) : null;
   state.todayLive = live?.live ? live : null;
+  patchToday();
+}
+
+// The parts of Today whose content changed since built (Recent's dots follow the needs as they arrive).
+function patchToday() {
   if (state.view !== "today") return;
   const now = todaySignatures();
   for (const [part, sig] of Object.entries(now)) {
@@ -6125,7 +6130,10 @@ function showNeeds(before, relist = false) {
   badge.title = count ? `${state.needs.count} ${state.needs.count === 1 ? "meeting needs" : "meetings need"} you` : "";
   if (JSON.stringify(before) === JSON.stringify(state.needs)) return;
   if (relist) renderList();  // the dots
-  if (state.view === "today") patchNeeds();
+  if (state.view === "today") {
+    patchNeeds();
+    patchToday();  // Recent's dots
+  }
   const strip = $("#main .meeting > .needs-strip");
   if (strip && state.view === "meetings" && state.meeting) strip.replaceWith(renderNeedsStrip(state.meeting));
 }

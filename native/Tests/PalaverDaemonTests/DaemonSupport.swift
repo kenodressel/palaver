@@ -108,6 +108,8 @@ final class Harness {
     let sessions: Sessions
     let duration: Double
     var activity: (Double) throws -> CallApp?
+    /// The call app the daemon said it records, at its last detection.
+    var recording: CallApp?
     var launched: [URL] = []
     var notifications: [(title: String, message: String, open: String?)] = []
     var logs: [(level: String, message: String)] = []
@@ -130,7 +132,7 @@ final class Harness {
         self.activity = activity
         launchProcessing = { _ in FakeWorker(done: { true }) }
         var deps = DaemonDeps(
-            detect: { [unowned self] in try self.activity(self.clock) },
+            detect: { [unowned self] recording in self.recording = recording; return try self.activity(self.clock) },
             newSession: { [unowned self] trigger in self.makeSession(trigger) },
             launchProcessing: { [unowned self] folder in
                 self.launched.append(folder)
@@ -252,13 +254,17 @@ final class Clock: @unchecked Sendable {
 let SLACK = "com.tinyspeck.slackmacgap.helper"
 let TEAMS = "com.microsoft.teams2.modulehost"
 
-/// A detector over fake processes: Slack and Teams hold the mic in these (start, end) spans.
-func apps(slack: [(Double, Double)] = [], teams: [(Double, Double)] = []) -> (CallDetector, Clock) {
+/// A detector over fake processes: Slack and Teams hold the mic in these (start, end) spans; in
+/// `slackSpeaker`'s, Slack only plays (a muted huddle, a ringtone). `audio`: more processes at a time.
+func apps(slack: [(Double, Double)] = [], teams: [(Double, Double)] = [],
+          slackSpeaker: [(Double, Double)] = [],
+          audio: @escaping @Sendable (Double) -> [AudioProcess] = { _ in [] }) -> (CallDetector, Clock) {
     let clock = Clock()
     let lister = FakeLister {
         let now = clock.now
-        var out: [AudioProcess] = []
+        var out: [AudioProcess] = audio(now)
         if slack.contains(where: { $0.0 <= now && now < $0.1 }) { out.append(AudioProcess(bundleId: SLACK, runningInput: true, runningOutput: true)) }
+        else if slackSpeaker.contains(where: { $0.0 <= now && now < $0.1 }) { out.append(AudioProcess(bundleId: SLACK, runningInput: false, runningOutput: true)) }
         if teams.contains(where: { $0.0 <= now && now < $0.1 }) { out.append(AudioProcess(bundleId: TEAMS, runningInput: true, runningOutput: true)) }
         return out
     }
@@ -271,9 +277,10 @@ final class HeldRig {
     let h: Harness
     let detector: CallDetector
 
-    init(_ dir: URL, slack: [(Double, Double)] = [], teams: [(Double, Double)] = [], heard: [(Double, Double)] = [],
-         talking: Bool = false, sessions: Sessions = Sessions(), start: Double = 0) throws {
-        let (detector, dclock) = apps(slack: slack, teams: teams)
+    init(_ dir: URL, slack: [(Double, Double)] = [], teams: [(Double, Double)] = [], slackSpeaker: [(Double, Double)] = [],
+         heard: [(Double, Double)] = [], talking: Bool = false, sessions: Sessions = Sessions(), start: Double = 0,
+         grace: Double = 10, audio: @escaping @Sendable (Double) -> [AudioProcess] = { _ in [] }) throws {
+        let (detector, dclock) = apps(slack: slack, teams: teams, slackSpeaker: slackSpeaker, audio: audio)
         dclock.now = start
         self.detector = detector
         var hh: Harness?
@@ -285,8 +292,8 @@ final class HeldRig {
             let last = (heard.map(\.1).filter { $0 <= now } + [t0]).max()!
             return max(0, now - max(last, t0))
         }
-        h = try Harness(dir, activity: { _ in detector.detect() }, sessions: sessions, start: start,
-                        trigger: Trigger(startAfter: 4, grace: 10, maxSession: 4 * 3600)) { deps, _ in
+        h = try Harness(dir, activity: { _ in detector.detect(recording: hh?.recording) }, sessions: sessions, start: start,
+                        trigger: Trigger(startAfter: 4, grace: grace, maxSession: 4 * 3600)) { deps, _ in
             deps.ignore = { detector.ignore(named: $0) }
             deps.ignored = { detector.ignored.map(\.rawValue) }
             deps.othersSilence = { othersQuiet() }

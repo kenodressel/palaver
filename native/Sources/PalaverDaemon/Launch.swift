@@ -311,7 +311,7 @@ public enum DaemonFactory {
         facts.searchMeaning = { settings.searchMeaning }
         facts.calendarEnabled = { config.calendarEnabled }
         var deps = DaemonDeps(
-            detect: { detector.detect() },
+            detect: { detector.detect(recording: $0) },
             newSession: { trigger in
                 RecordingSession(outputDir: config.outputDir, trigger: trigger,
                                  capture: { folder, sessionLog in LiveCapture(folder: folder, log: sessionLog, sources: captureSources()) },

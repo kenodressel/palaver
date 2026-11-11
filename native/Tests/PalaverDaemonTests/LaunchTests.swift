@@ -221,7 +221,7 @@ func build(autoSync: Bool = false, notes: Bool = true, answer: AutoSyncAnswer? =
     @Test func buildDaemonKeepsItsStateAtTheAppSupportPath() async throws {
         let b = try build(autoSync: false)
         #expect(b.daemon.deps.statePath == testPaths(b.home).daemonJson)
-        #expect(b.daemon.trigger.grace == 10 && b.daemon.trigger.maxSession == 4 * 3600 && b.daemon.trigger.startAfter == 4)
+        #expect(b.daemon.trigger.grace == 5 && b.daemon.trigger.maxSession == 4 * 3600 && b.daemon.trigger.startAfter == 4)
         let custom = try build(autoSync: false) { $0.gracePeriodSeconds = 20; $0.maxSessionHours = 2 }
         #expect(custom.daemon.trigger.grace == 20 && custom.daemon.trigger.maxSession == 2 * 3600)
     }

@@ -87,8 +87,12 @@ private func isApp(_ p: AudioProcess, _ prefixes: [String]) -> Bool {
     return prefixes.contains { id.hasPrefix($0) }
 }
 
-/// Which app is in a call right now: teams, slack or nil. When both hold the mic, the one that
-/// took it last (Teams may keep it after a hang-up while the huddle that follows is the call).
+/// Which app is in a call right now: teams, slack or nil. The call being recorded stays the call
+/// while its app is in it, whatever another app does meanwhile (a Slack call ringing or answered
+/// during a Teams call). Otherwise, when both hold the mic, the one that took it last (Teams may
+/// keep it after a hang-up while the huddle that follows is the call). A recorded call whose app
+/// held the mic with its speaker and now holds the mic alone has hung up: that hold is no call
+/// until the app plays again or lets go of the mic.
 public final class CallDetector: @unchecked Sendable {
     private let lister: ProcessLister
     private let teamsOn: @Sendable () -> Bool
@@ -102,6 +106,10 @@ public final class CallDetector: @unchecked Sendable {
     private var ignoredApps: [CallApp: Double?] = [:]
     private var failing = false
     private var last: CallApp?
+    /// The apps whose call, recorded, played through the process that holds the mic (Teams'
+    /// modulehost: mic+speaker), until they let go of the mic.
+    private var played: Set<CallApp> = []
+    private var hungUp: Set<CallApp> = []
 
     public init(lister: ProcessLister = CoreAudioProcessLister(),
                 teams: @escaping @Sendable () -> Bool = { true },
@@ -134,7 +142,8 @@ public final class CallDetector: @unchecked Sendable {
 
     public func callAsFunction() -> CallApp? { detect() }
 
-    public func detect() -> CallApp? {
+    /// `recording`: the app whose call is recorded now (nil: none, or a manual recording).
+    public func detect(recording: CallApp? = nil) -> CallApp? {
         lock.lock(); defer { lock.unlock() }
         let processes: [AudioProcess]
         do {
@@ -144,19 +153,33 @@ public final class CallDetector: @unchecked Sendable {
             if !failing { log("call detection failed: \(error)"); failing = true }
             return last  // keep the last state
         }
-        last = evaluate(processes)
+        last = evaluate(processes, recording: recording)
         return last
     }
 
-    private func evaluate(_ processes: [AudioProcess]) -> CallApp? {
+    private func evaluate(_ processes: [AudioProcess], recording: CallApp?) -> CallApp? {
         logChanges(processes)
         let slackEnabled = slackOn()
         let slack = slackEnabled ? processes.filter { isApp($0, slackBundlePrefixes) } : []
+        let mics: [CallApp: [AudioProcess]] = [
+            .teams: teamsOn() ? processes.filter { $0.runningInput && isApp($0, teamsBundlePrefixes) } : [],
+            .slack: slack.filter { $0.runningInput },
+        ]
         var holding = Set<CallApp>()
-        if teamsOn(), processes.contains(where: { $0.runningInput && isApp($0, teamsBundlePrefixes) }) {
-            holding.insert(.teams)
+        for (app, held) in mics {
+            if held.isEmpty { played.remove(app); hungUp.remove(app); continue }
+            // A call plays through the process that holds the mic; at a hang-up its speaker goes
+            // while Teams keeps the mic ~9 s (daemon.log, 2026-11-10). Mid-call it drops to mic
+            // only for 1-2 s: the trigger's grace (5 s) covers that, and counts the hang-up from here.
+            if held.contains(where: { $0.runningOutput }) {
+                if recording == app { played.insert(app) }
+                hungUp.remove(app)
+            } else if played.contains(app) {
+                if hungUp.insert(app).inserted { log("\(app.rawValue) holds the mic without its call's speaker: hung up, if it lasts") }
+                continue
+            }
+            holding.insert(app)
         }
-        if slack.contains(where: { $0.runningInput }) { holding.insert(.slack) }
         let now = clock()
         for (app, since) in ignoredApps {
             if holding.contains(app) {
@@ -173,6 +196,14 @@ public final class CallDetector: @unchecked Sendable {
         holding.subtract(ignoredApps.keys)
         micSince = Dictionary(uniqueKeysWithValues: holding.map { ($0, micSince[$0] ?? now) })
         if holding.contains(.slack) { inHuddle = true }
+        // Muted in a huddle: the others still play.
+        let huddle = holding.contains(.slack)
+            || (inHuddle && ignoredApps[.slack] == nil && slack.contains(where: { $0.runningOutput }))
+        switch recording {
+        case .teams? where holding.contains(.teams): return .teams
+        case .slack? where huddle: return .slack
+        default: break
+        }
         if !holding.isEmpty {
             // Last taker wins; a tie goes to Teams.
             return holding.max { a, b in
@@ -180,10 +211,8 @@ public final class CallDetector: @unchecked Sendable {
                 return sa != sb ? sa < sb : (a == .slack && b == .teams)
             }
         }
+        if huddle { return .slack }
         if !slackEnabled { return nil }
-        if inHuddle, ignoredApps[.slack] == nil, slack.contains(where: { $0.runningOutput }) {
-            return .slack  // muted: the others still play
-        }
         inHuddle = false
         return nil
     }

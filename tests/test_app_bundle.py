@@ -82,6 +82,15 @@ def test_build_app_layout(tmp_path: Path, monkeypatch):
     assert calls[-1][:4] == ["codesign", "--force", "--sign", "-"]
 
 
+def test_the_sign_identity_is_ad_hoc_in_tests_and_the_certificate_when_named(monkeypatch):
+    """The suite runs without PALAVER_SIGN_IDENTITY (tests/conftest.py), whatever the shell exported."""
+    import os
+
+    assert "PALAVER_SIGN_IDENTITY" not in os.environ and app_bundle.sign_identity() == "-"
+    monkeypatch.setenv("PALAVER_SIGN_IDENTITY", "Palaver Release")
+    assert app_bundle.sign_identity() == "Palaver Release"
+
+
 def test_store_tokens_copies_env_tokens_to_keychain(monkeypatch):
     import keyring
 

@@ -18,11 +18,25 @@ def goto(page: Page, served, where: str = "") -> None:
     page.locator("#list .item").first.wait_for(state="attached")  # the list is hidden beside People etc.
 
 
+# In the page (conftest.PAGE_SETUP counts its requests): reload once none is open (at most 5 s), deciding and
+# reloading in one task, so that no poll starts one in between; from then on it starts none.
+RELOAD_WHEN_QUIET = """() => {
+  const since = Date.now();
+  const go = () => {
+    if (window.__requests > 0 && Date.now() - since < 5000) return setTimeout(go, 20);
+    window.__leaving = true;
+    location.reload();
+  };
+  setTimeout(go, 0);
+}"""
+
+
 def reload(page: Page) -> None:
     """Reload once the page's own requests are answered: WebKit reports a fetch the reload cuts off as a page error
-    ("… due to access control checks")."""
-    page.wait_for_load_state("networkidle")
-    page.reload()
+    ("… due to access control checks"). Waiting for "networkidle" was not enough: it returns at once once the page
+    was idle, and the pollers (every 3 s) start requests again."""
+    with page.expect_navigation():
+        page.evaluate(RELOAD_WHEN_QUIET)
 
 
 def open_meeting(page: Page, served, mid: str, tab: str | None = None) -> None:

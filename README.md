@@ -303,7 +303,7 @@ name = "Timo"
 [recording]
 output_dir = "~/Meetings/Recordings"  # where recordings go
 slack = true                          # record Slack huddles (until changed in Settings)
-grace_period_seconds = 10             # stop this long after the call ends
+grace_period_seconds = 5              # stop this long after the call ends
 max_session_hours = 4                 # stop a recording after this long
 
 [calendar]
