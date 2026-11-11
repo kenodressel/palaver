@@ -191,7 +191,7 @@ public final class ServerApp: @unchecked Sendable {
         #if DEBUG
         return URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("palaver/webapp/static", isDirectory: true)
+            .appendingPathComponent("web", isDirectory: true)
         #else
         return executable.deletingLastPathComponent().appendingPathComponent("static", isDirectory: true)
         #endif

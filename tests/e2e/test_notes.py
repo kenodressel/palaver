@@ -9,6 +9,7 @@ from playwright.sync_api import expect  # noqa: E402
 
 from .helpers import cmd, expect_toast, list_item, open_meeting, unfocus  # noqa: E402
 from .recordings import A, B  # noqa: E402
+from .stores import RecordingPaths, jobs_root, launch_job, load_notes  # noqa: E402
 
 pytestmark = pytest.mark.e2e
 
@@ -107,10 +108,7 @@ def test_notes_a_restarted_server_finds_running_show_until_they_are_done(page, a
     notes once it is done."""
     import sys
 
-    from palaver import model_jobs
-
-    root = model_jobs.jobs_root(app_server.root)
-    model_jobs.launch(root, "notes", A, [sys.executable, "-c", "import time; time.sleep(4)"])
+    launch_job(jobs_root(app_server.root), "notes", A, [sys.executable, "-c", "import time; time.sleep(4)"])
     open_meeting(page, app_server, A)
     bar = page.locator("#main .notes .writing")
     expect(bar).to_contain_text("Writing notes", timeout=10_000)
@@ -122,13 +120,8 @@ def test_notes_a_restarted_server_finds_running_show_until_they_are_done(page, a
     assert app_server.notes.calls == []  # no second run
 
 
-def test_the_models_notes_are_written_shown_and_up_to_date_for_python(page, app_server):
+def test_the_models_notes_are_written_shown_and_up_to_date(page, app_server):
     import json
-
-    from palaver import notes
-    from palaver.models import Utterance
-    from palaver.paths import RecordingPaths
-    from palaver.speakers import without_ignored
 
     app_server.notes.write({
         "title": "Rollout plan", "summary": "The rollout moves to Friday.",
@@ -140,10 +133,9 @@ def test_the_models_notes_are_written_shown_and_up_to_date_for_python(page, app_
     expect(page.locator("#main .notes h2", has_text="Rollout timing")).to_be_visible()
     expect(page.locator("#main .notes")).to_contain_text("Tell the customer")
     paths = RecordingPaths(app_server.root / A)
-    written = notes.load(paths)
+    written = load_notes(paths)
     assert written["title"] == "Rollout plan" and written["decisions"] == ["Ship on Friday"]
     assert {"transcript_hash", "generated_at"} <= set(written)
-    utterances = [Utterance.from_dict(d) for d in json.loads(paths.transcript_json.read_text())]
-    assert not notes.is_stale(paths, without_ignored(paths, utterances))
+    assert app_server.api(f"/api/meetings/{A}")["notes_stale"] is False  # up to date with the transcript
     events = [json.loads(line).get("event") for line in paths.session_log.read_text().splitlines()]
     assert "notes_start" in events and "notes_done" in events

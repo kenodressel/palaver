@@ -233,16 +233,15 @@ final class MeetingsWindow: NSObject, NSWindowDelegate, WKUIDelegate, WKScriptMe
     }
 }
 
-/// The window's server for the app (palaver-server, or Python's `webapp-serve` when `server` is nil):
-/// supervised, and a restarted server reloads the window's page where it was (process.py's on_ready →
+/// The window's server for the app (palaver-server): supervised, and a restarted server reloads the window's page where it was (process.py's on_ready →
 /// window.reload_in_place).
 @MainActor
-func startWebServer(window: MeetingsWindow, python: String, server: String?, staticDir: URL?, cliOptions: [String],
+func startWebServer(window: MeetingsWindow, server: String, staticDir: URL?, cliOptions: [String],
                     appSocket: URL, env: [String: String]? = nil, log: @escaping (String) -> Void) throws -> WebSupervisor {
     let listener = try WebListener.forWindow(log: log)
     let base = "http://127.0.0.1:\(listener.port)/"
-    let supervisor = WebSupervisor.forApp(python: python, cliOptions: cliOptions, appSocket: appSocket, listener: listener,
-                                          server: server, staticDir: staticDir,
+    let supervisor = WebSupervisor.forApp(server: server, cliOptions: cliOptions, appSocket: appSocket, listener: listener,
+                                          staticDir: staticDir,
                                           env: env, log: log, onReady: { restarted in
                                               guard restarted else { return }
                                               DispatchQueue.main.async { MainActor.assumeIsolated { _ = window.reloadInPlace(base: base) } }

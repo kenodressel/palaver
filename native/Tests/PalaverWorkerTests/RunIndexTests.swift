@@ -19,14 +19,14 @@ esac
 exit 0
 """
 
-private func fakePython(_ t: Temp, _ extra: [String: String] = [:]) -> (PythonHelper, () -> [String]) {
+private func fakePython(_ t: Temp, _ extra: [String: String] = [:]) -> (HelperProgram, () -> [String]) {
     t.write("python", PYTHON)
     chmod(t.file("python").path, 0o755)
     var env = testEnv(t)
     env["CALLS"] = t.file("calls.log").path
     for (k, v) in extra { env[k] = v }
     let calls = { ((try? String(contentsOf: t.file("calls.log"), encoding: .utf8)) ?? "").split(separator: "\n").map(String.init) }
-    return (PythonHelper(python: t.file("python").path, options: ["--config", "/c/config.toml", "--no-notify"], env: env), calls)
+    return (HelperProgram(program: t.file("python").path, options: ["--config", "/c/config.toml", "--no-notify"], env: env), calls)
 }
 
 /// One dimension per word class: enough for an index to be written.
@@ -63,8 +63,8 @@ private final class Said: @unchecked Sendable { var lines: [String] = [] }
         let services = Services()
         services.on("POST https://api.notion.com/v1/pages", (200, #"{"id": "p1", "url": "https://www.notion.so/p1"}"#))
         var setup = h.setup(fake(#"{"transcribe": {"mic.wav": [{"start": 0.0, "end": 1.0, "text": "Hallo.", "speaker": null, "words": []}]}}"#))
-        setup.python = python
-        setup.lm = python.python  // palaver-lm: the same script
+        setup.helper = python
+        setup.lm = python.program  // palaver-lm: the same script
         setup.cloud = CloudServices(keys: FileKeyStore(t.file("keychain.json")), http: services.client, configToml: t.file("config.toml"),
                                     env: ["NOTION_TOKEN": "secret_notion_x"])
         // A failed notes run is logged; the upload goes on.
@@ -88,7 +88,7 @@ private final class Said: @unchecked Sendable { var lines: [String] = [] }
         try FileManager.default.createDirectory(at: bare.folder, withIntermediateDirectories: true)
         let (python, calls) = fakePython(t)
         var setup = h.setup(fake("{}"))
-        setup.python = python
+        setup.helper = python
         #expect(try await Run.run(bare.folder, setup) == 2)  // no meta.json, no audio to rebuild it from
         #expect(calls().isEmpty)
         #expect(ProcessState.read(bare)?["reason"] == .string("error"))

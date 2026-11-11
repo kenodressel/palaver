@@ -8,10 +8,9 @@ import pytest
 
 from playwright.sync_api import expect  # noqa: E402
 
-from palaver.notes import NotesError  # noqa: E402
-
 from .helpers import goto, open_meeting  # noqa: E402
 from .recordings import A, LIVE  # noqa: E402
+from .stores import PENDING, update_settings  # noqa: E402
 
 pytestmark = pytest.mark.e2e
 
@@ -83,7 +82,7 @@ def test_not_enough_memory_for_the_local_model_is_said_plainly(page, app_server)
 
 def test_a_failing_model_says_why(page, app_server):
     page.guard.allow(r"status of 502")
-    app_server.model.answer = NotesError("Anthropic API: the key was refused")
+    app_server.model.answer = RuntimeError("Anthropic API: the key was refused")
     goto(page, app_server, f"#/{LIVE}")
     page.get_by_role("button", name="Best next question (Gemma, on this Mac)").click()
     page.get_by_role("button", name="Run anyway").click()
@@ -91,9 +90,7 @@ def test_a_failing_model_says_why(page, app_server):
 
 
 def test_without_a_model_the_button_is_off_and_says_why(page, app_server):
-    from palaver import providers, settings
-
-    settings.update({"engines": {"coach": providers.PENDING}})
+    update_settings({"engines": {"coach": PENDING}})
     goto(page, app_server, f"#/{LIVE}")
     expect(page.get_by_role("button", name="Best next question")).to_be_disabled()
     expect(page.locator("#main .coach-reason")).to_have_text(

@@ -10,17 +10,13 @@ import PalaverDomain
 
 // MARK: - workers
 
-/// `taskpolicy -c <qos> <python> -m palaver [--config …] [--dictionary …] [--no-notify] <cmd> [folder] [extra…]`,
-/// in a session of its own, stdout and stderr appended to daemon.log, only in a development build's legacy-server
-/// fallback. Else, with `worker`, the pipeline's commands run as `palaver-worker [options] <cmd> [folder] [extra…]`,
-/// and with `lm` the notes as `palaver-lm [options] notes <folder>`.
+/// `taskpolicy -c <qos> palaver-worker [--config …] [--dictionary …] [--no-notify] <cmd> [folder] [extra…]`, in a
+/// session of its own, stdout and stderr appended to daemon.log; the notes as `palaver-lm [options] notes <folder>`.
 public struct WorkerLauncher {
-    /// The developer's fallback Python (a checkout's .venv; never started in a release: `worker` and `lm` are set).
-    public var python: String
-    /// palaver-worker (`AppLocation.binary`); nil: every command is Python's (the fallback, or it is missing).
-    public var worker: String?
-    /// palaver-lm; nil: the notes are Python's (the fallback, or it is missing).
-    public var lm: String?
+    /// palaver-worker (`AppLocation.binary`).
+    public var worker: String
+    /// palaver-lm.
+    public var lm: String
     /// The commands palaver-worker runs; `notes` is palaver-lm's (housekeeping runs in the app itself).
     public static let workerCommands: Set<String> = ["process", "run", "live", "stream", "coach", "index", "calendar-attach"]
     /// The global options the app got: `--config <abs>`, `--dictionary <abs>`, `--no-notify`.
@@ -32,9 +28,8 @@ public struct WorkerLauncher {
     /// Runs the argv (after taskpolicy's options); tests record instead.
     public var spawn: (_ args: [String], _ qos: QoS) throws -> WorkerProcess
 
-    public init(python: String, worker: String? = nil, lm: String? = nil, cliOptions: [String], log: URL, env: [String: String],
+    public init(worker: String, lm: String, cliOptions: [String], log: URL, env: [String: String],
                 spawn: ((_ args: [String], _ qos: QoS) throws -> WorkerProcess)? = nil) {
-        self.python = python
         self.worker = worker
         self.lm = lm
         self.cliOptions = cliOptions
@@ -44,16 +39,10 @@ public struct WorkerLauncher {
         self.spawn = spawn ?? { args, qos in try spawnWorker(args, qos: qos, env: env, log: log, taskpolicy: taskpolicy) }
     }
 
-    /// The command after taskpolicy's options (daemon.py `_command`). `calendar-attach` is Python's
-    /// `calendar attach`.
+    /// The command after taskpolicy's options: `notes` is palaver-lm's, every other one palaver-worker's.
     public func argv(_ cmd: String, _ folder: URL?, extra: [String] = []) -> [String] {
         let tail = (folder.map { [$0.path] } ?? []) + extra
-        if let worker, Self.workerCommands.contains(cmd) {
-            return [worker] + cliOptions + [cmd] + tail
-        }
-        if let lm, cmd == "notes" { return [lm] + cliOptions + [cmd] + tail }
-        let command = cmd == "calendar-attach" ? ["calendar", "attach"] : [cmd]
-        return [python, "-m", "palaver"] + cliOptions + command + tail
+        return [cmd == "notes" ? lm : worker] + cliOptions + [cmd] + tail
     }
 
     public func launch(_ cmd: String, _ folder: URL?, qos: QoS = .utility, extra: [String] = []) throws -> WorkerProcess {
@@ -111,20 +100,16 @@ public final class PythonFacts: @unchecked Sendable {
         self.log = log
     }
 
-    /// The questions the domain answers in this process (`Queries`); `python` gets only others.
+    /// The questions the domain answers in this process (`Queries`).
     public static let inProcess: Set<String> = ["missing-models", "index-stale", "notes-memory", "event-key"]
 
     /// `missing-models`, `index-stale`, `notes-memory` and `event-key` from `Queries` in this process
-    /// (config.toml read again for each, as each Python query did; `calendar`: the events, nil when the
-    /// calendar is off or not allowed); anything else through `python` (none: an error).
+    /// (config.toml read again for each; `calendar`: the events, nil when the calendar is off or not allowed);
+    /// anything else is an error.
     public static func query(config: @escaping @Sendable () -> Config,
-                             calendar: @escaping @Sendable (Config) -> CalendarProvider?,
-                             python: Query? = nil) -> Query {
+                             calendar: @escaping @Sendable (Config) -> CalendarProvider?) -> Query {
         { what in
-            guard let first = what.first, inProcess.contains(first) else {
-                guard let python else { throw Queries.QueryError(what.first ?? "") }
-                return try python(what)
-            }
+            guard let first = what.first, inProcess.contains(first) else { throw Queries.QueryError(what.first ?? "") }
             let cfg = config()
             let answer = try Queries.answer(first, args: Array(what.dropFirst()), config: cfg, calendar: calendar(cfg))
             return answer.anyValue as? [String: Any] ?? [:]

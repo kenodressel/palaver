@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { sizeText, memoryRows, memoryTotalText, memoryPolling } from "../../palaver/webapp/static/logic.js";
+import { sizeText, memoryRows, memoryTotalText, memoryPolling } from "../../web/logic.js";
 
 const GB = 1024 ** 3;
 const budgets = { live: 5, stream: 3.5, process: 8, notes: 14, index: 1 };
@@ -58,8 +58,8 @@ test("memoryPolling: only while Settings is shown and the window is visible", ()
 });
 
 // --- storage (#9) ---
-import { storageTotalText, audioDaysLabel, audioDaysConfirm, audioDeletedText, aboutLines } from "../../palaver/webapp/static/logic.js";
-import { meetingCommands } from "../../palaver/webapp/static/logic.js";
+import { storageTotalText, audioDaysLabel, audioDaysConfirm, audioDeletedText, aboutLines } from "../../web/logic.js";
+import { meetingCommands } from "../../web/logic.js";
 
 test("storageTotalText: meetings, their size and the audio's share", () => {
   assert.equal(storageTotalText({ meetings: 38, bytes: 5.2 * GB, audio_bytes: 5 * GB }), "38 meetings take 5.2 GB, 5 GB of it audio.");

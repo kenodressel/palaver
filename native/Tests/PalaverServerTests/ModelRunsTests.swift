@@ -3,7 +3,7 @@
 // `_notes`, `_next_question`; webapp/__init__.py `build_app`'s `helper` and `ask_model`). Ports their tests of
 // tests/test_webapp.py, test_webapp_remote.py, test_web_process.py, test_live_coach_api.py and test_coach_review.py
 // under their names. Helpers are fakes: a `HelperRunner` in this process, or `/bin/sh` and `/bin/sleep` where a real
-// process is wanted (its record, its exit code, its session) — never `python -m palaver`, never a model.
+// process is wanted (its record, its exit code, its session) — never Python, never a model.
 import Darwin
 import Foundation
 import Testing

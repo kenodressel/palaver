@@ -1,11 +1,11 @@
 // A meeting's project chips, the Projects page's ⋯ and the People page's
-// toasts, from the JSON alone (palaver/webapp/static/logic.js).
+// toasts, from the JSON alone (web/logic.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { withProject, projectChange, projectCommands, renameText, voicesText,
   personCommands, voiceCommands, termCommands, termChangeText, projectEditText }
-  from "../../palaver/webapp/static/logic.js";
+  from "../../web/logic.js";
 
 function meeting(extra = {}) {
   return {

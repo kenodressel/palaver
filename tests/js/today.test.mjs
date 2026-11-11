@@ -1,11 +1,11 @@
 // Today and "Needs you": what the strip of a meeting says, which cards Today
 // shows, the question each card asks, and when the next meeting starts
-// (palaver/webapp/static/logic.js).
+// (web/logic.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { needsSummary, needCards, needQuestion, startsInText, cutAtPointer, navCount }
-  from "../../palaver/webapp/static/logic.js";
+  from "../../web/logic.js";
 
 const review = { kind: "review" };
 

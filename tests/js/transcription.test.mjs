@@ -1,11 +1,11 @@
 // Settings → Transcription (#54): the choices, what goes where, the price,
-// and transcription uploads in the shared access log (palaver/webapp/static/logic.js).
+// and transcription uploads in the shared access log (web/logic.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
   transcriberOptions, transcriptionSendsText, priceText, transcriptionTestText, monthText, accessLogText,
-} from "../../palaver/webapp/static/logic.js";
+} from "../../web/logic.js";
 
 function tr(extra = {}) {
   return {
@@ -75,7 +75,7 @@ test("accessLogText shows an upload as audio, with the service's name", () => {
 });
 
 test("transcribedText: a meeting says which service heard it, and when this Mac stepped in", async () => {
-  const { transcribedText } = await import("../../palaver/webapp/static/logic.js");
+  const { transcribedText } = await import("../../web/logic.js");
   assert.equal(transcribedText(null), null);
   assert.equal(transcribedText({ engine: "local" }), null);
   assert.equal(transcribedText({ engine: "live" }), null);

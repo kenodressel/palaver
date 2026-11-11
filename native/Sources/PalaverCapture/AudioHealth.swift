@@ -1,4 +1,4 @@
-// Detect, don't trust (issue #50): the recorder's health monitor, ported from palaver/audio_health.py
+// Detect, don't trust (issue #50): the recorder's health monitor, ported from the Python app's audio_health.py
 // (thresholds, windows and wording exactly), plus two incident kinds Python has no counterpart for.
 //
 // The recorder feeds this monitor what it sees, and the monitor opens an *incident* when a threshold

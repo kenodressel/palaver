@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from palaver import release
+from tools import release
 
 ROOT = Path(__file__).resolve().parent.parent
 RID = "no-python-1"  # the placeholder the manifest names since 0.6 (tools/build_release.py COMPAT_RUNTIME_ID)

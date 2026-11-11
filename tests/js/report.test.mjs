@@ -1,12 +1,12 @@
 // Report a Problem and the usage counts of the window (#59): the form's
 // meeting, its address, the action catalog, and the counter the action
-// registry is hooked into (palaver/webapp/static/logic.js, ui.js).
+// registry is hooked into (web/logic.js, ui.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { reportMeeting, reportDraft, reportDoneText, actionCatalog, placeOf, hashOf, meetingCommands, paletteCommands }
-  from "../../palaver/webapp/static/logic.js";
-import { UsageCounter, tracked } from "../../palaver/webapp/static/ui.js";
+  from "../../web/logic.js";
+import { UsageCounter, tracked } from "../../web/ui.js";
 
 const meetings = [{ id: "2026-10-30T09-00-00" }, { id: "2026-10-28T09-00-00" }, { id: "2026-10-29T09-00-00" }];
 

@@ -1,4 +1,4 @@
 module CRavenAEC {
-    header "../../../../palaver/_vendored/webrtc_aec/include/aec_api.h"
+    header "../../../Vendored/webrtc_aec/include/aec_api.h"
     export *
 }

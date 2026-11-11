@@ -2,7 +2,7 @@
 // port, starts the server with the listening socket and a ready pipe, restarts it when it crashes
 // (with backoff) or when asked, and stops it when it quits. Ports tests/test_web_process.py's
 // supervisor tests. Fake children (a Python stand-in from the worktree's venv) and, in the
-// contract test, the real `palaver webapp-serve`: no mic, no sound, no window.
+// contract test, the real palaver-server (the debug build): no mic, no sound, no window.
 import Darwin
 import Foundation
 import Testing
@@ -14,6 +14,9 @@ private let worktree = URL(fileURLWithPath: #filePath).deletingLastPathComponent
 /// The worktree's venv (`uv sync`, as `make test` and CI have it).
 let venvPython = worktree.appendingPathComponent(".venv/bin/python").path
 let haveVenv = FileManager.default.isExecutableFile(atPath: venvPython)
+/// The debug palaver-server, built with the tests (`make debug-programs` builds it too).
+let debugServer = worktree.appendingPathComponent("native/.build/debug/palaver-server").path
+let haveDebugServer = FileManager.default.isExecutableFile(atPath: debugServer)
 
 // A stand-in server: answers every request with its pid. MODE: "serve"; "crash" (exits 1 after a
 // moment); "crash-once" (crashes on its first run, counted in COUNT, then serves); "stubborn"
@@ -329,25 +332,14 @@ struct WebSupervisorTests {
     }
 
     @Test func theChildCommand() {
-        let argv = WebSupervisor.childArgv(python: "/b/palaver-python", cliOptions: ["--config", "/c.toml"], listenFD: 5, readyFD: 6,
-                                           appSocket: URL(fileURLWithPath: "/s/app.sock"))
-        #expect(argv == ["/b/palaver-python", "-m", "palaver", "--config", "/c.toml", "webapp-serve", "--listen-fd", "5",
-                         "--ready-fd", "6", "--app-socket", "/s/app.sock"])
-    }
-
-    @Test func serverChildArgvHasTheSameHandshake() {
-        let python = WebSupervisor.childArgv(python: "/b/palaver-python", cliOptions: ["--config", "/c.toml"], listenFD: 5,
-                                             readyFD: 6, appSocket: URL(fileURLWithPath: "/s/app.sock"))
-        let swift = WebSupervisor.childArgv(python: "/b/palaver-python", cliOptions: ["--config", "/c.toml"], listenFD: 5,
-                                            readyFD: 6, appSocket: URL(fileURLWithPath: "/s/app.sock"), server: "/b/palaver-server",
-                                            staticDir: URL(fileURLWithPath: "/b/static", isDirectory: true))
-        #expect(swift == ["/b/palaver-server", "--config", "/c.toml", "--listen-fd", "5", "--ready-fd", "6",
-                          "--app-socket", "/s/app.sock", "--static", "/b/static"])
-        // The same handshake (listening socket, ready pipe, app.sock) as webapp-serve's.
-        #expect(Array(swift[3..<9]) == Array(python[python.count - 6..<python.count]))
-        let unknownStatic = WebSupervisor.childArgv(python: "/p", cliOptions: [], listenFD: 5, readyFD: 6,
-                                                    appSocket: URL(fileURLWithPath: "/s/app.sock"), server: "/b/palaver-server")
-        #expect(unknownStatic.last == "/s/app.sock")  // no Python handed on
+        let argv = WebSupervisor.childArgv(server: "/b/palaver-server", cliOptions: ["--config", "/c.toml"], listenFD: 5,
+                                           readyFD: 6, appSocket: URL(fileURLWithPath: "/s/app.sock"),
+                                           staticDir: URL(fileURLWithPath: "/b/static", isDirectory: true))
+        #expect(argv == ["/b/palaver-server", "--config", "/c.toml", "--listen-fd", "5", "--ready-fd", "6",
+                         "--app-socket", "/s/app.sock", "--static", "/b/static"])
+        let unknownStatic = WebSupervisor.childArgv(server: "/b/palaver-server", cliOptions: [], listenFD: 5, readyFD: 6,
+                                                    appSocket: URL(fileURLWithPath: "/s/app.sock"))
+        #expect(unknownStatic.last == "/s/app.sock")
     }
 
     @Test func theWindowGetsTheSamePortAtEveryStartUnlessItIsTaken() throws {
@@ -423,11 +415,11 @@ struct RestartWebCallTests {
     }
 }
 
-/// Contract: the Swift supervisor runs the REAL `palaver webapp-serve` (the worktree's Python) on
+/// Contract: the Swift supervisor runs the REAL palaver-server (the debug build) on
 /// the socket it bound, and the window's sign-in works: `/?key=…` sets the key cookie and drops the
 /// key from the address, the page answers with the cookie only, and after a restart the new server
 /// (a new pid) answers the same cookie. A throwaway HOME: never the real ~/Meetings or ~/.config.
-@Suite(.enabled(if: haveVenv, "needs the worktree's venv (uv sync)"))
+@Suite(.enabled(if: haveDebugServer, "needs the debug palaver-server (make debug-programs)"))
 struct RealWebServerContractTests {
     @Test func theRealServerSignsTheWindowInAndAnswersAgainAfterARestart() throws {
         let home = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("pv\(getpid())-\(UInt32.random(in: 0..<999_999))")
@@ -435,23 +427,20 @@ struct RealWebServerContractTests {
         defer { try? FileManager.default.removeItem(at: home) }
         let config = home.appendingPathComponent("config.toml")
         try """
-        [notion]
-        token = "fake"
-        parent_page_id = "fake"
-        [hf]
-        token = "fake"
         [recording]
         output_dir = "\(home.appendingPathComponent("Meetings").path)"
 
         """.write(to: config, atomically: true, encoding: .utf8)
         var env = WebSupervisor.childEnv(ProcessInfo.processInfo.environment)
         env["HOME"] = home.path
+        env["PALAVER_HOME"] = home.path
         env["XDG_CONFIG_HOME"] = home.appendingPathComponent(".config").path
         env["PALAVER_NOTIFY"] = nil
         let events = ReadyEvents()
         let appSocket = home.appendingPathComponent("app.sock")
-        let sup = WebSupervisor.forApp(python: venvPython, cliOptions: ["--config", config.path, "--no-notify"],
-                                       appSocket: appSocket, listener: try WebListener.listen(), env: env,
+        let sup = WebSupervisor.forApp(server: debugServer, cliOptions: ["--config", config.path, "--no-notify"],
+                                       appSocket: appSocket, listener: try WebListener.listen(),
+                                       staticDir: worktree.appendingPathComponent("web", isDirectory: true), env: env,
                                        onReady: { events.add($0) })
         defer { sup.stop(); sup.listener.close() }
         sup.start()

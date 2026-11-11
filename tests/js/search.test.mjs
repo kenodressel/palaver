@@ -1,10 +1,10 @@
 // The search in the meeting list (#46): taking a filter out of the text,
 // what a notes hit is called, related meetings beside the found ones
-// (palaver/webapp/static/logic.js).
+// (web/logic.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { withoutSpan, noteKind, relatedOnly, firstMoment } from "../../palaver/webapp/static/logic.js";
+import { withoutSpan, noteKind, relatedOnly, firstMoment } from "../../web/logic.js";
 
 test("withoutSpan takes a filter out with the little word that joined it", () => {
   const q = "Anna and Tom last month";
@@ -36,7 +36,7 @@ test("firstMoment is the first line found, by words or by meaning", () => {
 });
 
 test("chipRemoved puts a name back as a quoted word, and works on the text as it is now", async () => {
-  const { chipRemoved } = await import("../../palaver/webapp/static/logic.js");
+  const { chipRemoved } = await import("../../web/logic.js");
   const person = { kind: "person", text: "Tom", written: false };
   assert.equal(chipRemoved("Anna and Tom last month", person), 'Anna and "Tom" last month');
   assert.equal(chipRemoved("Anna and Tom last month", { kind: "project", text: "ÖNW", written: false }),

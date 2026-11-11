@@ -1,17 +1,9 @@
-# One build recipe for local use and CI (.github/workflows/*.yml only call make).
-AEC_DIR = palaver/_vendored/webrtc_aec
-AEC_LIB = $(AEC_DIR)/libraven_aec.dylib
+# One build recipe for local use and CI (.github/workflows/*.yml only call make). Palaver is the Swift package in
+# native/; Python (uv, pyproject.toml) is only the developer tooling: the end-to-end tests and the release build.
 DIST = dist
+VERSION = $(shell cat VERSION)
 
-.PHONY: aec engine app-swift server worker lm engine-test swift-test notify-helper appctl-helper parity-helper e2e-server eval-engine eval-engine-worker test test-changed wheel requirements icons runtime models app manifest release smoke-install publish clean help
-
-# CMakeLists.txt writes the dylib straight into $(AEC_DIR).
-$(AEC_LIB):
-	cmake -S $(AEC_DIR) -B $(AEC_DIR)/build -DCMAKE_BUILD_TYPE=Release
-	cmake --build $(AEC_DIR)/build
-	@test -f $(AEC_LIB) || { echo "✗ $(AEC_LIB) was not built"; exit 1; }
-
-aec: $(AEC_LIB) ## Build the vendored WebRTC echo-cancellation library
+.PHONY: engine app-swift server worker lm cli engine-test swift-test debug-programs e2e-server eval-engine eval-engine-worker test test-changed icons compat-runtime models app manifest release smoke-install publish clean help
 
 # The Swift engine (FluidAudio, CoreML). SwiftPM hangs fetching FluidAudio's
 # NemoTextProcessing binary here, so it is fetched by tools/fetch_nemo.sh and
@@ -101,18 +93,9 @@ swift-test: $(VENDOR)/.patched ## Run the Swift tests FILTER names (a suite or t
 	@test -n "$(FILTER)" || { echo "usage: make swift-test FILTER=<SuiteName>"; exit 2; }
 	@$(SWIFT_TEST_HOME) && swift test --package-path $(ENGINE_DIR) $(TESTING_FLAGS) --filter '$(FILTER)'; status=$$?; rm -rf "$$tmp"; exit $$status
 
-# The notify contract test (tests/test_notify_swift_contract.py) runs against this helper.
-notify-helper: $(VENDOR)/.patched ## Build the Swift notify test helper
-	swift build --package-path $(ENGINE_DIR) --product palaver-notify-helper
-
-# The app.sock contract test (tests/test_appctl_swift_contract.py) runs against this helper.
-appctl-helper: $(VENDOR)/.patched ## Build the Swift app.sock test helper
-	swift build --package-path $(ENGINE_DIR) --product palaver-appctl-helper
-
-# The parity harness (tests/test_parity.py, tools/parity/run.py) runs its ops against this helper;
-# tests/test_mcp_swift_contract.py talks to palaver-cli's `mcp`, tests/test_lm_swift_contract.py runs palaver-lm.
-parity-helper: $(VENDOR)/.patched ## Build the Swift parity helper, server, worker, palaver-cli and palaver-lm (debug)
-	swift build --package-path $(ENGINE_DIR) --product palaver-parity
+# The debug programs some tests start: tests/test_worker_helpers.py (palaver-worker), the Swift tests that run
+# palaver-server and palaver-cli (swift test builds them too).
+debug-programs: $(VENDOR)/.patched ## Build palaver-cli, palaver-lm, palaver-server and palaver-worker (debug)
 	swift build --package-path $(ENGINE_DIR) --product palaver-cli
 	swift build --package-path $(ENGINE_DIR) --product palaver-lm
 	swift build --package-path $(ENGINE_DIR) --product palaver-server
@@ -133,9 +116,10 @@ e2e-server: $(VENDOR)/.patched ## Build palaver-server and palaver-lm for the e2
 	swift build --package-path $(ENGINE_DIR) --product palaver-lm --scratch-path $(E2E_SERVER_BUILD) \
 		-Xswiftc -O -Xswiftc -assert-config -Xswiftc Debug
 
-# The e2e tests run against palaver-server (e2e-server); a missing Playwright or
-# WebKit fails them instead of skipping them.
-test: aec engine-test notify-helper appctl-helper parity-helper e2e-server ## Run the test suite (in parallel)
+# The Swift tests, then the Python ones: the e2e tests against palaver-server (e2e-server; a missing Playwright or
+# WebKit fails them instead of skipping them), the page's JS tests (node, through tests/test_js.py) and the tests of
+# the release build and install.sh.
+test: engine-test debug-programs e2e-server ## Run the test suite: Swift, then e2e, JS and build tooling (in parallel)
 	PALAVER_E2E_REQUIRED=1 $(PYTEST)
 
 eval-engine: ## Local gate on your recordings (needs PALAVER_EVAL_DIR). tools/eval_engine.py's exit: 0 pass, 1 a check FAILED, 2 misconfigured (make itself reports 2 for both)
@@ -149,12 +133,12 @@ eval-engine-worker: ## The same gate through palaver-worker's in-process engine 
 	swift build -c release --package-path $(ENGINE_DIR) --product palaver-worker
 	$(PYTHON) tools/eval_engine.py --worker $(ENGINE_DIR)/.build/release/palaver-worker
 
-test-changed: aec ## Run the tests for what changed since master (tools/changed_tests.py)
+test-changed: ## Run the Python tests for what changed since master (tools/changed_tests.py)
 	@TESTS="$$(uv run python tools/changed_tests.py)"; \
 		if [ -z "$$TESTS" ]; then echo "nothing changed that a test covers"; else echo "$$TESTS" | tr '\n' ' '; echo; $(PYTEST) $$TESTS; fi
 
-icons: ## Draw the app and menu bar icons into palaver/assets (needs Pillow)
-	uv run --with pillow python tools/make_icons.py
+icons: ## Draw the app and menu bar icons into native/Bundle (needs Pillow)
+	uv run --extra dev python tools/make_icons.py
 
 # Release assets (#60), built on this Mac: the app (the Swift programs, no Python), the placeholder runtime the
 # updaters before 0.6 need (a few hundred bytes, uploaded once), manifest.json and install.sh.
@@ -176,7 +160,7 @@ compat-runtime: ## Write the placeholder runtime the updaters before 0.6 need (t
 models: ## Nothing to pack: Palaver hosts no models (kept so old scripts work)
 	$(BUILD_RELEASE) models $(BUILD_ARGS)
 
-app: aec engine app-swift server worker lm cli ## Build Palaver.app (the Swift programs and the palaver command; no Python), zipped
+app: engine app-swift server worker lm cli ## Build Palaver.app (the Swift programs and the palaver command; no Python), zipped
 	$(BUILD_RELEASE) app $(BUILD_ARGS)
 
 manifest: ## Write manifest.json and upload.txt over the assets in dist/
@@ -192,8 +176,6 @@ release: app compat-runtime manifest ## All release assets in dist/ (upload.txt:
 smoke-install: ## Install dist/ into a throwaway HOME, check it, and simulate an update
 	sh tools/smoke_install.sh "$(CURDIR)/$(DIST)" "$(PYTHON)"
 
-VERSION = $(shell sed -n 's/^__version__ = "\(.*\)"/\1/p' palaver/__init__.py)
-
 # Ad hoc signatures differ every build, and macOS asks testers for the
 # microphone and system audio again after each update: a release is signed
 # with the kept certificate (CONTRIBUTING.md, "Signing releases").
@@ -207,7 +189,7 @@ publish: ## Create the GitHub release of this version from dist/upload.txt (need
 	cd $(DIST) && gh release create "v$(VERSION)" --repo kenodressel/palaver $$(cat upload.txt) --generate-notes
 
 clean: ## Remove build output
-	rm -rf $(DIST) build $(AEC_DIR)/build
+	rm -rf $(DIST) build
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'

@@ -9,6 +9,7 @@ from playwright.sync_api import expect  # noqa: E402
 
 from .helpers import audio, goto, heading, list_ids, list_item, open_meeting, reload  # noqa: E402
 from .recordings import A, B, C, LIVE  # noqa: E402
+from .stores import GEMMA, NOTIFICATIONS_SETTINGS_URL, QWEN, write_update_status  # noqa: E402
 
 pytestmark = pytest.mark.e2e
 
@@ -304,10 +305,8 @@ def _cached(served, repo: str, size: int) -> None:
 def test_settings_show_what_meetings_and_models_take(page, app_server):
     """#9: the meetings' size, how long audio stays (kept by default), the
     models; only a notes model not in use offers Delete, and asks first."""
-    from palaver import onboarding
-
-    _cached(app_server, onboarding.GEMMA, 9 * 1024 ** 3)  # the notes model in use
-    _cached(app_server, onboarding.QWEN, 17 * 1024 ** 3)  # no longer offered
+    _cached(app_server, GEMMA, 9 * 1024 ** 3)  # the notes model in use
+    _cached(app_server, QWEN, 17 * 1024 ** 3)  # no longer offered
     goto(page, app_server, "#/settings/storage")
     section = page.locator("#storage-section")
     expect(section.get_by_role("heading", name="Storage")).to_be_visible()
@@ -322,8 +321,6 @@ def test_settings_show_what_meetings_and_models_take(page, app_server):
 
 def test_settings_say_when_notifications_are_off(page, app_server):
     """macOS refused them: said, with the way to System Settings; on, a quiet line."""
-    from palaver import notify
-
     state = app_server.notify_state  # the app's launcher writes it
     state.write_text("denied")
     goto(page, app_server, "#/settings/notifications")
@@ -332,7 +329,7 @@ def test_settings_say_when_notifications_are_off(page, app_server):
     expect(page.locator('.settings-nav [data-pane="notifications"] .settings-flag')).to_have_count(1)  # said in the list
     section.get_by_role("button", name="Open System Settings").click()
     expect(page.locator("#toasts")).to_contain_text("Allow notifications for Palaver there")
-    assert app_server.opened == [notify.SETTINGS_URL]
+    assert app_server.opened == [NOTIFICATIONS_SETTINGS_URL]
     state.write_text("allowed")  # allowed in System Settings: the page follows
     expect(section.get_by_role("button", name="Open System Settings")).to_have_count(0, timeout=10_000)
     expect(page.locator("#notifications-section")).to_contain_text("On")
@@ -340,9 +337,7 @@ def test_settings_say_when_notifications_are_off(page, app_server):
 
 def _update_json(served, status: dict) -> None:
     """update.json as the menu bar app's updater writes it."""
-    from palaver import updater
-
-    updater.write_status(status, home=served.home)
+    write_update_status(status, served.home)
 
 
 def test_a_new_release_shows_in_the_top_bar_and_opens_settings(page, app_server):

@@ -1,12 +1,12 @@
 // The setup assistant (#55): its steps, which choices a click applies, and
-// what it says (palaver/webapp/static/logic.js).
+// what it says (web/logic.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { placeOf, hashOf, SETUP_STEPS, setupStepAfter, setupStepBefore, recommendedChanges,
   chosenChanges, gbText, downloadsText, downloadProgress, permissionText, recommendedHint,
   setupOfferText, testRecordingText, seedChecked, optionLabel, stepButtons, engineOptions, sendsText }
-  from "../../palaver/webapp/static/logic.js";
+  from "../../web/logic.js";
 
 const rec = (id, step, value, current, extra = {}) => ({
   id, step, value, current, matches: JSON.stringify(value) === JSON.stringify(current), label: String(value),

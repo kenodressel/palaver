@@ -1,8 +1,8 @@
-"""palaver-worker's helpers (palaver-lm's notes; Python's cloud-transcribe and sync) belong to the worker's process
+"""palaver-worker's helpers (palaver-lm, which writes the notes) belong to the worker's process
 group: the daemon stops a worker with killpg, and a helper must stop with it (a notes run keeps gigabytes of model). A
 SIGTERM sent to the worker alone reaches its helper too, and the worker ends once the helper did.
 
-Runs the debug build (``make parity-helper``); skipped without it.
+Runs the debug build (``make debug-programs``); skipped without it.
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ def worker_in_notes(tmp_path: Path):
     """palaver-worker processing a 1 s meeting, started in a session of its own as the daemon starts it, stopped in
     its notes helper; yields (worker, the helper's pid)."""
     if not WORKER.exists():
-        pytest.skip("palaver-worker is not built (make parity-helper)")
+        pytest.skip("palaver-worker is not built (make debug-programs)")
     recs = tmp_path / "Recordings"
     folder = recs / "2026-10-20T14-35-17"
     folder.mkdir(parents=True)

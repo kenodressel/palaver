@@ -1,14 +1,15 @@
-"""Regenerate tests/fixtures/tiny_embedder/ (the golden files of tests/test_embeddings.py).
+"""Regenerate tests/fixtures/tiny_embedder/ (the golden files of the Swift E5 encoder's tests,
+native/Tests/PalaverDomainTests/E5EncoderTests.swift).
 
-Needs torch, transformers and sentencepiece, which the runtime no longer
-has; run it with any Python that does, from the repository root:
+Needs torch, transformers and sentencepiece, which the dev tooling does not
+have; run it with any Python that does, from the repository root:
 
     /path/to/python tools/make_embedder_fixture.py
 
 It trains a 30-piece SentencePiece model, saves two tiny random encoders
 (XLM-RoBERTa and BERT-shaped, as multilingual-e5-small is stored) and the
 mean-pooled, normalised outputs transformers gives for TEXTS, as
-expected.json. The numpy encoder in palaver/embeddings.py must match them.
+expected.json. The Swift encoder (PalaverDomain/Search/E5Encoder.swift) must match them.
 """
 
 import json

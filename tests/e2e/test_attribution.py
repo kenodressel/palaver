@@ -11,6 +11,7 @@ from playwright.sync_api import expect
 
 from .helpers import about_line, expect_toast, heading, lane, list_item, open_meeting, run_from_menu, undo_in_toast
 from .recordings import A, B, C, _at
+from .stores import add_project, reject_event, rejected_events
 
 
 def _event(title: str, start, minutes: int, uid: str, *people: str) -> dict:
@@ -113,12 +114,8 @@ def test_a_voice_name_palaver_is_unsure_of_is_dotted_and_not_bob_sticks(page, ap
 
 
 def test_unsure_project_chips_say_why(page, app_server):
-    from palaver import projects
-
-    store = projects.ProjectStore()  # the server's store: the same temporary config
-    pid = store.create("Foundry")
-    store.assign(A, pid, by="auto", why="people like “Sync”", confidence=0.72)
-    store.save()
+    # The server's store: the same temporary config.
+    add_project("Foundry", {A: {"by": "auto", "why": "people like “Sync”", "confidence": 0.72}})
     open_meeting(page, app_server, A)
     chip = page.locator("#main .project-chip", has_text="Foundry")
     expect(chip).to_have_class("project-chip unsure")
@@ -126,14 +123,8 @@ def test_unsure_project_chips_say_why(page, app_server):
 
 
 def test_a_rule_from_rejections_shows_in_the_picker_and_can_be_forgotten(page, app_server):
-    from palaver import attribution
-    from palaver import calendar_events as cal
-
-    standup = cal.load(cal.RecordingPaths(app_server.root / A))
-    evidence = attribution.Evidence()  # the server's store: the same temporary config
-    for meeting in ("adhoc-1", "adhoc-2"):
-        evidence.reject_event(standup, meeting)
-    evidence.save()
+    # The standup's event (calendar.json, by its uid) was said not to be two recordings: a rule. The server's store.
+    reject_event("standup-uid", "Team standup", ["adhoc-1", "adhoc-2"])
 
     open_meeting(page, app_server, A)
     run_from_menu(page, "More actions", "Change Event…")
@@ -142,6 +133,6 @@ def test_a_rule_from_rejections_shows_in_the_picker_and_can_be_forgotten(page, a
     rule.get_by_role("button", name="Forget this rule").click()
     expect_toast(page, "“Team standup” is linked by time again")
     expect(page.locator(".event-picker .event-rule")).to_have_count(0)
-    assert attribution.Evidence().rules() == []
+    assert rejected_events() == {"standup-uid": []}
     undo_in_toast(page)
-    assert [r["title"] for r in attribution.Evidence().rules()] == ["Team standup"]
+    assert rejected_events() == {"standup-uid": ["adhoc-1", "adhoc-2"]}

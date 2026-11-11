@@ -10,6 +10,9 @@ and results that only lived in those workspaces. Numbers only, no meeting conten
   the same formats; no emulation of Python/numpy quirks, no golden files of Python output.
 - 2026-11-08: **the release contains no Python.** Python stays only as a local developer fallback
   (legacy-server marker / `PALAVER_LEGACY_SERVER=1`, from a checkout's `.venv` only).
+- Python removed on 2026-11-11, last commit with the Python app: `542d02846803abeaa04128b708cd510daaa33a99`
+  (master before the removal: the app, its tests, the parity harness and the developer fallback went; Python
+  stays only as developer tooling, the e2e tests and the release build). Then 0.6.0.
 - Phase 4 answers: `palaver record` and `palaver rename` dropped; one-release `bin/python` shim that
   forwards old Claude MCP entries; every older version updates in-app (placeholder runtime, below).
 - 2026-11-08: keep the 1 s grace in `ModelJobs.wait`; live-transcribed words keep their confidence
@@ -66,8 +69,8 @@ and results that only lived in those workspaces. Numbers only, no meeting conten
 
 - Notarization (Developer ID) and the hardened runtime.
 - A keyless LAN Ollama still shows "Add the API key".
-- Measure Parakeet Ultra vs v3 on meetings; FluidAudio streaming/Nemotron for live (from Sabbel #20/#34);
-  CTC vocabulary boosting only for long distinct terms (Sabbel #22 → Palaver #14).
+- Parakeet Ultra was measured for meetings and was worse — not pursued. FluidAudio streaming/Nemotron for live
+  (from Sabbel #20/#34); CTC vocabulary boosting only for long distinct terms (Sabbel #22 → Palaver #14).
 - Devices that reconfigure on every start (Insta360 case in Sabbel) could loop Palaver's mic follow
   logic; worth a test when such a device report comes in.
 - zip64 for problem reports with more than 4 GB of audio.

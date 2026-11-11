@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { titleChange, withTitle, retitledText, calendarHint, meetingCommands, TITLE_MAX }
-  from "../../palaver/webapp/static/logic.js";
+  from "../../web/logic.js";
 
 const fromNotes = { id: "m", title: "Budget talk", title_from: "notes", notes: { title: "Budget talk" }, calendar: null };
 const fromCalendar = { id: "m", title: "Weekly sync", title_from: "calendar", notes: { title: "Budget talk" },

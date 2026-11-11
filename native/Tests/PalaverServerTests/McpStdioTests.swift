@@ -80,7 +80,7 @@ private final class McpProcess {
             }
             var fds = pollfd(fd: output, events: Int16(POLLIN), revents: 0)
             let left = Int32(max(0, deadline.timeIntervalSinceNow) * 1000)
-            guard left > 0, poll(&fds, 1, left) > 0 else { throw McpToolError("no answer from palaver mcp") }
+            guard left > 0, poll(&fds, 1, left) > 0 else { throw McpToolError("no answer from `palaver mcp`") }
             var chunk = [UInt8](repeating: 0, count: 65536)
             let n = read(output, &chunk, chunk.count)
             guard n > 0 else { throw McpToolError("palaver mcp closed its output") }

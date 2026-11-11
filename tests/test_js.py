@@ -25,7 +25,7 @@ def test_no_confirm_or_alert_left():
     calls = re.compile(r"(?<![\w.])(confirm|alert)\(")
     found = []
     for name in ("app.js", "ui.js", "mynotes.js"):
-        text = (ROOT / "palaver" / "webapp" / "static" / name).read_text()
+        text = (ROOT / "web" / name).read_text()
         found += [f"{name}:{text.count(chr(10), 0, m.start()) + 1}: {m.group(0)}" for m in calls.finditer(text)]
     assert not found, "\n".join(found)
 
@@ -33,7 +33,7 @@ def test_no_confirm_or_alert_left():
 def test_elements_hidden_in_the_page_stay_hidden():
     # A class rule with `display: flex` beats the `hidden` attribute: each
     # element the page hides by attribute needs a `[hidden]` rule too.
-    static = ROOT / "palaver" / "webapp" / "static"
+    static = ROOT / "web"
     css = re.sub(r"/\*.*?\*/", "", (static / "app.css").read_text(), flags=re.S)
     rules = [(sel.strip(), body) for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css)]
     page = (static / "index.html").read_text()

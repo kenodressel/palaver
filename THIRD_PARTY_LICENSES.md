@@ -8,7 +8,7 @@ command) is listed below; Palaver.app carries this file in
 `Contents/Resources/THIRD_PARTY_LICENSES.md`. The window's fonts keep their
 licences beside them (`Contents/Resources/web/fonts/`). Where the vendored
 echo-cancellation code comes from is told in
-[`palaver/_vendored/webrtc_aec/THIRD_PARTY.md`](palaver/_vendored/webrtc_aec/THIRD_PARTY.md).
+[`native/Vendored/webrtc_aec/THIRD_PARTY.md`](native/Vendored/webrtc_aec/THIRD_PARTY.md).
 
 ## In the app
 
@@ -61,7 +61,7 @@ in its repository: <https://github.com/apple/swift-nio/blob/2.105.0/NOTICE.txt>.
 ### WebRTC audio processing (echo cancellation)
 
 `palaver-worker`, the pipeline's worker in Palaver.app, links the WebRTC audio-processing
-libraries (WebRTC M124, pre-built, arm64 only; `palaver/_vendored/webrtc_aec/lib/macos`)
+libraries (WebRTC M124, pre-built, arm64 only; `native/Vendored/webrtc_aec/lib/macos`)
 statically, unchanged. Source: <https://webrtc.googlesource.com/src>. License: BSD-3-Clause,
 with the WebRTC project's additional patent grant
 (<https://webrtc.googlesource.com/src/+/main/PATENTS>):

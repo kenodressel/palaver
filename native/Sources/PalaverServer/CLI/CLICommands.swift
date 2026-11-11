@@ -81,7 +81,7 @@ struct CLICommand {
     /// notifications are the command's.
     func forward(_ program: String, _ rest: [String]) -> Int32 {
         guard let found = Self.find(program, executable: ctx.executable, env: ctx.env) else {
-            let fix = AppLocation(executable: ctx.executable).bundle != nil ? "reinstall Palaver" : "build it (make parity-helper)"
+            let fix = AppLocation(executable: ctx.executable).bundle != nil ? "reinstall Palaver" : "build it (make debug-programs)"
             ctx.err("error: \(program) is missing beside \(ctx.executable.resolvingSymlinksInPath().path): \(fix)")
             return 1
         }

@@ -517,39 +517,20 @@ private func files(_ dir: URL) -> [String] { (try? FileManager.default.contentsO
     private static let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
 
-    /// The strings of a Python literal (a tuple or dict body), in order.
-    private func strings(_ text: Substring) -> [String] {
-        let re = try! NSRegularExpression(pattern: #""([^"]*)""#)
-        let s = String(text)
-        return re.matches(in: s, range: NSRange(s.startIndex..., in: s)).map { String(s[Range($0.range(at: 1), in: s)!]) }
-    }
-
-    /// `NAME = <open>…<close>` of a Python file.
-    private func literal(_ file: String, _ name: String, _ open: Character, _ close: Character) throws -> Substring {
-        let text = try String(contentsOf: Self.repo.appendingPathComponent(file), encoding: .utf8)
-        let start = try #require(text.range(of: "\n\(name) = \(open)"))
-        let rest = text[start.upperBound...]
-        return rest[..<rest.firstIndex(of: close)!]
-    }
-
+    /// The pins the releases before 0.6 shipped (their notes.py MODEL_REVISIONS and MODEL_FILES, embeddings.py's
+    /// e5 model): a model they downloaded is found in the cache, not fetched again.
     @Test func thePinsAreTheOnesTheAppHasShipped() throws {
-        // notes.py: MODEL_REVISIONS and MODEL_FILES, read as data.
-        let revisions = strings(try literal("palaver/notes.py", "MODEL_REVISIONS", "{", "}"))
-        let pairs = stride(from: 0, to: revisions.count, by: 2).map { (revisions[$0], revisions[$0 + 1]) }
-        #expect(!pairs.isEmpty)
-        for (repo, rev) in pairs {
+        let revisions = [("mlx-community/gemma-4-12B-it-OptiQ-4bit", "de9e183868050b34bf6b4272518500ffcebf15b3"),
+                         ("mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit", "e9675aa3ca5f900ccef55267914466d55ab325fa")]
+        for (repo, rev) in revisions {
             #expect(HubModels.pin(repo) == HubModels.Pin(repo: repo, revision: rev, patterns: HubModels.MLX_FILES))
         }
-        #expect(strings(try literal("palaver/notes.py", "MODEL_FILES", "(", ")")) == HubModels.MLX_FILES)
-        // embeddings.py: the e5 model, its revision and files.
-        let text = try String(contentsOf: Self.repo.appendingPathComponent("palaver/embeddings.py"), encoding: .utf8)
-        func constant(_ name: String) -> String? {
-            text.split(separator: "\n").first { $0.hasPrefix("\(name) = \"") }.map { strings($0)[0] }
-        }
-        let e5 = HubModels.pin(try #require(constant("MODEL")))
-        #expect(e5.revision == constant("REVISION"))
-        #expect(e5.patterns == strings(try literal("palaver/embeddings.py", "MODEL_FILES", "(", ")")))
-        #expect(HubModels.pins.count == pairs.count + 1)
+        #expect(HubModels.MLX_FILES == ["*.json", "model*.safetensors", "*.py", "tokenizer.model", "*.tiktoken", "tiktoken.model",
+                                        "*.txt", "*.jsonl", "*.jinja"])
+        let e5 = HubModels.pin("intfloat/multilingual-e5-small")
+        #expect(e5.revision == "614241f622f53c4eeff9890bdc4f31cfecc418b3")
+        #expect(e5.patterns == ["config.json", "sentencepiece.bpe.model", "model.safetensors"])
+        #expect(HubModels.pins.count == revisions.count + 1)
         #expect(HubModels.pin(ModelCatalog.GEMMA).revision == "de9e183868050b34bf6b4272518500ffcebf15b3")
         #expect(HubModels.pin("contoso/other") == HubModels.Pin(repo: "contoso/other", revision: "main", patterns: HubModels.MLX_FILES))
     }
@@ -569,57 +550,5 @@ private func files(_ dir: URL) -> [String] { (try? FileManager.default.contentsO
         try Data("[hf]\ntoken = \"hf_FromToml\"\n".utf8).write(to: toml)
         #expect(Tokens.huggingFace(configToml: toml, env: [:], keys: keys, home: home) == "hf_FromToml")
         #expect(Tokens.huggingFace(configToml: toml, env: ["HF_TOKEN": "hf_FromEnv"], keys: keys, home: home) == "hf_FromEnv")
-    }
-}
-
-/// The Python fallback reads what Swift downloaded: huggingface_hub (offline) finds every file in the cache, and
-/// onboarding.snapshot_complete says it is complete.
-@Suite(.serialized) struct HubCacheAgainstPythonTests {
-    @Test func huggingFaceHubFindsTheSwiftDownload() async throws {
-        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-        let py = repo.appendingPathComponent(".venv/bin/python")
-        guard FileManager.default.isExecutableFile(atPath: py.path) else {
-            Issue.record("no \(py.path): the Python half of the test cannot run")
-            return
-        }
-        let stub = try StubHub()
-        let c = cache()
-        try await stub.downloader(c).fetch(repo: REPO, revision: COMMIT, patterns: PATTERNS, token: nil)
-        let script = """
-        import json, sys
-        from huggingface_hub import hf_hub_download, scan_cache_dir
-        from palaver import onboarding
-        repo, commit = sys.argv[1], sys.argv[2]
-        paths = [hf_hub_download(repo, f, revision=commit, local_files_only=True)
-                 for f in ("config.json", "sub/extra.json", "model.safetensors")]
-        info = scan_cache_dir()
-        files = sorted(f.file_name for r in info.repos for rev in r.revisions for f in rev.files)
-        print(json.dumps({"paths": paths, "files": files, "complete": onboarding.snapshot_complete(repo, commit),
-                          "cached": onboarding.complete(repo), "warnings": [str(w) for w in info.warnings]}))
-        """
-        let p = Process()
-        p.executableURL = py
-        p.arguments = ["-I", "-c", script, REPO, COMMIT]
-        p.currentDirectoryURL = repo
-        p.environment = ["HF_HUB_CACHE": c.root.path, "HF_HUB_OFFLINE": "1", "PYTHONPATH": repo.path, "HOME": c.root.path,
-                         "PATH": "/usr/bin:/bin"]
-        let out = Pipe()
-        p.standardOutput = out
-        try p.run()
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
-        #expect(p.terminationStatus == 0)
-        let answer = try PythonJSON.parse(data)
-        // Python names the folder by its real path (/private/var/… for /var/…).
-        let snap = c.snapshotDir(repo: REPO, revision: COMMIT).path
-        let paths = (answer["paths"]?.arrayValue ?? []).compactMap(\.stringValue)
-        #expect(paths.count == 3)
-        for (got, want) in zip(paths, [snap + "/config.json", snap + "/sub/extra.json", snap + "/model.safetensors"]) {
-            #expect(got == want || got == "/private" + want, "\(got)")
-        }
-        #expect(answer["files"] == .strings(["config.json", "extra.json", "model.safetensors", "tokenizer.json"]))
-        #expect(answer["complete"] == .bool(true) && answer["cached"] == .bool(true))
-        #expect(answer["warnings"] == .array([]))
     }
 }

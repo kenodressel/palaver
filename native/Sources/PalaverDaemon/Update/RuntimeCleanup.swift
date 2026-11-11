@@ -6,7 +6,6 @@
 //     version, `previous-app` is gone (every swap.sh, 0.3's and 0.5's too, deletes it only on success) and
 //     update.json records no failed swap. started-ok alone is not enough: a first tick after swap.sh's 120 s
 //     window writes it while the swap is already putting the old app back, which needs its runtime;
-//   - no `legacy-server` marker (or PALAVER_LEGACY_SERVER=1) asks for the Python fallback;
 //   - no Claude Code or Claude Desktop config still names the runtime itself (the MCP entries' move runs first; an
 //     entry naming a Palaver.app's `bin/python` needs no runtime: in 0.6 that is a shell shim starting
 //     `bin/palaver mcp`);
@@ -65,7 +64,6 @@ public enum RuntimeCleanup {
            let status = JSONValue.parse(data), status["state"]?.stringValue == "failed", status["from_swap"]?.truthy == true {
             return "update.json says the last update's swap failed"
         }
-        if LegacyServer.wanted(environment: f.environment, support: f.support) { return "the legacy-server fallback is on" }
         let root = f.root.path, runtimeName = "Application Support/palaver/runtime"
         for config in f.claudeConfigs {
             guard let data = fm.contents(atPath: config.path) else { continue }

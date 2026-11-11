@@ -6,7 +6,7 @@
 # exits 137 with a message on stderr; otherwise it exits with cmd's status. The footprint is read by a few lines of
 # C compiled with clang at the start (proc_pid_rusage); without clang memcap says so and falls back to RSS.
 #
-#   tools/memcap.sh 2 uv run --extra dev python tools/parity/e5_gate.py
+#   tools/memcap.sh 14 native/.build/xcode/Build/Products/Release/palaver-lm notes ~/Meetings/Recordings/<id>
 #
 # Every model or runtime experiment runs under it (plan, Global Constraints: "Memory cap").
 

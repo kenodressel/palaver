@@ -2,7 +2,7 @@
 lists and the character classes its tokenizer needs, for the glossary's "rare word" test
 (`PalaverDomain/Glossary/Zipf.swift`).
 
-    uv run --extra dev python tools/make_zipf_table.py
+    uv run --with wordfreq==3.1.1 --with regex python tools/make_zipf_table.py
 
 The file is raw DEFLATE (zlib wbits=-15, what Compression's COMPRESSION_ZLIB inflates) of UTF-8 text:
 

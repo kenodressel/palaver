@@ -123,7 +123,7 @@ import Testing
 
     // MARK: - against Python
 
-    /// The repo's venv Python, or nil (recorded as an issue: the test needs it).
+    /// The repo's venv Python (the dev tooling's, with soundfile), or nil (recorded as an issue: the test needs it).
     static func python() -> URL? {
         let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
@@ -185,55 +185,6 @@ import Testing
         let lossless = try Self.pythonReads(py, flac)
         #expect(lossless.rate == 22_050 && lossless.frames == odd.count)
         #expect(lossless.samples == odd.map { Float($0) / 32768 })
-    }
-
-    @Test func pythonImportsASwiftExportWithAudio() throws {
-        // A Swift user sends a meeting with its audio to a colleague whose Palaver is still the Python app.
-        let r = Import.Root(); defer { r.remove() }
-        guard let py = Self.python() else { return }
-        let zip = try r.export(try Self.valerie(r, audio: 3), "valerie.zip", audio: true)
-        let theirs = r.t.url.appendingPathComponent("python-meetings", isDirectory: true)
-        try FileManager.default.createDirectory(at: theirs, withIntermediateDirectories: true)
-        let script = """
-        import json, sys
-        from pathlib import Path
-        import soundfile as sf
-        from palaver import exchange
-        out = Path(sys.argv[1])
-        done = exchange.import_package(out, Path(sys.argv[2]), user_name="Timo")
-        folder = out / done.id
-        data, rate = sf.read(folder / "system.wav", dtype="int16")
-        record = json.loads((folder / "imported.json").read_text())
-        print(json.dumps({"id": done.id, "sender": done.sender, "rate": rate, "samples": data.tolist(),
-                          "files": sorted(p.name for p in folder.iterdir()), "from": record["from"],
-                          "lines": len(json.loads((folder / "transcript.json").read_text()))}))
-        """
-        let home = r.t.url.appendingPathComponent("python-home", isDirectory: true)
-        let p = Foundation.Process()
-        p.executableURL = py
-        p.arguments = ["-I", "-c", script, theirs.path, zip.path]
-        p.environment = ["HOME": home.path, "PALAVER_HOME": home.path, "XDG_CONFIG_HOME": home.appendingPathComponent("config").path,
-                         "TZ": "Europe/Berlin", "PATH": "/usr/bin:/bin"]
-        let out = Pipe(), err = Pipe()
-        p.standardOutput = out
-        p.standardError = err
-        try p.run()
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        let errors = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        p.waitUntilExit()
-        try #require(p.terminationStatus == 0, "\(errors)")
-        let v = try PythonJSON.parse(data)
-        #expect(v["id"] == .string(Import.ID) && v["sender"] == .string(Import.SENDER) && v["from"] == .string(Import.SENDER))
-        let files = v["files"]?.arrayValue?.compactMap(\.stringValue) ?? []
-        #expect(["system.wav", "transcript.json", "imported.json", "meta.json"].allSatisfy(files.contains), "\(files)")
-        // The audio Python decoded is the audio Swift's own import of the same file decodes.
-        try r.importInto(r.mine, zip)
-        // The transcript as Swift's import makes it.
-        #expect(v["lines"] == .int(PythonJSON.read(r.here().transcriptJson)?.arrayValue?.count ?? -1))
-        let rate = try Wav16.info(r.here().systemWav).rate, mine = try Wav16.read(r.here().systemWav)
-        let heard = (v["samples"]?.arrayValue ?? []).map { Float($0.intValue ?? 0) / 32768 }
-        #expect(v["rate"] == .int(rate) && heard.count == mine.count && heard.count == 3 * 16_000)
-        #expect(Self.correlation(heard, mine.map { Float($0) / 32768 }) > 0.99)
     }
 
     @Test func test_swift_decodes_a_python_opus() throws {

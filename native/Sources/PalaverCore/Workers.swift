@@ -11,7 +11,7 @@ public struct WorkerError: Error, CustomStringConvertible {
 /// Starts a worker: `/usr/sbin/taskpolicy -c <qos> <args...>`, in a session of its own (it outlives
 /// the app's process group and gets no terminal signals), with the environment merged over the
 /// app's and stdout and stderr appended to `log`. `args` is the whole command after taskpolicy's
-/// options: `[python, "-m", "palaver", ..., cmd]`. `taskpolicy` is `taskpolicy` here so tests can
+/// options: `[palaver-worker, ..., cmd]`. `taskpolicy` is `taskpolicy` here so tests can
 /// substitute it.
 @discardableResult
 public func spawnWorker(_ args: [String], qos: QoS, env: [String: String] = [:], log: URL,

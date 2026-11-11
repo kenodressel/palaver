@@ -20,11 +20,8 @@ jobs:
         # setup-uv publishes no major tags since v8 — pin the exact release.
         uses: astral-sh/setup-uv@v10.2.0
 
-      - name: Install dependencies
+      - name: Install the developer tooling (tests, release build)
         run: uv sync --python 3.13 --extra dev
-
-      - name: Build the echo-cancellation library
-        run: make aec
 
       - name: Note the Swift toolchain
         # Part of the cache key: a new Xcode on the runner must not restore a stale .build.

@@ -21,11 +21,8 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
 
-      - name: Install dependencies
+      - name: Install the developer tooling (tests, release build)
         run: uv sync --python 3.13 --extra dev
-
-      - name: Build the echo-cancellation library
-        run: make aec
 
       - name: Note the Swift toolchain
         # Part of the cache key: a new Xcode on the runner must not restore a stale .build.
@@ -49,13 +46,6 @@ jobs:
 
       - name: Run tests
         run: make test
-
-      - name: Pack the hosted models
-        # pyannote's copy, from Hugging Face: its repo is gated, so only
-        # this step gets the HF_TOKEN secret.
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: make models
 
       - name: Metal toolchain (MLX's shaders in palaver-lm)
         # make lm compiles them with xcodebuild; newer Xcodes ship the Metal compiler as a separate download.

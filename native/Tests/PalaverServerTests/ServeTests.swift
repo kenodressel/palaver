@@ -9,7 +9,7 @@ import PalaverCore
 import PalaverDomain
 @testable import PalaverServer
 
-/// native/.build/debug/palaver-server (built with the tests; `make parity-helper` builds it too).
+/// native/.build/debug/palaver-server (built with the tests; `make debug-programs` builds it too).
 private let serverBinary = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
     .deletingLastPathComponent().appendingPathComponent(".build/debug/palaver-server").path
 
@@ -268,7 +268,7 @@ private func readAll(_ fd: Int32) -> String {
         let checkout = URL(fileURLWithPath: serverBinary).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
         #expect(ServerApp.staticDir(executable: URL(fileURLWithPath: serverBinary)).standardizedFileURL.path
-                == checkout.appendingPathComponent("palaver/webapp/static").standardizedFileURL.path)
+                == checkout.appendingPathComponent("web").standardizedFileURL.path)
         #expect(FileManager.default.fileExists(atPath: ServerApp.defaultStaticDir.appendingPathComponent("index.html").path))
     }
 

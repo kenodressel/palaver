@@ -37,17 +37,16 @@ public struct CloudServices {
     }
 }
 
-/// A helper program the worker runs and waits for (palaver-lm for the notes; the name is from when it was Python),
-/// with the app's options, its stdout this process's, its stderr passed through (the last line kept: a helper's reason
+/// A helper program the worker runs and waits for (palaver-lm for the notes), with the app's options, its stdout this process's, its stderr passed through (the last line kept: a helper's reason
 /// for failing).
-public struct PythonHelper: Sendable {
-    public var python: String
+public struct HelperProgram: Sendable {
+    public var program: String
     /// The global options the worker got, passed on: `--config F`, `--dictionary F`, `--no-notify`.
     public var options: [String]
     public var env: [String: String]
 
-    public init(python: String, options: [String] = [], env: [String: String] = ProcessInfo.processInfo.environment) {
-        self.python = python
+    public init(program: String, options: [String] = [], env: [String: String] = ProcessInfo.processInfo.environment) {
+        self.program = program
         self.options = options
         self.env = env
     }
@@ -59,23 +58,23 @@ public struct PythonHelper: Sendable {
         public let lastError: String?
     }
 
-    /// `<python> <argv…>`, waited for. Throws when it can't be started. The helper stays in this worker's process
-    /// group, so the daemon's `killpg` stops it with the worker (Python ran these steps inside `palaver process`); a
+    /// `<program> <argv…>`, waited for. Throws when it can't be started. The helper stays in this worker's process
+    /// group, so the daemon's `killpg` stops it with the worker; a
     /// SIGTERM or SIGINT sent to the worker alone is passed on to it, and once it ended the worker stops the same way.
     /// Its stderr is read until it exits, then for at most `DRAIN_SECONDS` more: something it left running that keeps
     /// stderr open does not hold the worker.
     public func run(_ argv: [String]) throws -> Finished {
         fflush(stdout)
         var fds: [Int32] = [0, 0]
-        guard pipe(&fds) == 0 else { throw WorkerError("cannot start \(python): \(String(cString: strerror(errno)))") }
+        guard pipe(&fds) == 0 else { throw WorkerError("cannot start \(program): \(String(cString: strerror(errno)))") }
         for fd in fds { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }  // the child gets its dup only
         let child: PalaverCore.Process
         do {
-            child = try spawnChild([Self.resolve(python, env: env)] + argv, env: env, errors: fds[1], newSession: false)
+            child = try spawnChild([Self.resolve(program, env: env)] + argv, env: env, errors: fds[1], newSession: false)
         } catch {
             close(fds[0])
             close(fds[1])
-            throw WorkerError("cannot start \(python): \(error)")
+            throw WorkerError("cannot start \(program): \(error)")
         }
         close(fds[1])
         let forwarding = SignalForwarding(to: child)
@@ -93,14 +92,14 @@ public struct PythonHelper: Sendable {
     /// How long stderr is still read after the helper exited.
     static let DRAIN_SECONDS = 2.0
 
-    /// `python` as posix_spawn needs it: a path, else found on `PATH`.
-    static func resolve(_ python: String, env: [String: String]) -> String {
-        if python.contains("/") { return python }
+    /// `program` as posix_spawn needs it: a path, else found on `PATH`.
+    static func resolve(_ program: String, env: [String: String]) -> String {
+        if program.contains("/") { return program }
         for dir in (env["PATH"] ?? "/usr/bin:/bin").split(separator: ":") {
-            let candidate = "\(dir)/\(python)"
+            let candidate = "\(dir)/\(program)"
             if access(candidate, X_OK) == 0 { return candidate }
         }
-        return python
+        return program
     }
 }
 
@@ -200,8 +199,8 @@ public enum Pipeline {
         /// `--dictionary` as given (session.log's process_start names it), nil without.
         public var dictionaryPath: String?
         public var engine: EngineCalls
-        public var python: PythonHelper
-        /// palaver-lm, which writes the notes (with `python`'s options); nil: none, the notes are not written.
+        public var helper: HelperProgram
+        /// palaver-lm, which writes the notes (with `helper`'s options); nil: none, the notes are not written.
         public var lm: String?
         /// Whether the calendar is on, and its events (nil: off or not allowed).
         public var calendar: (enabled: Bool, provider: CalendarProvider?)
@@ -213,7 +212,7 @@ public enum Pipeline {
 
         /// `cloud` nil: the Keychain, URLSession and `stores`' config.toml.
         public init(config: Config, userName: String, dictionary: TranscriberDictionary = TranscriberDictionary(),
-                    dictionaryPath: String? = nil, engine: EngineCalls, python: PythonHelper,
+                    dictionaryPath: String? = nil, engine: EngineCalls, helper: HelperProgram,
                     calendar: (enabled: Bool, provider: CalendarProvider?) = (false, nil), stores: StorePaths = .current(),
                     cloud: CloudServices? = nil, say: @escaping (String) -> Void = Pipeline.printLine) {
             self.config = config
@@ -221,7 +220,7 @@ public enum Pipeline {
             self.dictionary = dictionary
             self.dictionaryPath = dictionaryPath
             self.engine = engine
-            self.python = python
+            self.helper = helper
             self.calendar = calendar
             self.stores = stores
             self.cloud = cloud ?? CloudServices(keys: KeyStores.make(), configToml: stores.configToml)
@@ -664,7 +663,7 @@ public enum Pipeline {
             return false
         }
         do {
-            let helper = PythonHelper(python: lm, options: setup.python.options, env: setup.python.env)
+            let helper = HelperProgram(program: lm, options: setup.helper.options, env: setup.helper.env)
             let done = try helper.run(helper.options + ["notes", folder.path])
             if done.code == 0 { return true }
             log.message("the notes helper exited with \(done.code)", level: "WARNING", logger: "palaver.worker")

@@ -11,6 +11,7 @@ from playwright.sync_api import expect  # noqa: E402
 
 from .helpers import cmd, expect_toast, goto, heading, open_meeting, run_from_menu, toast  # noqa: E402
 from .recordings import A, B, TITLES  # noqa: E402
+from .stores import read_usage, support_dir  # noqa: E402
 
 pytestmark = pytest.mark.e2e
 
@@ -88,9 +89,7 @@ def test_an_error_toast_offers_a_report_that_starts_with_its_words(page, app_ser
 
 
 def test_what_the_window_does_is_counted(page, app_server):
-    from palaver import install_layout, usage
-
-    support = install_layout.support_dir(app_server.home)  # the server's usage log and feature catalog
+    support = support_dir(app_server.home)  # the server's usage log and feature catalog
 
     open_meeting(page, app_server, A)
     run_from_menu(page, "More actions", "Report a Problem with This Meeting…")
@@ -98,7 +97,7 @@ def test_what_the_window_does_is_counted(page, app_server):
     page.evaluate("window.dispatchEvent(new Event('pagehide'))")  # posts what was counted now, not in 5 s
     events = []
     for _ in range(50):
-        events = usage.read(support / "usage.jsonl")
+        events = read_usage(support / "usage.jsonl")
         seen = {(e.get("kind"), e.get("id")) for e in events}
         if ("action", "meeting.report") in seen and ("view", "report") in seen:  # they may come in two posts
             break

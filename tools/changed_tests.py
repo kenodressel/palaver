@@ -1,10 +1,12 @@
-"""The tests for what changed since master (committed on this branch, staged,
-unstaged or new): printed for `make test-changed`, one path per line.
+"""The Python tests for what changed since master (committed on this branch, staged,
+unstaged or new): printed for `make test-changed`, one path per line. The Swift
+tests are `make swift-test FILTER=…` (or `make engine-test` for all).
 
-- a test file runs itself;
-- a module of palaver/ runs every test that imports it (by name);
-- the window's page (palaver/webapp/static/) runs the window's tests
-  (tests/e2e) and the JS tests (tests/js, through tests/test_js.py);
+- a test file runs itself; a helper of the end-to-end tests runs them (tests/e2e);
+- the window's page (web/) runs the window's tests (tests/e2e) and the page's own
+  (tests/js through tests/test_js.py, tests/test_css_scale.py);
+- the Swift programs (native/) run the end-to-end tests, which drive palaver-server
+  and palaver-lm, and the tests that start palaver-worker;
 - install.sh, a tool or a fixture runs the tests that name it;
 - anything else that tests depend on (pyproject.toml, uv.lock, conftest.py,
   the Makefile) runs everything: "tests".
@@ -13,14 +15,12 @@ Nothing printed: nothing to run.
 """
 from __future__ import annotations
 
-import re
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-EVERYTHING = {"pyproject.toml", "uv.lock", "Makefile", "tests/conftest.py", "tests/e2e/conftest.py",
-              "tests/fake_probe.py"}
+EVERYTHING = {"pyproject.toml", "uv.lock", "Makefile", "tests/conftest.py", "tests/e2e/conftest.py"}
 
 
 def changed(base: str = "master") -> set[str]:
@@ -36,18 +36,6 @@ def test_files() -> list[Path]:
     return sorted(p for p in (ROOT / "tests").rglob("test_*.py"))
 
 
-def importers(module: str, tests: list[Path]) -> set[str]:
-    """The tests that import ``module`` (dotted, e.g. palaver.webapp.api)."""
-    *package, name = module.split(".")
-    parent = ".".join(package)
-    patterns = [rf"\b{re.escape(module)}\b"]
-    if parent:  # from palaver.webapp import api, x / from palaver import onboarding as ob
-        patterns.append(rf"from {re.escape(parent)} import [^\n]*\b{re.escape(name)}\b")
-        patterns.append(rf"from {re.escape(parent)} import \([^)]*\b{re.escape(name)}\b")
-    found = re.compile("|".join(patterns))
-    return {str(t.relative_to(ROOT)) for t in tests if found.search(t.read_text(errors="replace"))}
-
-
 def mentions(word: str, tests: list[Path]) -> set[str]:
     return {str(t.relative_to(ROOT)) for t in tests if word in t.read_text(errors="replace")}
 
@@ -59,20 +47,19 @@ def select(paths: set[str]) -> set[str]:
         p = Path(path)
         if path in EVERYTHING:
             return {"tests"}
-        if path.startswith("tests/") and p.name.startswith("test_") and p.suffix == ".py":
+        if path.startswith("tests/e2e/") and p.suffix == ".py":
+            out.add("tests/e2e")
+        elif path.startswith("tests/") and p.name.startswith("test_") and p.suffix == ".py":
             if (ROOT / path).exists():
                 out.add(path)
-        elif path.startswith("palaver/webapp/static/"):
-            out |= {"tests/e2e", "tests/test_js.py"}
+        elif path.startswith("web/"):
+            out |= {"tests/e2e", "tests/test_js.py", "tests/test_css_scale.py"}
         elif path.startswith("tests/js/"):
             out.add("tests/test_js.py")
-        elif path.startswith("palaver/") and p.suffix == ".py":
-            module = ".".join(p.with_suffix("").parts)
-            if p.name == "__init__.py":
-                module = ".".join(p.parent.parts)
-            out |= importers(module, tests)
-        elif path == "install.sh" or path.startswith("tools/"):
-            out |= mentions(p.name, tests)
+        elif path.startswith("native/Sources/"):
+            out |= {"tests/e2e"} | mentions("palaver-worker", tests)
+        elif path == "install.sh" or path.startswith(("tools/", "tests/fixtures/")):
+            out |= mentions(p.name if path.startswith("tools/") or path == "install.sh" else p.parts[2], tests)
     if "tests/e2e" in out:  # the folder covers its files
         out = {t for t in out if not t.startswith("tests/e2e/")} | {"tests/e2e"}
     return out

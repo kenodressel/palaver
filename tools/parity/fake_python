@@ -1,9 +1,0 @@
-#!/bin/sh
-# palaver-worker's Python in the parity runs' worker steps (PALAVER_PYTHON on the Swift side): its helpers
-# (`-m palaver <options> cloud-transcribe|notes …`) run through tools/parity/worker_python.py, so they hear the
-# step's fake engine and fake transcription service as the Python side does.
-if [ "$1" = "-m" ] && [ "$2" = "palaver" ]; then
-  shift 2
-  exec "$PARITY_PYTHON" -m tools.parity.worker_python "$@"
-fi
-exec "$PARITY_PYTHON" "$@"

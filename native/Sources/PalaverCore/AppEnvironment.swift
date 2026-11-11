@@ -1,8 +1,6 @@
-// Where the app runs and what it starts with (cli.py's global options, install_layout.bundle,
-// app_bundle's layout): the bundle or a development build, its version, the programs it starts, the
-// developer's fallback to the Python window server and workers (a checkout's .venv only: a release
-// carries no Python), and the leftovers of an earlier run it sweeps. Pure enough to test without
-// starting anything.
+// Where the app runs and what it starts with (the global options, tools/app_bundle.py's layout): the
+// bundle or a development build, its version, the programs it starts, and the leftovers of an earlier
+// run it sweeps. Pure enough to test without starting anything.
 import Darwin
 import Foundation
 
@@ -39,7 +37,7 @@ public struct AppOptions: Equatable, Sendable {
 public struct AppLocation: Equatable, Sendable {
     /// Palaver.app, when the executable is its `Contents/MacOS/<name>`.
     public let bundle: URL?
-    /// The checkout (the folder with `palaver/__init__.py`) a development build lives in.
+    /// The checkout (the folder with `VERSION` and `native/Package.swift`) a development build lives in.
     public let checkout: URL?
 
     /// The bundle is found from its `Contents/MacOS/<name>` and from `Contents/Resources/bin/palaver` (the `palaver`
@@ -66,25 +64,15 @@ public struct AppLocation: Equatable, Sendable {
         var dir = macos
         var found: URL?
         while dir.path != "/" && !dir.path.isEmpty {
-            if fileExists(dir.appendingPathComponent("palaver/__init__.py").path) { found = dir; break }
+            if fileExists(dir.appendingPathComponent("VERSION").path),
+               fileExists(dir.appendingPathComponent("native/Package.swift").path) { found = dir; break }
             dir = dir.deletingLastPathComponent()
         }
         checkout = found
     }
 
-    /// The Python of the developer's fallback (`LegacyServer`): only a development build in a checkout has one,
-    /// `PALAVER_PYTHON` or else the checkout's `.venv/bin/python` when it is there. nil in a bundle: a release carries
-    /// no Python and never starts one.
-    public func legacyPython(environment: [String: String],
-                             isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }) -> String? {
-        guard bundle == nil, let checkout else { return nil }
-        if let p = environment["PALAVER_PYTHON"], !p.isEmpty { return p }
-        let venv = checkout.appendingPathComponent(".venv/bin/python").path
-        return isExecutable(venv) ? venv : nil
-    }
-
-    /// The version this is: the bundle's runtime.json (what the updater compares), else
-    /// `__version__` of the checkout's palaver/__init__.py; "?" when neither says.
+    /// The version this is: the bundle's runtime.json (what the updater compares), else the checkout's
+    /// `VERSION` file; "?" when neither says.
     public func version() -> String {
         if let bundle {
             let runtime = bundle.appendingPathComponent("Contents/Resources/runtime.json")
@@ -96,11 +84,9 @@ public struct AppLocation: Equatable, Sendable {
             if let info = NSDictionary(contentsOf: plist), let v = info["CFBundleShortVersionString"] as? String { return v }
             return "?"
         }
-        if let checkout, let text = try? String(contentsOf: checkout.appendingPathComponent("palaver/__init__.py"), encoding: .utf8) {
-            for line in text.split(separator: "\n") where line.hasPrefix("__version__") {
-                let parts = line.split(separator: "\"")
-                if parts.count >= 2 { return String(parts[1]) }
-            }
+        if let checkout, let text = try? String(contentsOf: checkout.appendingPathComponent("VERSION"), encoding: .utf8) {
+            let v = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !v.isEmpty { return v }
         }
         return "?"
     }
@@ -148,65 +134,28 @@ extension AppLocation {
     public static let WEB_RESOURCES = "Contents/Resources/web"
 
     /// The window's page files palaver-server serves (`--static`): the bundle's `WEB_RESOURCES` or the checkout's
-    /// `palaver/webapp/static`; nil outside both.
+    /// `web`; nil outside both.
     public func staticDir() -> URL? {
         if let bundle { return bundle.appendingPathComponent(Self.WEB_RESOURCES, isDirectory: true) }
-        if let checkout { return checkout.appendingPathComponent("palaver/webapp/static", isDirectory: true) }
+        if let checkout { return checkout.appendingPathComponent("web", isDirectory: true) }
         return nil
     }
 }
 
-/// The developer's fallback to Python (phase 4: dev only): `PALAVER_LEGACY_SERVER=1`, or this file in Application
-/// Support, runs the window's server and the workers as the Python commands (`palaver webapp-serve`,
-/// `palaver process` …), but only with a Python outside the bundle (`AppLocation.legacyPython`: a checkout's).
-/// A release has none: there the marker is ignored and app.log says so once.
-public enum LegacyServer {
-    public static let markerName = "legacy-server"
-    /// What the launchers get as their Python when there is none: never started, as every program is then the
-    /// Swift one (`binaries` never answers nil without a Python).
-    public static let NO_PYTHON = "/nonexistent/palaver-ships-no-python"
-
-    public static func wanted(environment: [String: String], support: URL,
-                              fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> Bool {
-        environment["PALAVER_LEGACY_SERVER"] == "1" || fileExists(support.appendingPathComponent(markerName).path)
-    }
-
-    /// The programs the app starts: palaver-server, palaver-worker and palaver-lm. nil (the Python command) only with
-    /// `python` (a checkout's): the fallback is wanted, or a program is not built. Without `python` each is where it
-    /// should be, also when it is missing (starting it then fails and says where). `legacy`: the fallback runs.
-    /// `said`: one line each for app.log.
-    public static func binaries(location: AppLocation, environment: [String: String], support: URL, python: String?,
-                                fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
-                                isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) })
-        -> (server: String?, worker: String?, lm: String?, legacy: Bool, said: [String]) {
+/// The programs the app starts: palaver-server, palaver-worker and palaver-lm, each where it should be (`AppLocation.binary`),
+/// also when it is missing: starting it then fails and says where. `said`: one line for app.log per missing program.
+public enum AppPrograms {
+    public static func find(location: AppLocation, environment: [String: String],
+                            isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) })
+        -> (server: String, worker: String, lm: String, said: [String]) {
         var said: [String] = []
-        if wanted(environment: environment, support: support, fileExists: fileExists) {
-            if let python {
-                return (nil, nil, nil, true, ["the window's server and the workers run in Python (\(python); "
-                                               + "PALAVER_LEGACY_SERVER=1 or \(markerName) in Application Support)"])
-            }
-            said.append("\(markerName) (or PALAVER_LEGACY_SERVER=1) is ignored: it needs a checkout's .venv, "
-                        + "and Palaver.app carries no Python")
-        }
-        func find(_ name: String, _ instead: String) -> String? {
+        func program(_ name: String) -> String {
             if let found = location.binary(name, environment: environment, fileExists: isExecutable) { return found }
             let expected = location.binaryCandidates(name, environment: environment).first ?? name
-            guard python != nil else {
-                said.append("\(name) is missing (\(expected))")
-                return expected
-            }
-            said.append("\(name) is missing: \(instead)")
-            return nil
+            said.append("\(name) is missing (\(expected))")
+            return expected
         }
-        let server = find("palaver-server", "using Python's webapp-serve")
-        let worker = find("palaver-worker", "using Python's workers")
-        // palaver-server and palaver-worker look for palaver-lm beside themselves and never run Python's notes: only
-        // the notes and projects the app itself starts fall back.
-        let lm = find("palaver-lm", worker == nil
-                      ? "the notes and projects run in Python"
-                      : "the notes the app starts run in Python; the window's server and palaver-worker write no notes "
-                        + "and say palaver-lm is missing")
-        return (server, worker, lm, false, said)
+        return (program("palaver-server"), program("palaver-worker"), program("palaver-lm"), said)
     }
 }
 

@@ -1,11 +1,11 @@
 // The speaker lanes' ⋯ menu and the texts of their toasts, from the meeting
-// JSON alone (palaver/webapp/static/logic.js).
+// JSON alone (web/logic.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { laneCommands, laneLines, labelDisplay, linesText, namingText, withName, inlinePlay, roomText, roomNameText,
   unknownText }
-  from "../../palaver/webapp/static/logic.js";
+  from "../../web/logic.js";
 
 const you = { label: null, name: "Timo", display: "Timo", is_user: true, clips: [] };
 

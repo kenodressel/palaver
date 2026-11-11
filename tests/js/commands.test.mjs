@@ -1,9 +1,9 @@
 // The meeting's commands (toolbar, ⋯ menu, list right-click, native menu):
-// which apply to a meeting, from its JSON alone (palaver/webapp/static/logic.js).
+// which apply to a meeting, from its JSON alone (web/logic.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { meetingCommands, nextAfter } from "../../palaver/webapp/static/logic.js";
+import { meetingCommands, nextAfter } from "../../web/logic.js";
 
 const NAMES = ["trash", "joinPrevious", "joinNext", "changeEvent", "split", "reviewAgain", "writeNotes", "play",
   "localOnly", "shared", "forgetSeries", "rename", "export", "report", "transcribe", "deleteAudio"];
@@ -107,7 +107,7 @@ test("a remembered series can be forgotten from the menu, and only then is it th
 });
 
 test("Transcribe Again: only for a meeting not transcribed, which can then go to the trash too", async () => {
-  const { untranscribedText } = await import("../../palaver/webapp/static/logic.js");
+  const { untranscribedText } = await import("../../web/logic.js");
   for (const status of ["failed", "waiting"]) {
     const c = meetingCommands(ready({ status, transcript: [] }));
     assert.equal(c.transcribe.enabled, true, status);

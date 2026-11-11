@@ -70,34 +70,16 @@ import Testing
         #expect(SettingsFile.me(userName: "Timo Strauß", stores: s) == ["timo strauss", "timo"])
     }
 
-    @Test func test_two_processes_updating_at_once_lose_no_change() throws {
+    @Test func test_writers_updating_at_once_lose_no_change() throws {
         let s = stores()
         try FileManager.default.createDirectory(at: s.configDir, withIntermediateDirectories: true)
-        let script = "import sys\nfrom palaver import settings\nfor i in range(40):\n    settings.update({f'{sys.argv[1]}{i}': True})\n"
-        // Python writers (the repo's venv, when it is there) and Swift writers, all at once.
-        var procs: [Foundation.Process] = []
-        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-        let py = repo.appendingPathComponent(".venv/bin/python")
-        if !FileManager.default.isExecutableFile(atPath: py.path) {
-            Issue.record("no \(py.path): the Python half of the cross-process test cannot run")
-        } else {
-            for who in ["a", "b"] {
-                let p = Foundation.Process()
-                p.executableURL = py
-                p.arguments = ["-c", script, who]
-                p.environment = ["XDG_CONFIG_HOME": s.configDir.deletingLastPathComponent().path, "PYTHONPATH": repo.path]
-                try p.run(); procs.append(p)
-            }
-        }
         let group = DispatchGroup()
-        for who in ["c", "d"] {
+        for who in ["a", "b", "c", "d"] {
             DispatchQueue.global().async(group: group) {
                 for i in 0..<40 { try? SettingsFile.update([("\(who)\(i)", .bool(true))], stores: s) }
             }
         }
         group.wait()
-        for p in procs { p.waitUntilExit(); #expect(p.terminationStatus == 0) }
         let raw = SettingsFile.readRaw(stores: s)
         for w in ["a", "b", "c", "d"] { for i in 0..<40 { #expect(raw["\(w)\(i)"] == .bool(true)) } }
         let left = try FileManager.default.contentsOfDirectory(atPath: s.configDir.path).filter { $0.contains(".tmp") }

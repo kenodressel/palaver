@@ -64,7 +64,7 @@ enum SetupFixtures {
     static let golden: JSONValue = {
         let url = Bundle.module.resourceURL!.appendingPathComponent("Fixtures/setup-goldens.json.gz")
         guard let packed = try? Data(contentsOf: url), let data = gunzip(packed), let value = try? PythonJSON.parse(data) else {
-            Issue.record("no golden \(url.path): run `uv run --extra dev python tools/parity/goldens.py setup`")
+            Issue.record("no golden \(url.path): the goldens are frozen, restore it from git")
             return .object([])
         }
         return value

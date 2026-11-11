@@ -14,6 +14,7 @@ from playwright.sync_api import expect  # noqa: E402
 
 from .helpers import expect_toast, goto, line, menu_item, open_meeting, reload, show_tab, undo_in_toast  # noqa: E402
 from .recordings import A, B, C, LIVE, _at  # noqa: E402
+from .stores import prepared_notes_folder, save_my_notes  # noqa: E402
 
 pytestmark = pytest.mark.e2e
 
@@ -245,14 +246,12 @@ def test_notes_written_in_another_window_meanwhile_are_merged_not_overwritten(pa
 
 
 def test_picking_the_event_brings_its_prepared_notes_and_keeps_what_was_typed(page, app_server):
-    from palaver import my_notes
-
     start = _at(B)
     event = lambda title, uid: {"title": title, "start": start.isoformat(),  # noqa: E731
                                 "end": (start + timedelta(minutes=45)).isoformat(), "attendees": [], "uid": uid}
     (app_server.root / B / "calendar.json").write_text(json.dumps({"question": [event("Design review", "design"),
                                                                               event("Northwind", "north")]}))
-    my_notes.save(my_notes.prep_folder(f"north|{start.date().isoformat()}"),
+    save_my_notes(prepared_notes_folder(f"north|{start.date().isoformat()}"),
                   [{"text": "Ask about the lottery budget", "at": None}])
     open_meeting(page, app_server, B, tab="Notes")
     _start_typing(page)

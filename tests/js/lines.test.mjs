@@ -1,11 +1,11 @@
 // A transcript line's toolbar and right-click menu, the word "Fix spelling"
 // starts from, and the texts of a line edit and a cut
-// (palaver/webapp/static/logic.js).
+// (web/logic.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { clock, lineCommands, lineMarks, fixableWord, lineBefore, lineEditedText, cutKind }
-  from "../../palaver/webapp/static/logic.js";
+  from "../../web/logic.js";
 
 function meeting(extra = {}) {
   return {

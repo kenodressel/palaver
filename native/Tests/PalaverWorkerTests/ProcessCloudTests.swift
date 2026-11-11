@@ -91,7 +91,7 @@ private struct Cloud {
 
     func setup(_ engine: EngineCalls, calendar: CalendarProvider? = nil) -> Pipeline.Setup {
         var s = h.setup(engine, python: t.file("python").path, calendar: calendar)
-        s.python = PythonHelper(python: t.file("python").path, options: ["--config", "/c/config.toml", "--no-notify"], env: env)
+        s.helper = HelperProgram(program: t.file("python").path, options: ["--config", "/c/config.toml", "--no-notify"], env: env)
         s.cloud = CloudServices(keys: keys, http: services.client, configToml: t.file("config.toml"), env: env)
         s.lm = t.file("python").path  // palaver-lm: the same script
         return s
@@ -370,13 +370,13 @@ private func texts(_ paths: RecordingPaths) -> [String?]? { readJSON(paths.trans
 
 /// How the worker runs its Python helpers (Batch B review): in its own process group, stderr read until the helper
 /// exits plus a bounded drain.
-@Suite struct PythonHelperTests {
-    private func helper(_ t: Temp, _ script: String) -> PythonHelper {
+@Suite struct HelperProgramTests {
+    private func helper(_ t: Temp, _ script: String) -> HelperProgram {
         t.write("python", "#!/bin/sh\n" + script)
         chmod(t.file("python").path, 0o755)
         var env = testEnv(t)
         env["OUT"] = t.file("out").path
-        return PythonHelper(python: t.file("python").path, env: env)
+        return HelperProgram(program: t.file("python").path, env: env)
     }
 
     @Test func aHelperStaysInTheWorkersProcessGroup() throws {
@@ -398,6 +398,6 @@ private func texts(_ paths: RecordingPaths) -> [String?]? { readJSON(paths.trans
 
     @Test func aHelperThatCannotStartIsAnError() {
         let t = Temp(); defer { t.remove() }
-        #expect(throws: PalaverWorker.WorkerError.self) { try PythonHelper(python: t.file("missing").path, env: testEnv(t)).run([]) }
+        #expect(throws: PalaverWorker.WorkerError.self) { try HelperProgram(program: t.file("missing").path, env: testEnv(t)).run([]) }
     }
 }

@@ -3,10 +3,9 @@ import PackageDescription
 
 let v5: [SwiftSetting] = [.swiftLanguageMode(.v5)]
 
-/// The repository's root (this file is native/Package.swift) and the echo canceller's prebuilt archives there
-/// (palaver/_vendored/webrtc_aec, as its CMakeLists.txt links them).
-let repoRoot = String(#filePath.dropLast("native/Package.swift".count))
-let aecDir = repoRoot + "palaver/_vendored/webrtc_aec/lib/"
+/// The echo canceller's prebuilt archives (native/Vendored/webrtc_aec/lib, beside this file).
+let packageDir = String(#filePath.dropLast("Package.swift".count))
+let aecDir = packageDir + "Vendored/webrtc_aec/lib/"
 
 let package = Package(
     name: "palaver-engine",
@@ -34,10 +33,6 @@ let package = Package(
                           dependencies: ["PalaverCore", "PalaverDaemon", "PalaverCapture", "PalaverCloud"],
                           resources: [.copy("Resources/menubar.png")],  // the template icon (black: macOS tints it)
                           swiftSettings: v5),
-        // Test-only: binds the notify socket with a recording fake center (tests/test_notify_swift_contract.py).
-        .executableTarget(name: "palaver-notify-helper", dependencies: ["PalaverCore"], swiftSettings: v5),
-        // Test-only: serves app.sock with fake handlers (tests/test_appctl_swift_contract.py).
-        .executableTarget(name: "palaver-appctl-helper", dependencies: ["PalaverCore", "PalaverDaemon"], swiftSettings: v5),
         // tools/smoke_install.sh's driver of an installed app's Swift updater (never in Palaver.app).
         .executableTarget(name: "palaver-update-driver", dependencies: ["PalaverCore", "PalaverDaemon", "PalaverDomain"],
                           swiftSettings: v5),
@@ -51,12 +46,10 @@ let package = Package(
                 cSettings: [.define("HAVE_CONFIG_H"), .define("OPUS_WILL_BE_SLOW", .when(configuration: .debug)),
                             .headerSearchPath("."), .headerSearchPath("celt"),
                             .headerSearchPath("silk"), .headerSearchPath("silk/float")]),
-        // The server's domain (phase 3): every file format and rule the Python app has, no AppKit, no NIO.
+        // The server's domain (phase 3): every file format and rule of the meetings, no AppKit, no NIO.
         .target(name: "PalaverDomain", dependencies: ["PalaverCore", "COgg", "COpus"], resources: [.copy("Resources")], swiftSettings: v5),
         .testTarget(name: "PalaverDomainTests", dependencies: ["PalaverDomain", "PalaverCore", "COgg", "COpus"],
                     resources: [.copy("Goldens")], swiftSettings: v5),
-        // Test-only: one parity op on one side (tools/parity/run.py, tests/test_parity.py).
-        .executableTarget(name: "palaver-parity", dependencies: ["PalaverDomain", "PalaverCore"], swiftSettings: v5),
         // Phase 4: the Keychain, the providers, the HTTP transport and the access log (no MLX). The legacy Keychain
         // ACL calls (deprecated, still the only way to trust several executables) sit in a small C shim.
         .target(name: "CKeychainACL", path: "Sources/CKeychainACL", publicHeadersPath: "include",
@@ -77,7 +70,7 @@ let package = Package(
                     resources: [.copy("Fixtures")], swiftSettings: v5),
         // The pipeline's worker (phase 3): `palaver-worker <cmd> …`, the port of `palaver process|run|live|stream|coach|
         // index`, `calendar attach` and `app query`; the speech engine runs in its process.
-        // WebRTC echo cancellation (libraven_aec): the archives force-loaded as in CMakeLists.txt, the header in place.
+        // WebRTC echo cancellation (libraven_aec): the prebuilt archives force-loaded, the header in place.
         .target(name: "CRavenAEC", path: "Sources/CRavenAEC",
                 linkerSettings: [.unsafeFlags(["-Xlinker", "-force_load", "-Xlinker", aecDir + "Darwin/libraven_aec.a",
                                                aecDir + "macos/libwebrtc_audio_processing.a", aecDir + "macos/libcommon_audio.a",

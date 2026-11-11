@@ -33,16 +33,10 @@ struct AppSetup {
     let location: AppLocation
     let options: AppOptions
     let version: String
-    /// The developer's fallback Python (a checkout's .venv); LegacyServer.NO_PYTHON in a release, where the
-    /// programs below are never nil and nothing starts it.
-    let python: String
-    /// palaver-server and palaver-worker; nil: Python's command (a development build's legacy-server fallback).
-    let server: String?
-    let worker: String?
-    /// palaver-lm (notes, projects); nil: Python's command (a development build's legacy-server fallback).
-    let lm: String?
-    /// The legacy-server fallback runs.
-    let legacyServer: Bool
+    /// palaver-server, palaver-worker and palaver-lm (notes, projects).
+    let server: String
+    let worker: String
+    let lm: String
     let log: AppLog
     /// What every child gets on top of the app's environment (PALAVER_APP, PALAVER_NOTIFY, …).
     var childEnv: [String: String]
@@ -88,7 +82,7 @@ final class PalaverApp: NSObject, NSApplicationDelegate {
         usage = UsageLog(url: paths.support.appendingPathComponent("usage.jsonl"))
         bundleWatch = BundleWatch(bundle: setup.location.bundle)
 
-        let launcher = WorkerLauncher(python: setup.python, worker: setup.worker, lm: setup.lm, cliOptions: cliOptions,
+        let launcher = WorkerLauncher(worker: setup.worker, lm: setup.lm, cliOptions: cliOptions,
                                       log: paths.daemonLog, env: setup.childEnv)
         let facts = Self.facts(setup: setup, configURL: configURL)
         // Built at once with the last answer (or config.toml's view), then worked out in the background.
@@ -104,8 +98,8 @@ final class PalaverApp: NSObject, NSApplicationDelegate {
         let testRecorder = TestRecorder.live(
             sources: { CaptureSources.live(excludedPIDs: { pids.daemon?.excludedPIDs() ?? [getpid()] },
                                            log: { log.line("INFO", $0, logger: "palaver.onboarding") }) },
-            worker: setup.worker, python: setup.python, cliOptions: cliOptions, env: setup.childEnv)
-        let helpers = HelperJobs(outputDir: { config.outputDir }, python: setup.python, lm: setup.lm, cliOptions: cliOptions,
+            worker: setup.worker, cliOptions: cliOptions, env: setup.childEnv)
+        let helpers = HelperJobs(outputDir: { config.outputDir }, lm: setup.lm, cliOptions: cliOptions,
                                  env: setup.childEnv)
 
         let later = Later()  // the menu and the window's server exist only after the daemon
@@ -133,7 +127,7 @@ final class PalaverApp: NSObject, NSApplicationDelegate {
                               log: { log.warning($0) })
         let window = self.window
         web = AppPart.optional("the window's server", log: { log.warning($0) }) {
-            try startWebServer(window: window, python: setup.python, server: setup.server, staticDir: setup.location.staticDir(),
+            try startWebServer(window: window, server: setup.server, staticDir: setup.location.staticDir(),
                                cliOptions: cliOptions, appSocket: paths.appSock,
                                env: WebSupervisor.childEnv(ProcessInfo.processInfo.environment.merging(setup.childEnv) { $1 }),
                                log: { log.line("INFO", $0, logger: "palaver.webapp") })
@@ -153,7 +147,7 @@ final class PalaverApp: NSObject, NSApplicationDelegate {
     }
 
     /// The facts the daemon waits on: `missing-models`, `index-stale`, `notes-memory` and `event-key` from the
-    /// domain in this process (also in the legacy-server fallback: the same stores either way).
+    /// domain in this process.
     private static func facts(setup: AppSetup, configURL: URL) -> PythonFacts {
         let log = setup.log
         return PythonFacts(query: PythonFacts.query(config: { Config.load(configURL) }, calendar: PythonFacts.eventKitCalendar),

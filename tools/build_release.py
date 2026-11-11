@@ -45,7 +45,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from palaver import release  # noqa: E402
+from tools import app_bundle, release  # noqa: E402
 
 ARCH = "arm64"
 
@@ -144,7 +144,7 @@ LM_BIN = LM_PRODUCTS / "palaver-lm"
 LM_RESOURCES = (LM_PRODUCTS / "mlx-swift_Cmlx.bundle" / "Contents" / "Resources" / "default.metallib",
                 LM_PRODUCTS / "swift-transformers_Hub.bundle")
 MCP_SHIM = ROOT / "native" / "Bundle" / "bin" / "python"  # Contents/Resources/bin/python, for 0.6 only
-WEB = ROOT / "palaver" / "webapp" / "static"  # the window's page files: Contents/Resources/web
+WEB = ROOT / "web"  # the window's page files: Contents/Resources/web
 DOMAIN_RESOURCES = ROOT / "native" / "Sources" / "PalaverDomain" / "Resources"  # zipf.bin
 LICENSES = ROOT / "THIRD_PARTY_LICENSES.md"
 
@@ -202,13 +202,11 @@ def check_bundle(app: Path) -> None:
 def build_app(dist: Path, version: str | None = None, engine: Path | None = None,
               app_binary: Path | None = None, server: Path | None = None, worker: Path | None = None,
               lm: Path | None = None, lm_resources: tuple[Path, ...] | None = None, cli: Path | None = None) -> Path:
-    """``version``: another version than the code's (the smoke test's update). ``engine``,
+    """``version``: another version than VERSION's (the smoke test's update). ``engine``,
     ``app_binary``, ``server``, ``worker``, ``cli``: the built palaver-engine, Swift app,
     palaver-server, palaver-worker and palaver-cli (default: all from native/.build/release);
     ``lm``, ``lm_resources``: palaver-lm and its shaders and resources (default: xcodebuild's
     products, LM_PRODUCTS)."""
-    from palaver import __version__, app_bundle
-
     def built(given: Path | None, default: Path, target: str) -> Path:
         path = given or default
         if not path.is_file():
@@ -225,7 +223,7 @@ def build_app(dist: Path, version: str | None = None, engine: Path | None = None
     for needed in lm_resources:
         if not needed.exists():
             raise SystemExit(f"✗ {needed} is missing: run `make lm` first (make app does)")
-    version = version or __version__
+    version = version or app_bundle.checkout_version()
     out = dist / "app"
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
@@ -268,11 +266,9 @@ def build_manifest(dist: Path, previous: str | None, notes: str | None,
     """``base_url``: where the assets are instead of this release on GitHub
     (a file:// folder, to test an update from inside the app). The runtime block names the
     placeholder (`compat-runtime`): the updaters of releases before 0.6 need one."""
-    from palaver import __version__
-
-    __version__ = version or __version__
+    version = version or app_bundle.checkout_version()
     rid = COMPAT_RUNTIME_ID
-    tag = f"v{__version__}"
+    tag = f"v{version}"
     old = _previous(previous)
     runtime = next(iter(sorted(dist.glob(f"palaver-runtime-{rid}.tar.*"))), None)
     if runtime is None:
@@ -287,11 +283,11 @@ def build_manifest(dist: Path, previous: str | None, notes: str | None,
             uploads.append(path.name)
         return a
 
-    app_zip = dist / f"palaver-app-{__version__}.zip"
+    app_zip = dist / f"palaver-app-{version}.zip"
     if app_runtime_id(app_zip) != rid:  # the updaters before 0.6 would refuse the app
         raise SystemExit(f"✗ {app_zip.name}'s runtime.json names {app_runtime_id(app_zip)}, the manifest {rid}")
     manifest = release.Manifest(
-        version=__version__, app=asset(app_zip), runtime_id=rid,
+        version=version, app=asset(app_zip), runtime_id=rid,
         runtime=asset(runtime), models=(), minimum_macos="15.0", arch=ARCH,
         notes=Path(notes).read_text().strip() if notes and Path(notes).exists() else None)
     out = dist / "manifest.json"

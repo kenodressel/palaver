@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { stopQuestionFor, stopAnswerText } from "../../palaver/webapp/static/logic.js";
+import { stopQuestionFor, stopAnswerText } from "../../web/logic.js";
 
 const ID = "2026-10-29T16-07-55";
 const asked = { meeting: ID, reason: "teams", minutes: 10, message: "You started this recording yourself, and your Teams call just ended. Stop recording?" };
@@ -22,7 +22,7 @@ test("stopAnswerText says what happened and when it asks again", () => {
 });
 
 // Why it records, why it stopped, where it paused (issue #47).
-import { recordingLine, gapsBefore } from "../../palaver/webapp/static/logic.js";
+import { recordingLine, gapsBefore } from "../../web/logic.js";
 
 test("recordingLine: why the running recording records, else how it was recorded", () => {
   const rec = { meeting: ID, text: "Recording · Teams call since 16:07 · mic AirPods (24 kHz)" };
@@ -44,7 +44,7 @@ test("gapsBefore: each pause shows once, before the first line after it", () => 
 
 // Audio problems (issue #50): live warnings of the running recording, or
 // when a finished one's audio went wrong.
-import { audioWarnings } from "../../palaver/webapp/static/logic.js";
+import { audioWarnings } from "../../web/logic.js";
 
 test("audioWarnings: the running recording's warnings, else the meeting's audio problems", () => {
   const rec = { meeting: ID, text: "Recording", warnings: ["System audio is playing at the wrong speed; Palaver is correcting it"] };
@@ -58,7 +58,7 @@ test("audioWarnings: the running recording's warnings, else the meeting's audio 
   assert.deepEqual(audioWarnings(null, rec), []);
 });
 
-import { audioHints } from "../../palaver/webapp/static/logic.js";
+import { audioHints } from "../../web/logic.js";
 
 test("audioHints: the running recording's soft hints, only on its own page", () => {
   const rec = { meeting: ID, text: "Recording", warnings: [], hints: ["Your mic sends nothing — muted?"] };
@@ -70,7 +70,7 @@ test("audioHints: the running recording's soft hints, only on its own page", () 
 });
 
 // While the window's server restarts (#57): a quiet "Reconnecting…" after 2 s without an answer.
-import { heartbeat } from "../../palaver/webapp/static/logic.js";
+import { heartbeat } from "../../web/logic.js";
 
 function fakeClock() {
   const timers = new Map();
@@ -118,7 +118,7 @@ test("heartbeat: a failed request shows the line at once", async () => {
 
 // --- recording by hand from the window (#11) ---
 
-import { recordingNow, recordingCommand, paletteMatch } from "../../palaver/webapp/static/logic.js";
+import { recordingNow, recordingCommand, paletteMatch } from "../../web/logic.js";
 
 test("a stopped recording that is still finishing is no longer the one being recorded", () => {
   assert.equal(recordingNow([{ id: "a", status: "recording", finishing: true }]), null);

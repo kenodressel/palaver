@@ -7,13 +7,12 @@ import pytest
 
 from playwright.sync_api import expect  # noqa: E402
 
-from palaver.paths import RecordingPaths  # noqa: E402
-
 from .helpers import (  # noqa: E402
     audio, expect_toast, goto, heading, lane, line, line_tool, list_item, open_meeting, reload, show_tab,
     speakers_in_transcript,
 )
 from .recordings import A, B, LIVE, write_stream  # noqa: E402
+from .stores import RecordingPaths  # noqa: E402
 
 pytestmark = pytest.mark.e2e
 

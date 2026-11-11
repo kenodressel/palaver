@@ -1,85 +1,35 @@
-"""Tests for building Palaver.app (menu bar app bundle)."""
+"""Tests for building the release Palaver.app (tools/app_bundle.py, tools/build_release.py)."""
 
 import plistlib
 import shutil
-import signal
 import subprocess
-import time
 from pathlib import Path
 
 import pytest
 
-from palaver import app_bundle
+from tools import app_bundle
 
 
 def test_info_plist_declares_menu_bar_app_and_usage_strings():
-    info = app_bundle.info_plist()
+    info = app_bundle.info_plist("1.2.3")
     assert info["CFBundleIdentifier"] == app_bundle.BUNDLE_ID
+    assert info["CFBundleShortVersionString"] == info["CFBundleVersion"] == "1.2.3"
     assert info["LSUIElement"] is True  # menu bar only, no Dock icon
     assert "NSMicrophoneUsageDescription" in info
     assert "NSAudioCaptureUsageDescription" in info
 
 
 def test_info_plist_lets_plain_http_reach_only_the_local_network():
-    ats = app_bundle.info_plist()["NSAppTransportSecurity"]
+    ats = app_bundle.info_plist("1.0")["NSAppTransportSecurity"]
     assert ats == {"NSAllowsLocalNetworking": True,
                    "NSExceptionDomains": {d: {"NSIncludesSubdomains": True, "NSExceptionAllowsInsecureHTTPLoads": True}
                                           for d in ("lan", "home.arpa")}}
     assert "NSAllowsArbitraryLoads" not in ats  # public hosts stay https only
 
 
-def test_launch_agent_opens_the_app_at_login(tmp_path: Path):
-    app = tmp_path / "Palaver.app"
-    agent = plistlib.loads(app_bundle.launch_agent_plist(app))
-    assert agent["ProgramArguments"] == ["/usr/bin/open", "-g", "-a", str(app)]
-    assert agent["RunAtLoad"] is True
-
-
-def test_c_string_escaping():
-    assert app_bundle._c_string('a "b" \\ c') == '"a \\"b\\" \\\\ c"'
-    assert app_bundle._c_string("Müller") == '"M\\303\\274ller"'
-
-
-@pytest.mark.skipif(shutil.which("clang") is None, reason="needs Xcode Command Line Tools")
-def test_launcher_spawns_child_forwards_exit_code_and_signals(tmp_path: Path):
-    marker = tmp_path / "args.txt"
-    fake_python = tmp_path / "fake python"  # path with a space
-    fake_python.write_text(
-        "#!/bin/sh\n"
-        f'echo "$@" > "{marker}"\n'
-        'trap "exit 7" TERM\n'
-        "sleep 30 & wait\n"
-    )
-    fake_python.chmod(0o755)
-    launcher = tmp_path / "launcher"
-    app_bundle.compile_launcher(
-        launcher,
-        python=fake_python,
-        cli_options=["--config", "/x y/c.toml"],
-        log_path=tmp_path / "app.log",
-    )
-
-    proc = subprocess.Popen([str(launcher)])
-    deadline = time.monotonic() + 5
-    while not marker.exists() and time.monotonic() < deadline:
-        time.sleep(0.05)
-    assert marker.read_text().strip() == "-m palaver --config /x y/c.toml menubar"
-    proc.send_signal(signal.SIGTERM)
-    assert proc.wait(timeout=5) == 7
-
-
-def test_build_app_layout(tmp_path: Path, monkeypatch):
-    calls = []
-    monkeypatch.setattr(app_bundle, "compile_launcher", lambda path, **kw: path.write_text("bin"))
-    monkeypatch.setattr(app_bundle.subprocess, "run", lambda argv, **kw: calls.append(argv))
-
-    app = app_bundle.build_app(tmp_path, python=Path("/venv/bin/python"), cli_options=[])
-
-    assert app == tmp_path / "Palaver.app"
-    info = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
-    assert (app / "Contents" / "MacOS" / info["CFBundleExecutable"]).exists()
-    assert (app / "Contents" / "Resources" / info["CFBundleIconFile"]).stat().st_size > 0
-    assert calls[-1][:4] == ["codesign", "--force", "--sign", "-"]
+def test_the_version_is_the_checkouts_version_file():
+    text = (Path(__file__).resolve().parent.parent / "VERSION").read_text()
+    assert app_bundle.checkout_version() == text.strip() and text.strip()
 
 
 def test_the_sign_identity_is_ad_hoc_in_tests_and_the_certificate_when_named(monkeypatch):
@@ -89,54 +39,6 @@ def test_the_sign_identity_is_ad_hoc_in_tests_and_the_certificate_when_named(mon
     assert "PALAVER_SIGN_IDENTITY" not in os.environ and app_bundle.sign_identity() == "-"
     monkeypatch.setenv("PALAVER_SIGN_IDENTITY", "Palaver Release")
     assert app_bundle.sign_identity() == "Palaver Release"
-
-
-def test_store_tokens_copies_env_tokens_to_keychain(monkeypatch):
-    import keyring
-
-    stored = {}
-    monkeypatch.setattr(keyring, "set_password", lambda s, n, v: stored.update({(s, n): v}))
-    monkeypatch.setenv("NOTION_TOKEN", "ntn_x")
-    monkeypatch.delenv("HF_TOKEN", raising=False)
-    assert app_bundle.store_tokens_in_keychain() == ["NOTION_TOKEN"]
-    assert stored == {("palaver", "NOTION_TOKEN"): "ntn_x"}
-
-
-def test_autostart_toggle(tmp_path: Path, monkeypatch):
-    agent = tmp_path / "LaunchAgents" / "agent.plist"
-    monkeypatch.setattr(app_bundle, "LAUNCH_AGENT", agent)
-    monkeypatch.setattr(app_bundle, "APPS_DIR", tmp_path / "Applications")
-    app_bundle.set_autostart(True)
-    args = plistlib.loads(agent.read_bytes())["ProgramArguments"]
-    assert args[-1] == str(tmp_path / "Applications" / "Palaver.app")
-    app_bundle.set_autostart(False)
-    assert not agent.exists()
-
-
-def test_install_replaces_the_app_under_its_old_name(tmp_path: Path, monkeypatch):
-    apps, agent = tmp_path / "Applications", tmp_path / "LaunchAgents" / "agent.plist"
-    monkeypatch.setattr(app_bundle, "APPS_DIR", apps)
-    monkeypatch.setattr(app_bundle, "LAUNCH_AGENT", agent)
-    monkeypatch.setattr("palaver.menubar.PERMISSIONS_MARKER", tmp_path / "permissions-requested")
-    monkeypatch.setattr(app_bundle, "compile_launcher", lambda path, **kw: path.write_text("bin"))
-    quits = []
-    monkeypatch.setattr(app_bundle.subprocess, "run", lambda argv, **kw: quits.append(argv))
-    old = apps / "Meeting Transcribe.app"
-    (old / "Contents").mkdir(parents=True)
-    app_bundle.LAUNCH_AGENT.parent.mkdir()
-    agent.write_bytes(app_bundle.launch_agent_plist(old))
-
-    app = app_bundle.install(python=Path("/venv/bin/python"), cli_options=[], login=False)
-
-    assert app == apps / "Palaver.app" and not old.exists()
-    assert ["osascript", "-e", 'tell application "Meeting Transcribe" to quit'] in quits
-    assert plistlib.loads(agent.read_bytes())["ProgramArguments"][-1] == str(app)
-
-
-def test_the_permissions_marker_is_where_the_menu_bar_app_keeps_it():
-    from palaver import install_layout, menubar
-
-    assert menubar.PERMISSIONS_MARKER == install_layout.permissions_marker()
 
 
 def _build_release():
@@ -182,7 +84,7 @@ def _resources(tmp_path: Path) -> Path:
 
 ROOT = Path(__file__).resolve().parent.parent
 MCP_SHIM = ROOT / "native" / "Bundle" / "bin" / "python"
-WEB = ROOT / "palaver" / "webapp" / "static"
+WEB = ROOT / "web"
 
 
 def _release_app(tmp_path: Path, version: str = "1.0") -> Path:
@@ -207,7 +109,7 @@ def test_a_release_app_is_the_swift_programs_and_nothing_of_python(tmp_path: Pat
     macos, resources = app / "Contents" / "MacOS", app / "Contents" / "Resources"
     info = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
     assert info["CFBundleExecutable"] == "Palaver" and info["CFBundleIdentifier"] == app_bundle.BUNDLE_ID
-    assert "PalaverRuntimeID" not in info and info["CFBundleShortVersionString"] == app_bundle.__version__
+    assert "PalaverRuntimeID" not in info and info["CFBundleShortVersionString"] == "9.9.9"
     assert sorted(p.name for p in macos.iterdir()) == [
         "Palaver", "palaver-engine", "palaver-lm", "palaver-server", "palaver-worker"]
     assert sorted(p.name for p in (resources / "bin").iterdir()) == ["palaver", "python"]
@@ -228,7 +130,7 @@ def test_a_release_app_is_the_swift_programs_and_nothing_of_python(tmp_path: Pat
 
 @pytest.mark.skipif(shutil.which("codesign") is None, reason="macOS only")
 def test_every_program_is_signed_as_0_5_was_without_the_hardened_runtime(tmp_path: Path):
-    """0.6.0rc1 signs as 0.5 did (Keno's ruling): one identity on every program, no hardened runtime and so no
+    """0.6 signs as 0.5 did (Keno's ruling): one identity on every program, no hardened runtime and so no
     entitlements, until notarization turns HARDENED_RUNTIME on."""
     assert app_bundle.HARDENED_RUNTIME is False
     app = _release_app(tmp_path)
@@ -331,11 +233,3 @@ def test_build_app_refuses_without_a_program(tmp_path: Path):
     # The shaders are part of palaver-lm: without them it can't run the local model.
     with pytest.raises(SystemExit, match="make lm"):
         _build_release().build_app(tmp_path, lm_resources=(tmp_path / "missing.metallib",), **programs)
-
-
-def test_a_development_install_keeps_the_launcher_and_the_python_menu_bar_app(tmp_path: Path, monkeypatch):
-    """`palaver app install` from a checkout: the ObjC launcher runs the venv's `palaver menubar`."""
-    monkeypatch.setattr(app_bundle, "compile_launcher", lambda path, **kw: path.write_text("bin"))
-    monkeypatch.setattr(app_bundle.subprocess, "run", lambda argv, **kw: None)
-    app = app_bundle.build_app(tmp_path, python=Path("/venv/bin/python"), cli_options=[])
-    assert plistlib.loads((app / "Contents" / "Info.plist").read_bytes())["CFBundleExecutable"] == "palaver-launcher"

@@ -308,7 +308,7 @@ public enum WorkerMain {
         #endif
         var setup = Pipeline.Setup(config: config, userName: SettingsFile.currentUserName(default: config.userName, stores: stores),
                                    dictionary: dictionary, dictionaryPath: o.dictionary.map { ($0 as NSString).expandingTildeInPath },
-                                   engine: engine, python: helper(o, env: env), calendar: calendar(config, env: env),
+                                   engine: engine, helper: helper(o, env: env), calendar: calendar(config, env: env),
                                    stores: stores, cloud: cloud)
         setup.lm = AppLocation.languageModelWorker(beside: Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0]),
                                                    environment: env)
@@ -316,14 +316,14 @@ public enum WorkerMain {
     }
 
     /// The helper this worker starts (palaver-lm, beside it), with the options this worker got.
-    static func helper(_ o: Options, env: [String: String]) -> PythonHelper {
+    static func helper(_ o: Options, env: [String: String]) -> HelperProgram {
         let lm = AppLocation.languageModelWorker(beside: Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0]),
                                                  environment: env)
         var options: [String] = []
         if let c = o.config { options += ["--config", c] }
         if let d = o.dictionary { options += ["--dictionary", d] }
         if o.noNotify { options.append("--no-notify") }
-        return PythonHelper(python: lm, options: options, env: env)
+        return HelperProgram(program: lm, options: options, env: env)
     }
 
     /// cli.py `main`: a command the app ran that failed says so in a notification, with the short reason; the usage

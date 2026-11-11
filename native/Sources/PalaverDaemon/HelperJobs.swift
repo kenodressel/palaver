@@ -1,6 +1,6 @@
 // The language model's helpers the Meetings window has the app start (app.sock `start_helper`;
 // palaver/model_jobs.py `helper_argv` and `launch`): `palaver-lm notes <a meeting> --force` or
-// `palaver-lm projects --no-wait suggest | describe <id>` (Python's `palaver …` in the legacy-server fallback), recorded in `<recordings>/.jobs/<kind>-<key>.json`
+// `palaver-lm projects --no-wait suggest | describe <id>`, recorded in `<recordings>/.jobs/<kind>-<key>.json`
 // with their pid, and their output in `<kind>-<key>.log`. The app starts them, so they are its
 // descendants (the memory watchdog sees them) and outlive a restart of the window's server, which
 // reads the records. Never two runs of one kind and key.
@@ -18,9 +18,8 @@ public final class HelperJobs: @unchecked Sendable {
     public typealias Spawn = (_ argv: [String], _ output: Int32) throws -> WorkerProcess
 
     private let outputDir: () -> URL
-    private let python: String
-    /// palaver-lm; nil: Python's command (the legacy-server fallback, or it is missing).
-    private let lm: String?
+    /// palaver-lm.
+    private let lm: String
     private let cliOptions: [String]
     private let taskpolicy: String?
     private let spawn: Spawn
@@ -29,12 +28,11 @@ public final class HelperJobs: @unchecked Sendable {
     private let lock = NSLock()
 
     /// `env`: what the app adds for its children (PALAVER_APP, PALAVER_NOTIFY, …).
-    public init(outputDir: @escaping () -> URL, python: String, lm: String? = nil, cliOptions: [String], env: [String: String] = [:],
+    public init(outputDir: @escaping () -> URL, lm: String, cliOptions: [String], env: [String: String] = [:],
                 taskpolicy: String? = FileManager.default.fileExists(atPath: "/usr/sbin/taskpolicy") ? "/usr/sbin/taskpolicy" : nil,
                 spawn: Spawn? = nil, now: @escaping () -> Double = { Date().timeIntervalSince1970 },
                 alive: @escaping (Int32) -> Bool = UpdateBusy.pidAlive) {
         self.outputDir = outputDir
-        self.python = python
         self.lm = lm
         self.cliOptions = cliOptions
         self.taskpolicy = taskpolicy
@@ -71,7 +69,7 @@ public final class HelperJobs: @unchecked Sendable {
         default:
             throw CallRefused("not a helper: \(kind)")
         }
-        let command = (lm.map { [$0] } ?? [python, "-m", "palaver"]) + cliOptions + ["--no-notify", kind] + args
+        let command = [lm] + cliOptions + ["--no-notify", kind] + args
         return taskpolicy.map { [$0, "-c", "utility"] + command } ?? command
     }
 

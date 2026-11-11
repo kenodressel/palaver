@@ -1,7 +1,7 @@
 // The window's server asks the recording process what it needs (tests/test_webapp_remote.py, #57): the
 // running recording from daemon.json, actions through app.sock. When the recording process does not
 // answer, the page still shows, without the live bits. Fakes only: a daemon.json and a socket in a
-// temporary folder (a Swift fake, or Python's own appctl.serve through uv), never the real app's.
+// temporary folder (a Swift fake), never the real app's.
 import Darwin
 import Foundation
 import Testing
@@ -307,109 +307,5 @@ private func expectRefused(_ text: String, _ body: () throws -> Any) {
         let r = Remote(stores: stores)
         #expect(r.statePath.path == home.path + "/Library/Application Support/palaver/daemon.json")
         #expect(r.socketPath.path == home.path + "/Library/Application Support/palaver/app.sock")
-    }
-
-    // MARK: - against Python's own appctl.serve
-
-    /// `uv run python` with appctl.serve on a socket in a temporary folder (no uv: skipped).
-    @Test(.enabled(if: PythonAppSocket.uv != nil)) func pythonsAppctlServeUnderstandsTheClient() throws {
-        let f = AppFolder()
-        let py = try PythonAppSocket(f.socket)
-        let r = f.remote()
-        #expect(try r.record(action: "start", meeting: nil) == .object([("meeting", .string(MEETING))]))
-        expectRefused("This recording is no longer running.") { try r.record(action: "stop", meeting: "Straße") }
-        do { _ = try AppCtlClient.call("boom", path: f.socket) } catch let e as AppCtlClient.CallFailed {
-            #expect(e.message == "boom: boom")
-        }
-        do { _ = try AppCtlClient.call("nope", path: f.socket) } catch let e as AppCtlClient.CallRefused {
-            #expect(e.message == "unknown call 'nope'")
-        }
-        #expect(try AppCtlClient.call("echo", .object([("ä", .array([.double(1.5), .null]))]), path: f.socket)
-                == .object([("ä", .array([.double(1.5), .null]))]))
-        #expect(py.finish() == #"[{"action": "start", "meeting": null}, {"action": "stop", "meeting": "Stra\u00dfe"}]"#)
-    }
-}
-
-/// Python's appctl.serve in a child (`uv run python`), with a `record` that refuses to stop, a `boom` that fails and an
-/// `echo`; what `record` was asked comes out on `finish()`.
-final class PythonAppSocket {
-    static let uv: String? = {
-        let env = ProcessInfo.processInfo.environment
-        let dirs = (env["PATH"] ?? "").split(separator: ":").map(String.init)
-            + ["/opt/homebrew/bin", "/usr/local/bin", (env["HOME"] ?? "") + "/.local/bin", (env["HOME"] ?? "") + "/.cargo/bin"]
-        return dirs.map { $0 + "/uv" }.first { FileManager.default.isExecutableFile(atPath: $0) }
-    }()
-    static let checkout = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        .deletingLastPathComponent().deletingLastPathComponent()
-
-    static let script = """
-    import json, pathlib, sys
-    from palaver import appctl
-    got = []
-    def record(args):
-        got.append(args)
-        if args.get("action") == "stop":
-            raise appctl.CallRefused("This recording is no longer running.")
-        return {"meeting": "2026-10-27T16-03-07"}
-    def boom(args):
-        raise RuntimeError("boom")
-    srv = appctl.serve(pathlib.Path(sys.argv[1]), {"record": record, "boom": boom, "echo": lambda args: args})
-    print("ready", flush=True)
-    sys.stdin.read()
-    print(json.dumps(got), flush=True)
-    srv.close()
-    """
-
-    let process = Foundation.Process()
-    let input = Pipe()
-    let output = Pipe()
-    let scratch = tempFolder("appctl-py")
-
-    init(_ socket: URL) throws {
-        process.executableURL = URL(fileURLWithPath: Self.uv!)
-        process.arguments = ["run", "--quiet", "python", "-c", Self.script, socket.path]
-        process.currentDirectoryURL = Self.checkout
-        var env = ProcessInfo.processInfo.environment
-        env["PALAVER_HOME"] = scratch.appendingPathComponent("home").path
-        env["XDG_CONFIG_HOME"] = scratch.appendingPathComponent("config").path
-        process.environment = env
-        process.standardInput = input
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        let line = readLine()
-        guard line == "ready" else {  // e.g. palaver does not import: this test fails, the others run on
-            process.terminate()
-            throw NotStarted(line: line)
-        }
-    }
-
-    struct NotStarted: Error, CustomStringConvertible {
-        let line: String
-        var description: String { "appctl.serve did not start: \(line)" }
-    }
-
-    deinit {
-        if process.isRunning { process.terminate() }
-        try? FileManager.default.removeItem(at: scratch)
-    }
-
-    private func readLine() -> String {
-        var bytes: [UInt8] = []
-        let handle = output.fileHandleForReading
-        while true {
-            let d = handle.readData(ofLength: 1)
-            if d.isEmpty || d.first == 0x0A { break }
-            bytes.append(d.first!)
-        }
-        return String(decoding: bytes, as: UTF8.self)
-    }
-
-    /// Closes its stdin: it prints what `record` got and stops.
-    func finish() -> String {
-        try? input.fileHandleForWriting.close()
-        let line = readLine()
-        process.waitUntilExit()
-        return line
     }
 }

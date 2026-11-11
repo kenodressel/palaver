@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 
 import { exportChoices, exportRequest, exportedText, isMeetingZip, collisionText, importedText, importedLine,
   voicesQuestion, inferredText, meetingCommands, paletteCommands, GLOBAL_COMMANDS, linkWhy }
-  from "../../palaver/webapp/static/logic.js";
+  from "../../web/logic.js";
 
 const ready = { id: "2026-10-29T10-00-00", status: "ready", transcript: [] };
 

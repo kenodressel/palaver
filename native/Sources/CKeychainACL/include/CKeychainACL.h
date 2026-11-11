@@ -22,7 +22,7 @@ OSStatus palaver_update_without_asking(CFDictionaryRef query, CFDictionaryRef at
 /// NULL with `*status` set when it could not be made. Tests only.
 CFTypeRef _Nullable palaver_keychain_create(const char *path, const char *password, OSStatus *status) CF_RETURNS_RETAINED;
 
-/// Deletes the keychain file `keychain` (from palaver_keychain_create).
+/// Deletes the keychain file `keychain` (one palaver_keychain_create made).
 OSStatus palaver_keychain_delete(CFTypeRef keychain);
 
 CF_ASSUME_NONNULL_END

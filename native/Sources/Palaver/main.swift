@@ -1,8 +1,6 @@
 // Palaver, the native app: the bundle's executable (Contents/MacOS/Palaver), or a development build
 // (native/.build/…/Palaver). The window's server, the pipeline's workers and the language model are
-// palaver-server, palaver-worker and palaver-lm; a release carries no Python. In a development build
-// only, PALAVER_LEGACY_SERVER=1 or the `legacy-server` marker runs the Python window server and workers
-// of the checkout's .venv instead (the developer's fallback); a release ignores the marker and says so.
+// palaver-server, palaver-worker and palaver-lm.
 import AppKit
 import Foundation
 import PalaverCore
@@ -54,8 +52,6 @@ if location.bundle != nil {
 }
 
 let log = AppLog(paths: paths)
-/// The developer's fallback Python (a checkout's .venv); nil in a release, which never starts one.
-let python = location.legacyPython(environment: environment)
 let bundled = location.bundle != nil && Bundle.main.bundleIdentifier != nil
 var childEnv: [String: String] = [:]
 if let bundle = location.bundle { childEnv["PALAVER_APP"] = bundle.path }
@@ -125,14 +121,11 @@ MainActor.assumeIsolated {
     let notifications = startNotifications(opener: { meeting in
         DispatchQueue.main.async { MainActor.assumeIsolated { box.app?.openWindow(meeting, lookForUpdate: false) } }
     })
-    // palaver-server, palaver-worker and palaver-lm, unless a development build's legacy-server fallback is wanted
-    // (or one of them is not built there): then Python's commands, said once in app.log.
-    let swift = LegacyServer.binaries(location: location, environment: environment, support: paths.support, python: python)
-    for line in swift.said { print(line) }
+    // palaver-server, palaver-worker and palaver-lm; one not built is said once in app.log.
+    let programs = AppPrograms.find(location: location, environment: environment)
+    for line in programs.said { print(line) }
     let setup = AppSetup(paths: paths, location: location, options: options, version: version,
-                         python: python ?? LegacyServer.NO_PYTHON,
-                         server: swift.server, worker: swift.worker, lm: swift.lm, legacyServer: swift.legacy, log: log,
-                         childEnv: childEnv)
+                         server: programs.server, worker: programs.worker, lm: programs.lm, log: log, childEnv: childEnv)
     do {
         let app = try PalaverApp(setup: setup, notifications: notifications)
         box.app = app

@@ -44,7 +44,7 @@ struct Harness {
 
     func setup(_ engine: EngineCalls, python: String = "/usr/bin/false", calendar: CalendarProvider? = nil) -> Pipeline.Setup {
         let box = self.box
-        return Pipeline.Setup(config: config, userName: "Timo", engine: engine, python: PythonHelper(python: python, env: testEnv(t)),
+        return Pipeline.Setup(config: config, userName: "Timo", engine: engine, helper: HelperProgram(program: python, env: testEnv(t)),
                               calendar: (calendar != nil, calendar), stores: stores, say: { box.lines.append($0) })
     }
 

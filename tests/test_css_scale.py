@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-CSS = (Path(__file__).resolve().parent.parent / "palaver" / "webapp" / "static" / "app.css").read_text()
+CSS = (Path(__file__).resolve().parent.parent / "web" / "app.css").read_text()
 TYPE = {8, 10, 11, 12, 13, 14, 15, 17, 20, 24, 64}  # 8, 10: the letters in small avatars; 64: the big number
 SPACE = {0, 1, 1.5, 2, 4, 6, 8, 12, 16, 20, 24, 28, 32, 40, 48, 64, 80}
 

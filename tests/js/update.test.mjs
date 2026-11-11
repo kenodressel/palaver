@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { updateIndicator, updateView } from "../../palaver/webapp/static/logic.js";
+import { updateIndicator, updateView } from "../../web/logic.js";
 
 const available = { version: "0.2.0", notes: "Faster notes.", download_bytes: 5 * 2 ** 20 };
 
@@ -50,7 +50,7 @@ test("the top bar shows nothing up to date, while checking, from a checkout or b
 });
 
 test("Today leads with a card while a release waits for a click", async () => {
-  const { updateCard } = await import("../../palaver/webapp/static/logic.js");
+  const { updateCard } = await import("../../web/logic.js");
   assert.deepEqual(updateCard({ state: "available", current: "0.1.0", available }), {
     title: "Palaver 0.2.0 is available",
     text: "You have 0.1.0. It installs once Palaver is idle; nothing is lost." });
@@ -69,7 +69,7 @@ test("up to date says when it looked", () => {
   assert.equal(updateView({ state: "up_to_date", current: "0.3.10" }).text, "Palaver 0.3.10 is the latest version.");
 });
 
-import { SETTINGS_PANES, settingsPane } from "../../palaver/webapp/static/logic.js";
+import { SETTINGS_PANES, settingsPane } from "../../web/logic.js";
 
 test("settingsPane: a pane, an older section's pane, else General", () => {
   assert.equal(settingsPane("storage"), "storage");

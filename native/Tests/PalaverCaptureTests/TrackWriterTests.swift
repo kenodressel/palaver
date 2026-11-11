@@ -221,28 +221,4 @@ private final class FlakyIO {
         let wav = try readWav(out)
         #expect(wav.samples.isEmpty && wav.dataSize == 0 && wav.header == TrackWriter.wavHeader(dataBytes: 0))
     }
-
-    @Test(.enabled(if: hasPython, "needs the repo's .venv"))
-    func bytesMatchPythonsWriter() throws {
-        // The same writes through Python's _IncrementalTrackWriter and this one: finalized and aborted.
-        let writes: [(Int, [Int16])] = [(0, [1, -1, 32_767, -32_768, 0, 12_345]), (3, [7, 7]), (-5, [9]),
-                                         (100, (0..<300).map { Int16($0 * 97 % 65_536 - 32_768) }), (420, [5])]
-        for finalize in [Int?.none, 300, 450] {
-            let dir = tempDir()
-            let spec: [String: Any] = ["writes": writes.map { [$0.0, $0.1.map(Int.init)] },
-                                       "finalize": finalize.map { $0 as Any } ?? NSNull()]
-            let specURL = dir.appendingPathComponent("spec.json")
-            try JSONSerialization.data(withJSONObject: spec).write(to: specURL)
-            let py = dir.appendingPathComponent("py.wav"), sw = dir.appendingPathComponent("swift.wav")
-            _ = try runPython(pythonWriter, [specURL.path, py.path])
-            let w = try TrackWriter(finalURL: sw)
-            for (offset, samples) in writes { try w.write(samples, atOffset: offset) }
-            if let finalize { try w.finalize(toFrames: finalize) } else { w.abort() }
-            let suffix = finalize == nil ? ".part" : ""
-            let pyBytes = try Data(contentsOf: URL(fileURLWithPath: py.path + suffix))
-            let swBytes = try Data(contentsOf: URL(fileURLWithPath: sw.path + suffix))
-            #expect(pyBytes.count > 44)
-            #expect(pyBytes == swBytes, "finalize \(String(describing: finalize))")
-        }
-    }
 }

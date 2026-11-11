@@ -1,5 +1,5 @@
-// test_daemon.py's build_daemon / launch_run tests: the worker commands, their QoS and the
-// forwarded options; run vs process + notes; the Python facts asked in the background; app.sock's
+// The daemon as the app builds it: the worker commands, their QoS and the forwarded options; run vs
+// process + notes; the facts asked in the background; app.sock's
 // actions over the daemon. Nothing is spawned (the launcher records), no capture device is opened.
 import Foundation
 import Testing
@@ -17,8 +17,8 @@ let WORKER = "/Applications/Palaver.app/Contents/MacOS/palaver-worker"
 let LM = "/Applications/Palaver.app/Contents/MacOS/palaver-lm"
 
 func recordingLauncher(_ spawned: Spawned, options: [String] = ["--config", "/w.toml", "--no-notify"],
-                       worker: String? = nil, lm: String? = nil) -> WorkerLauncher {
-    WorkerLauncher(python: "/Applications/Palaver.app/Contents/MacOS/palaver-python", worker: worker, lm: lm, cliOptions: options,
+                       worker: String = WORKER, lm: String = LM) -> WorkerLauncher {
+    WorkerLauncher(worker: worker, lm: lm, cliOptions: options,
                    log: URL(fileURLWithPath: "/tmp/daemon.log"), env: ["PALAVER_APP": "/Applications/Palaver.app"],
                    spawn: { args, qos in
                        spawned.calls.append((args, qos))
@@ -39,7 +39,7 @@ struct Built {
 }
 
 func build(autoSync: Bool = false, notes: Bool = true, answer: AutoSyncAnswer? = nil, settings: [String: Any] = [:], options: [String] = ["--config", "/w.toml", "--no-notify"],
-           worker: String? = nil, lm: String? = nil,
+           worker: String = WORKER, lm: String = LM,
            sources: ((Daemon?) -> CaptureSources)? = nil, configure: (inout Config) -> Void = { _ in }) throws -> Built {
     let home = tempDir()
     let paths = testPaths(home)
@@ -60,12 +60,11 @@ func build(autoSync: Bool = false, notes: Bool = true, answer: AutoSyncAnswer? =
 
 @Suite struct LaunchTests {
     let rec = URL(fileURLWithPath: "/m/rec", isDirectory: true)
-    let python = "/Applications/Palaver.app/Contents/MacOS/palaver-python"
 
     @Test func launchRunForwardsCliOptions() async throws {
         let spawned = Spawned()
         _ = try recordingLauncher(spawned).launch("run", rec)
-        #expect(spawned.calls[0].args == [python, "-m", "palaver", "--config", "/w.toml", "--no-notify", "run", "/m/rec"])
+        #expect(spawned.calls[0].args == [WORKER, "--config", "/w.toml", "--no-notify", "run", "/m/rec"])
         #expect(WorkerLauncher.forwardedOptions(config: "/w.toml", dictionary: nil, noNotify: true) == ["--config", "/w.toml", "--no-notify"])
         #expect(WorkerLauncher.forwardedOptions(config: nil, dictionary: nil, noNotify: false).isEmpty)
     }
@@ -95,74 +94,12 @@ func build(autoSync: Bool = false, notes: Bool = true, answer: AutoSyncAnswer? =
         #expect(spawned.calls[0].args == [WORKER] + options + ["calendar-attach", "--since", "36"])
     }
 
-    @Test func notesArePalaverLMsAndPythonsOnlyInTheFallback() async throws {
+    @Test func notesArePalaverLMs() async throws {
         let b = try build(autoSync: false, worker: WORKER, lm: LM)
         let notes = try #require(b.daemon.deps.launchNotes)
         _ = try notes(rec)
         #expect(b.spawned.calls[0].args == [LM, "--config", "/w.toml", "--no-notify", "notes", "/m/rec"])
         #expect(b.spawned.calls[0].qos == .utility)
-        let fallback = try build(autoSync: false, worker: nil, lm: nil)
-        let pythonNotes = try #require(fallback.daemon.deps.launchNotes)
-        _ = try pythonNotes(rec)
-        #expect(fallback.spawned.calls[0].args == [python, "-m", "palaver", "--config", "/w.toml", "--no-notify", "notes", "/m/rec"])
-        let spawned = Spawned()
-        _ = try recordingLauncher(spawned, worker: WORKER).launch("app", nil, extra: ["housekeeping"])
-        #expect(spawned.calls[0].args == [python, "-m", "palaver", "--config", "/w.toml", "--no-notify", "app", "housekeeping"])
-    }
-
-    /// With a Python (a checkout's: `AppLocation.legacyPython`; a bundle has none, AppEnvironmentTests).
-    @Test func legacyServerMarkerStartsPython() async throws {
-        let home = tempDir()
-        let support = home.appendingPathComponent("support", isDirectory: true)
-        let app = home.appendingPathComponent("Palaver.app", isDirectory: true)
-        let location = AppLocation(executable: app.appendingPathComponent("Contents/MacOS/Palaver"))
-        let everything: (String) -> Bool = { _ in true }
-        // Both programs there: the Swift ones run …
-        let swift = LegacyServer.binaries(location: location, environment: [:], support: support, python: python, isExecutable: everything)
-        #expect(swift.server == app.appendingPathComponent("Contents/MacOS/palaver-server").path)
-        #expect(swift.worker == app.appendingPathComponent("Contents/MacOS/palaver-worker").path && swift.said.isEmpty)
-        #expect(swift.lm == app.appendingPathComponent("Contents/MacOS/palaver-lm").path)
-        // … unless the marker or PALAVER_LEGACY_SERVER=1 asks for today's Python launches, said once.
-        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
-        FileManager.default.createFile(atPath: support.appendingPathComponent(LegacyServer.markerName).path, contents: Data())
-        for env in [[:], ["PALAVER_LEGACY_SERVER": "1"]] {
-            let marked = LegacyServer.binaries(location: location, environment: env, support: env.isEmpty ? support : home,
-                                               python: python, isExecutable: everything)
-            #expect(marked.server == nil && marked.worker == nil && marked.lm == nil && marked.said.count == 1)
-            #expect(marked.said[0].contains(LegacyServer.markerName))
-        }
-        let spawned = Spawned()
-        _ = try recordingLauncher(spawned, worker: nil).launch("process", rec, extra: ["--no-notes"])
-        _ = try recordingLauncher(spawned, worker: nil).launch("calendar-attach", nil, extra: ["--since", "36"])
-        #expect(spawned.calls.map(\.args) == [
-            [python, "-m", "palaver", "--config", "/w.toml", "--no-notify", "process", "/m/rec", "--no-notes"],
-            [python, "-m", "palaver", "--config", "/w.toml", "--no-notify", "calendar", "attach", "--since", "36"],
-        ])
-    }
-
-    @Test func missingWorkerBinaryFallsBackToPython() async throws {
-        let home = tempDir()
-        let app = home.appendingPathComponent("Palaver.app", isDirectory: true)
-        let location = AppLocation(executable: app.appendingPathComponent("Contents/MacOS/Palaver"))
-        let server = app.appendingPathComponent("Contents/MacOS/palaver-server").path
-        let found = LegacyServer.binaries(location: location, environment: [:], support: home, python: python, isExecutable: { $0 == server })
-        #expect(found.server == server && found.worker == nil)
-        #expect(found.said == ["palaver-worker is missing: using Python's workers",
-                               "palaver-lm is missing: the notes and projects run in Python"])
-        // With the worker there, only the app's own notes fall back; the server and the worker say it is missing.
-        let worker = app.appendingPathComponent("Contents/MacOS/palaver-worker").path
-        let noLM = LegacyServer.binaries(location: location, environment: [:], support: home, python: python,
-                                         isExecutable: { $0 == server || $0 == worker })
-        #expect(noLM.lm == nil && noLM.said.count == 1)
-        #expect(noLM.said[0].hasPrefix("palaver-lm is missing: the notes the app starts run in Python;"))
-        // The launcher without a worker: Python's commands, as before Task 67.
-        let spawned = Spawned()
-        _ = try recordingLauncher(spawned, worker: found.worker).launch("live", rec, qos: .background)
-        #expect(spawned.calls[0].args == [python, "-m", "palaver", "--config", "/w.toml", "--no-notify", "live", "/m/rec"])
-        // An override that names no program is missing too.
-        let none = LegacyServer.binaries(location: location, environment: ["PALAVER_WORKER_BIN": "/nowhere/palaver-worker"],
-                                         support: home, python: python, isExecutable: { $0 == server })
-        #expect(none.worker == nil && none.said.count == 2)
     }
 
     @Test func buildDaemonProcessesLocallyWithoutAutoSyncAndLeavesTheNotesForLater() async throws {
@@ -203,8 +140,7 @@ func build(autoSync: Bool = false, notes: Bool = true, answer: AutoSyncAnswer? =
         _ = try b.daemon.deps.launchStream!(rec)
         _ = try b.daemon.deps.launchIndex!()
         #expect(b.spawned.calls.map(\.qos) == [.background, .utility, .background])
-        #expect(b.spawned.calls.map(\.args) == [[python, "-m", "palaver", "live", "/m/rec"], [python, "-m", "palaver", "stream", "/m/rec"],
-                                                [python, "-m", "palaver", "index"]])
+        #expect(b.spawned.calls.map(\.args) == [[WORKER, "live", "/m/rec"], [WORKER, "stream", "/m/rec"], [WORKER, "index"]])
     }
 
     @Test func theSwitchesAreReadFromTheSettingsFile() async throws {
@@ -350,11 +286,10 @@ func build(autoSync: Bool = false, notes: Bool = true, answer: AutoSyncAnswer? =
         var config = Config()
         config.outputDir = outputDir
         let cfg = config
-        let python = Asked()
         let windows = Asked()
         let query = PythonFacts.query(config: { cfg }, calendar: { _ in
             { start, end in windows.add([WallTime.iso(start, .current), WallTime.iso(end, .current)]); return [] }
-        }, python: { what in python.add(what); return ["gb": 9.0] })
+        })
         let facts = PythonFacts(query: query)
         let rec = outputDir.appendingPathComponent("2026-10-29T12-00-00", isDirectory: true)
         _ = facts.modelsReady(rec); _ = facts.indexWanted(); _ = facts.eventKey(at: WALL0)
@@ -362,14 +297,13 @@ func build(autoSync: Bool = false, notes: Bool = true, answer: AutoSyncAnswer? =
         #expect(facts.indexWanted() == false)  // no meeting waits for the index
         #expect(facts.eventKey(at: WALL0) == .known(nil))  // no event on then
         #expect(windows.count == 1)  // the time was read and the calendar asked around it
-        #expect(python.count == 0)  // none of these started Python
         let answer = try query(["index-stale"])
         #expect((answer["stale"] as? [Any])?.isEmpty == true && answer["model_ready"] is Bool)
         #expect(try query(["missing-models", rec.path])["missing"] is [Any])
-        // notes-memory too: the local model's need (the default model, no cloud chosen), without Python.
+        // notes-memory too: the local model's need (the default model, no cloud chosen).
         _ = facts.notesMemoryGB(rec)
         #expect(waitFor { facts.notesMemoryGB(rec) == 14 })
-        #expect(python.count == 0)
+        #expect(throws: (any Error).self) { try query(["something-else"]) }  // only these are answered
     }
 }
 

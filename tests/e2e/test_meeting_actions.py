@@ -12,6 +12,7 @@ from .helpers import (  # noqa: E402
     run_from_menu, toast, undo_in_toast, unfocus,
 )
 from .recordings import A, B, C, LIVE  # noqa: E402
+from .stores import ERROR, MODELS, RecordingPaths, mark_failed  # noqa: E402
 
 pytestmark = pytest.mark.e2e
 
@@ -255,20 +256,15 @@ def test_back_after_a_trash_and_its_undo(page, app_server):
 
 
 def _not_transcribed(served, mid, reason, **kw):
-    from palaver import process_state
-    from palaver.paths import RecordingPaths
-
     paths = RecordingPaths(served.root / mid)
     paths.transcript_json.unlink()
     paths.notes.unlink(missing_ok=True)
-    process_state.mark(paths, reason, **kw)
+    mark_failed(paths, reason, **kw)
     return paths
 
 
 def test_a_meeting_whose_transcription_failed_can_be_transcribed_again(page, app_server):
-    from palaver import process_state
-
-    paths = _not_transcribed(app_server, A, process_state.ERROR, error="Unable to reach MTLCompilerService")
+    paths = _not_transcribed(app_server, A, ERROR, error="Unable to reach MTLCompilerService")
     goto(page, app_server, f"#/{A}")
     notice = page.locator("#main .notes-empty")
     expect(notice).to_contain_text("This meeting was not transcribed (Unable to reach MTLCompilerService)")
@@ -284,9 +280,7 @@ def test_a_meeting_whose_transcription_failed_can_be_transcribed_again(page, app
 
 
 def test_a_meeting_waiting_for_its_models_says_so_and_links_to_settings(page, app_server):
-    from palaver import process_state
-
-    _not_transcribed(app_server, A, process_state.MODELS, missing=["Speech models"])
+    _not_transcribed(app_server, A, MODELS, missing=["Speech models"])
     goto(page, app_server, f"#/{A}")
     notice = page.locator("#main .notes-empty")
     expect(notice).to_contain_text("waiting for Speech models")

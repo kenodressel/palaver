@@ -1,11 +1,11 @@
 // Getting back: where a hash points, push or replace, how deep the window's
 // own history is, and which keys and mouse buttons go back or forward
-// (palaver/webapp/static/logic.js).
+// (web/logic.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { placeOf, hashOf, historyStep, navStart, navPush, navArrive, keyNav, mouseNav, samePlace, undoStep }
-  from "../../palaver/webapp/static/logic.js";
+  from "../../web/logic.js";
 
 test("placeOf reads every page the window has", () => {
   assert.deepEqual(placeOf(""), { view: "today" });  // the window opens on Today

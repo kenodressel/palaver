@@ -1,8 +1,8 @@
-// The pure parts of the window's shared UI pieces (palaver/webapp/static/ui.js).
+// The pure parts of the window's shared UI pieces (web/ui.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { UndoHistory, commandFor, isEditable, isTextField, matchesShortcut, play } from "../../palaver/webapp/static/ui.js";
+import { UndoHistory, commandFor, isEditable, isTextField, matchesShortcut, play } from "../../web/ui.js";
 
 test("UndoHistory keeps the last 20", async () => {
   const history = new UndoHistory();

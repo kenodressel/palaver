@@ -1,10 +1,10 @@
 // "This line is…" (#12): who a transcript line can be given to, the line to
-// go on with, and what the toast says (palaver/webapp/static/logic.js).
+// go on with, and what the toast says (web/logic.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { lineCommands, lineSpeakerChoices, nextLineOfSpeaker, lineSpeakerText }
-  from "../../palaver/webapp/static/logic.js";
+  from "../../web/logic.js";
 
 function meeting(extra = {}) {
   return {

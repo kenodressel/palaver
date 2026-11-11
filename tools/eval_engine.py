@@ -15,6 +15,9 @@ Writes $PALAVER_EVAL_DIR/engine-gate.md.
 `--worker PATH` (or env PALAVER_EVAL_WORKER): the same gate through `PATH engine-serve`, palaver-worker's
 in-process engine, with palaver-engine's reply shapes (`make eval-engine-worker`); it writes
 engine-gate-worker.md, so both runs' numbers stay side by side.
+
+Self-contained: it talks to the engine over its JSON-lines protocol itself (``Engine``) and reads the meetings'
+files directly (``Meeting``).
 """
 from __future__ import annotations
 
@@ -22,10 +25,13 @@ import collections
 import difflib
 import json
 import os
+import queue
 import re
 import stat
+import subprocess
 import sys
 import tempfile
+import threading
 import unicodedata
 from pathlib import Path
 
@@ -137,17 +143,128 @@ def confusion_pct(*args, **kwargs) -> float:
     return 100 * c["confusion"] / c["total"] if c["total"] else 0.0
 
 
+# --- the engine -------------------------------------------------------------
+
+DEFAULT_ENGINE = ROOT / "native" / ".build" / "release" / "palaver-engine"  # make engine
+MODELS = Path.home() / "Library" / "Application Support" / "palaver" / "models" / "fluidaudio"  # the app's
+IDLE_TIMEOUT = 600.0  # seconds without a line from the engine before it counts as hung
+
+
+class EngineError(RuntimeError):
+    pass
+
+
+class Engine:
+    """palaver-engine's JSON-lines protocol: ``{"id": n, "cmd": …, …args}`` in, lines out until the one with
+    that id and "ok" (progress lines in between are skipped). Started on the first call."""
+
+    def __init__(self, path: Path | None = None, models: Path | None = None) -> None:
+        self._path = Path(path or DEFAULT_ENGINE)
+        self._models = Path(models or MODELS)
+        self._proc: subprocess.Popen | None = None
+        self._lines: queue.Queue = queue.Queue()
+        self._next_id = 0
+
+    def _start(self) -> subprocess.Popen:
+        try:
+            proc = subprocess.Popen([str(self._path), "--models", str(self._models), "--version", "eval"],
+                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                    text=True, encoding="utf-8", errors="replace", bufsize=1)
+        except OSError as exc:
+            raise EngineError(f"the speech engine could not start ({self._path}): {exc}") from exc
+
+        def read(stream, lines):
+            for raw in stream:
+                lines.put(raw)
+            lines.put(None)
+
+        self._lines = queue.Queue()
+        threading.Thread(target=read, args=(proc.stdout, self._lines), daemon=True).start()
+        self._proc = proc
+        return proc
+
+    def call(self, cmd: str, /, **args) -> dict:
+        proc = self._proc if self._proc is not None and self._proc.poll() is None else self._start()
+        self._next_id += 1
+        rid = self._next_id
+        try:
+            proc.stdin.write(json.dumps({**args, "id": rid, "cmd": cmd}) + "\n")
+            proc.stdin.flush()
+        except OSError as exc:
+            raise EngineError(f"the speech engine stopped: {exc}") from None
+        while True:
+            try:
+                raw = self._lines.get(timeout=IDLE_TIMEOUT)
+            except queue.Empty:
+                raise EngineError(f"the speech engine stopped answering ({IDLE_TIMEOUT:g} s without a line)") from None
+            if raw is None:
+                raise EngineError(f"the speech engine died (exit {proc.wait()})")
+            try:
+                msg = json.loads(raw)
+            except ValueError:
+                continue
+            if not isinstance(msg, dict) or msg.get("id") not in (rid, -1) or "ok" not in msg:
+                continue
+            if msg["ok"]:
+                return msg
+            raise EngineError(str(msg.get("error", "unknown error")))
+
+    def close(self) -> None:
+        proc, self._proc = self._proc, None
+        if proc is None:
+            return
+        if proc.poll() is None:
+            try:
+                proc.stdin.close()
+            except OSError:
+                pass
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+
+
 # --- the meetings -----------------------------------------------------------
 
-def reference_for(paths):
+class Meeting:
+    """The files of one recording folder the gate reads."""
+
+    def __init__(self, folder: Path) -> None:
+        self.folder = Path(folder)
+        self.system_wav = self.folder / "system.wav"
+        self.mic_wav = self.folder / "mic.wav"
+        self.system_segments = self.folder / "system_segments.json"
+        self.mic_segments = self.folder / "mic_segments.json"
+        self.system_turns = self.folder / "system_turns.json"
+        self.speaker_embeddings = self.folder / "speaker_embeddings.json"
+
+    def _json(self, name: str, default):
+        try:
+            return json.loads((self.folder / name).read_text())
+        except (OSError, ValueError):
+            return default
+
+    def speaker_names(self) -> dict[str, str]:
+        """speakers.json: label → the name given by hand."""
+        return {str(k): str(v) for k, v in self._json("speakers.json", {}).items()}
+
+    def merges(self) -> dict[str, str]:
+        """speakers_merged.json: label → the label it was merged into."""
+        return {str(k): str(v) for k, v in self._json("speakers_merged.json", {}).items()}
+
+    def ignored(self) -> set[str]:
+        """speakers_ignored.json: labels removed as noise."""
+        return set(self._json("speakers_ignored.json", []))
+
+
+def reference_for(paths: Meeting):
     """(segments with person ids, ignored regions, {label: person}, {person: name}) of a
     meeting from its stored turns, the hand names, merges and ignored voices.
     Names stay in memory: callers use the person ids (P0…)."""
-    from palaver import speakers as S
-
     turns = json.loads(paths.system_turns.read_text())
-    hand, merges = S.load_speaker_names(paths), S.load_merges(paths)
-    ignored_labels = S.load_ignored(paths)
+    hand, merges = paths.speaker_names(), paths.merges()
+    ignored_labels = paths.ignored()
     pid = {n: f"P{i}" for i, n in enumerate(sorted(set(hand.values())))}
     segs, ignored, person_of = [], [], {}
     for t in turns:
@@ -217,8 +334,6 @@ def segments_text(segments) -> str:
 
 
 def run_gate(cfg: dict, engine, meetings_root: Path, log=lambda *_: None) -> tuple[list[str], bool]:
-    from palaver.paths import RecordingPaths
-
     rows, passed = [], True
     gold = Path(cfg["gold_dir"]).expanduser()
 
@@ -240,7 +355,7 @@ def run_gate(cfg: dict, engine, meetings_root: Path, log=lambda *_: None) -> tup
 
     lost_stored = lost_engine = 0
     for mid in cfg["asr_meetings"]:
-        paths = RecordingPaths(meetings_root / mid)
+        paths = Meeting(meetings_root / mid)
         for track, wav, seg in (("system", paths.system_wav, paths.system_segments),
                                 ("mic", paths.mic_wav, paths.mic_segments)):
             log(f"asr {mid} {track}")
@@ -258,11 +373,11 @@ def run_gate(cfg: dict, engine, meetings_root: Path, log=lambda *_: None) -> tup
     def diarized(mid: str) -> dict:
         if mid not in replies:
             log(f"diarize {mid}")
-            replies[mid] = engine.call("diarize", wav=str(RecordingPaths(meetings_root / mid).system_wav))
+            replies[mid] = engine.call("diarize", wav=str(Meeting(meetings_root / mid).system_wav))
         return replies[mid]
 
     for mid, base in cfg["diar_baseline_pyannote"].items():
-        paths = RecordingPaths(meetings_root / mid)
+        paths = Meeting(meetings_root / mid)
         segs, ignored, _ = reference_for(paths)
         hyp = [(t["start"], t["end"], t["speaker"]) for t in diarized(mid)["turns"]]
         c = confusion(segs, hyp, ignored)
@@ -279,7 +394,7 @@ def run_gate(cfg: dict, engine, meetings_root: Path, log=lambda *_: None) -> tup
 
     cosines, unmatched = [], 0
     for mid in cfg["voice_meetings"]:
-        cos, miss = voice_cosines(RecordingPaths(meetings_root / mid), diarized(mid))
+        cos, miss = voice_cosines(Meeting(meetings_root / mid), diarized(mid))
         cosines += cos
         unmatched += miss
     below = sum(1 for c in cosines if c < COSINE_MIN)
@@ -301,10 +416,8 @@ def render(rows: list[str], passed: bool, title: str = "Engine gate") -> str:
 
 
 def worker_engine(worker: Path, scratch: Path):
-    """palaver.engine.Engine over ``worker engine-serve``: a one-line launcher in ``scratch`` stands in for the
+    """``Engine`` over ``worker engine-serve``: a one-line launcher in ``scratch`` stands in for the
     palaver-engine binary, so the same client (and its reply handling) talks to the worker."""
-    from palaver.engine import Engine
-
     launcher = scratch / "palaver-engine"
     launcher.write_text(f"#!/bin/sh\nexec {_sh_quote(str(worker))} engine-serve \"$@\"\n")
     launcher.chmod(launcher.stat().st_mode | stat.S_IXUSR)
@@ -335,9 +448,6 @@ def main(argv: list[str] | None = None, env=None) -> int:
     if worker is not None and not worker.is_file():
         print(f"--worker {worker}: no such file (make eval-engine-worker builds it)", file=sys.stderr)
         return 2
-    sys.path.insert(0, str(ROOT))
-    from palaver.engine import Engine
-
     cfg = json.loads(cfg_path.read_text())
     with tempfile.TemporaryDirectory(prefix="eval-worker-") as scratch:
         engine = worker_engine(worker, Path(scratch)) if worker is not None else Engine()

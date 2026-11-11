@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 
 import { personHue, personColor, laneColors, meetingPeople, attendeeTokens, ownerTokens, nameMarks, lineMarks,
   fixableWord, projectView, aboutLines, calendarHint, eventLinkView, sameTitle }
-  from "../../palaver/webapp/static/logic.js";
+  from "../../web/logic.js";
 
 // --- the colour of a person ------------------------------------------------------
 

@@ -1,9 +1,9 @@
 // A meeting's tabs: Summary (the generated notes, key "notes"), Notes (mine), Transcript, Coach; and which
-// one a meeting opens on (palaver/webapp/static/logic.js).
+// one a meeting opens on (web/logic.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { meetingTabs, meetingTab, TAB_LABELS } from "../../palaver/webapp/static/logic.js";
+import { meetingTabs, meetingTab, TAB_LABELS } from "../../web/logic.js";
 
 const ready = { status: "ready", notes: { summary: "…" }, my_notes_revision: "" };
 const live = { status: "recording", live: { until: 60 }, notes: null, my_notes_revision: "" };

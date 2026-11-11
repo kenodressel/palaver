@@ -1,10 +1,10 @@
 // The ⌘K palette: what it finds for what is typed, the commands of the open
 // meeting with their shortcuts, the recent items, moving with the arrows
-// (palaver/webapp/static/logic.js).
+// (web/logic.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { paletteMatch, paletteCommands, paletteRecent, paletteMove, paletteRecentShown } from "../../palaver/webapp/static/logic.js";
+import { paletteMatch, paletteCommands, paletteRecent, paletteMove, paletteRecentShown } from "../../web/logic.js";
 
 const entries = [
   { kind: "command", id: "trash", label: "Move to Trash", shortcut: "⌘⌫" },
@@ -89,7 +89,7 @@ test("paletteRecentShown: only places that still exist, meetings as the list has
   assert.equal(paletteRecentShown(recent, { meetings, people: ["Anna"], projects: ["p1"] }, 2).length, 2);
 });
 
-import { settingsEntries } from "../../palaver/webapp/static/logic.js";
+import { settingsEntries } from "../../web/logic.js";
 
 test("the palette finds Settings' panes by name and by what is in them", () => {
   const entries = settingsEntries();

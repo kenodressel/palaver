@@ -188,9 +188,8 @@ public final class TestRecorder: @unchecked Sendable {
 extension TestRecorder {
     /// A capture of both tracks into the folder the way a meeting is recorded, without a
     /// session.log (its lines never mix with a meeting's), and `palaver-worker test-analyze` for the
-    /// rest (`worker` nil: the Python fallback's `palaver onboarding analyze`). `sources`: the real
-    /// ones, or fakes in tests.
-    public static func live(sources: @escaping () -> CaptureSources, worker: String?, python: String, cliOptions: [String],
+    /// rest. `sources`: the real ones, or fakes in tests.
+    public static func live(sources: @escaping () -> CaptureSources, worker: String, cliOptions: [String],
                             env: [String: String] = [:], maxSeconds: Double = TestRecorder.maxSeconds) -> TestRecorder {
         TestRecorder(maxSeconds: maxSeconds, capture: { folder in
             let mic = folder.appendingPathComponent("mic_raw.wav"), system = folder.appendingPathComponent("system.wav")
@@ -202,9 +201,7 @@ extension TestRecorder {
                 return (fm.fileExists(atPath: mic.path) ? mic : nil, fm.fileExists(atPath: system.path) ? system : nil)
             }
         }, analyze: { mic, system, mode in
-            let argv = worker.map { [$0] + cliOptions + analyzeArguments(command: ["test-analyze"], mic: mic, system: system, mode: mode) }
-                ?? [python, "-m", "palaver"] + cliOptions
-                + analyzeArguments(command: ["onboarding", "analyze"], mic: mic, system: system, mode: mode) + ["--checks"]
+            let argv = [worker] + cliOptions + analyzeArguments(command: ["test-analyze"], mic: mic, system: system, mode: mode)
             return try analyze(argv: argv, env: env)
         })
     }

@@ -30,6 +30,7 @@ from pathlib import Path
 import pytest
 
 from .recordings import A, LIVE, USER, build_recordings, live_part
+from .stores import RecordingPaths, clear_failed
 
 # Every page runs this first: media is muted (no test is ever heard), and the
 # clipboard is a stand-in (no test touches the real pasteboard).
@@ -151,7 +152,7 @@ def audio_decoding(browser, tmp_path_factory):
 _REPO = Path(__file__).resolve().parents[2]
 SERVER_BIN = Path(os.environ.get("PALAVER_E2E_SERVER_BIN")
                   or _REPO / "native" / ".build" / "e2e" / "debug" / "palaver-server")
-STATIC = _REPO / "palaver" / "webapp" / "static"
+STATIC = _REPO / "web"
 # The language model's worker the server and the fake app start: the e2e build's palaver-lm, whose model is the test's
 # ($PALAVER_TEST_LM: a control folder, see native/Sources/PalaverLM/ControlModel.swift).
 LM_BIN = Path(os.environ.get("PALAVER_E2E_LM_BIN") or SERVER_BIN.with_name("palaver-lm"))
@@ -178,11 +179,8 @@ class FakeRecording:
         return self.live_coach
 
     def transcribe(self, folder: Path) -> bool:
-        from palaver import process_state
-        from palaver.paths import RecordingPaths
-
         self.transcribing.append(folder)
-        process_state.clear(RecordingPaths(folder))  # as the daemon does: the page shows it transcribing
+        clear_failed(RecordingPaths(folder))  # as the daemon does: the page shows it transcribing
         return True
 
     def record(self, action: str, meeting: str | None = None) -> dict:

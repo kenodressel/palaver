@@ -357,11 +357,11 @@ puts a split call back together.
 
 ## Contributing
 
-Palaver is a native Mac app written in Swift — the menu bar app, the
-Meetings window's server, the pipeline that records, transcribes and names
+Palaver is a native Mac app written in Swift (`native/`) — the menu bar app,
+the Meetings window's server, the pipeline that records, transcribes and names
 speakers, the language model that writes the notes, and the `palaver`
-command. Since 0.6 the app holds no Python. The repository's Python code
-remains only for a local developer fallback and the parity tooling that
-compares it with the Swift code. To build it from source, run the tests or
+command — with the window's page in plain HTML, CSS and JavaScript (`web/`).
+The repository's Python is developer tooling only: the end-to-end tests
+(Playwright) and the release build. To build it from source, run the tests or
 make a release, see [CONTRIBUTING.md](CONTRIBUTING.md).
 Third-party licenses are in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).

@@ -15,9 +15,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from palaver import notes as notes_mod
-from palaver.models import Utterance
-from palaver.paths import RecordingPaths
+from .stores import RecordingPaths, save_notes, transcript_hash, utterance
 
 SR = 16_000
 USER = "Timo"
@@ -70,8 +68,8 @@ def make_meeting(folder: Path, *, start: datetime, lines: list[Line], duration: 
     paths.meta.write_text(json.dumps({"start_time": start.isoformat(), "duration_seconds": duration}))
     paths.system_turns.write_text(json.dumps(
         [{"speaker": l.who, "start": l.start, "end": l.end} for l in lines if l.who != ME]))
-    utterances = [Utterance(USER if l.who == ME else l.who, l.start, l.end, l.text, unsure=l.unsure) for l in lines]
-    paths.transcript_json.write_text(json.dumps([u.to_dict() for u in utterances]))
+    utterances = [utterance(USER if l.who == ME else l.who, l.start, l.end, l.text, unsure=l.unsure) for l in lines]
+    paths.transcript_json.write_text(json.dumps(utterances))
     if names:
         paths.speakers.write_text(json.dumps(names))
     if inferred:
@@ -79,14 +77,14 @@ def make_meeting(folder: Path, *, start: datetime, lines: list[Line], duration: 
     if event:
         paths.calendar.write_text(json.dumps(event))
     if notes:
-        notes_mod.save(paths, {
+        save_notes(paths, {
             "title": title or "Meeting",
             "summary": summary or f"What was said in {title or 'the meeting'}.",
             "sections": [{"heading": "Updates", "points": [{"text": "Everyone gave an update", "details": []}]}],
             "next_steps": list(next_steps),
             "decisions": list(decisions),
             "speaker_names": list(guesses),
-            "transcript_hash": notes_mod.transcript_hash(utterances),
+            "transcript_hash": transcript_hash(utterances),
         })
     return paths
 
@@ -99,7 +97,7 @@ def live_part(folder: Path) -> Path:
 def make_live(folder: Path, *, start: datetime, pid: int | None) -> RecordingPaths:
     """A meeting being recorded: what the live worker has so far (live.json),
     a .part file, and a live worker that is "running" (``pid``; None: no
-    live.pid, as in the parity corpus)."""
+    live.pid)."""
     paths = RecordingPaths(folder)
     folder.mkdir(parents=True)
     live_part(folder).write_bytes(b"\0" * 100)
@@ -139,7 +137,7 @@ def _at(stamp: str) -> datetime:
 def build_recordings(root: Path, live_pid: int | None) -> dict[str, RecordingPaths]:
     """The four meetings of the E2E suite, in ``root``. ``live_pid`` is the live
     worker of the meeting being recorded: a process that is running; None
-    writes no live.pid (the parity corpus, tools/parity/corpus.py)."""
+    writes no live.pid."""
     root.mkdir(parents=True, exist_ok=True)
     a_start = _at(A)
     out = {

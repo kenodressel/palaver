@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { clientName, mcpIndicator, transcriptPart, mcpArgsText, mcpSizeText, mcpReadOf, filterLog,
-  logClients, logMeetings, clearedText, logShown } from "../../palaver/webapp/static/logic.js";
+  logClients, logMeetings, clearedText, logShown } from "../../web/logic.js";
 
 const ID = "2026-10-27T16-03-07";
 const CC = { name: "claude-code", version: "2.1.3" };

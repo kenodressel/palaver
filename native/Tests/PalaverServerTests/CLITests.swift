@@ -170,7 +170,7 @@ private func script(_ url: URL, _ body: String) throws {
             #expect(c.run(args) == 2, "\(args)")
             #expect(c.out.isEmpty && c.err.count == 1, "\(args): \(c.err)")
             let line = c.err.first ?? ""
-            #expect(line.hasPrefix("palaver \(args[0])") && (line.contains(" is gone: ") || line.contains("developer tool")), "\(line)")
+            #expect(line.hasPrefix("palaver \(args[0])") && line.contains(" is gone: "), "\(line)")
         }
         #expect(c.run(["record"]) == 2 && c.err == ["palaver record is gone: Palaver.app records (its menu: Start recording now; calls on their own)."])
         #expect(c.run(["rename", "x"]) == 2 && c.err.first?.contains("Meetings window") == true)
@@ -354,8 +354,9 @@ private func script(_ url: URL, _ body: String) throws {
         c.ctx.run = CLIMain.runAttached
         // A checkout whose `make app` leaves dist/palaver-app-<version>.zip (a Palaver.app with one file that says which).
         let repo = c.dir.appendingPathComponent("repo", isDirectory: true)
-        try FileManager.default.createDirectory(at: repo.appendingPathComponent("palaver"), withIntermediateDirectories: true)
-        try Data("__version__ = \"9.9.9\"\n".utf8).write(to: repo.appendingPathComponent("palaver/__init__.py"))
+        try FileManager.default.createDirectory(at: repo.appendingPathComponent("native"), withIntermediateDirectories: true)
+        try Data("// swift-tools-version: 6.0\n".utf8).write(to: repo.appendingPathComponent("native/Package.swift"))
+        try Data("9.9.9\n".utf8).write(to: repo.appendingPathComponent("VERSION"))
         try Data("""
             app:
             \t@mkdir -p build/Palaver.app/Contents dist
@@ -386,8 +387,9 @@ private func script(_ url: URL, _ body: String) throws {
     @Test func appInstallLooksAgainAfterTheBuildAndKeepsTheAppWhenTheAppStartedRecordingMeanwhile() throws {
         let c = CLI()
         let repo = c.dir.appendingPathComponent("repo", isDirectory: true)
-        try FileManager.default.createDirectory(at: repo.appendingPathComponent("palaver"), withIntermediateDirectories: true)
-        try Data("__version__ = \"9.9.9\"\n".utf8).write(to: repo.appendingPathComponent("palaver/__init__.py"))
+        try FileManager.default.createDirectory(at: repo.appendingPathComponent("native"), withIntermediateDirectories: true)
+        try Data("// swift-tools-version: 6.0\n".utf8).write(to: repo.appendingPathComponent("native/Package.swift"))
+        try Data("9.9.9\n".utf8).write(to: repo.appendingPathComponent("VERSION"))
         try Data("app:\n\t@mkdir -p build/Palaver.app/Contents dist\n\t@cd build && /usr/bin/ditto -ck --keepParent Palaver.app ../dist/palaver-app-9.9.9.zip\n".utf8)
             .write(to: repo.appendingPathComponent("Makefile"))
         c.ctx.executable = repo.appendingPathComponent("native/.build/debug/palaver-cli")

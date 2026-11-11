@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { parseNote, inline, splitAt, toggleBold, meetingTime, forSave, chipText, mergeNotes, splitLong, keyOf, notesText }
-  from "../../palaver/webapp/static/mynotes-logic.js";
+  from "../../web/mynotes-logic.js";
 
 test("bold text, and stars that are no bold", () => {
   assert.deepEqual(inline("ask about **the budget** now", 0), [

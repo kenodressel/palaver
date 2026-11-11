@@ -1,5 +1,5 @@
-// The goldens tools/parity/goldens.py writes from Python (Goldens/<section>.json, or <section>.json.gz past
-// 100 KB). A golden is compared as text: PythonJSON.dumps of both sides, byte for byte, so key order and 1 vs
+// The goldens the Python app's tools/parity/goldens.py wrote (Goldens/<section>.json, or <section>.json.gz past
+// 100 KB); frozen since the Python app left the repository (0.6.0: git history has the script). A golden is compared as text: PythonJSON.dumps of both sides, byte for byte, so key order and 1 vs
 // 1.0 count. Never `JSONValue ==`.
 import Foundation
 import PalaverCore
@@ -21,7 +21,7 @@ enum Goldens {
         if let value = lock.withLock({ loaded[section] }) { return value }
         let file = url("\(section).json")
         guard let value = readJSON(file) else {
-            Issue.record("no golden \(file.path)(.gz): run `uv run --extra dev python tools/parity/goldens.py \(section)`",
+            Issue.record("no golden \(file.path)(.gz): the goldens are frozen, restore it from git",
                          sourceLocation: sourceLocation)
             return .object([])
         }

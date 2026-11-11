@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { linkWhy, linkTitle, yourLink, eventChangeText, eventLinkView, withName, withProject, labelDisplay }
-  from "../../palaver/webapp/static/logic.js";
+  from "../../web/logic.js";
 
 const link = (extra = {}) => ({ kind: "event", target: "Northwind", source: "calendar", confidence: 0.6,
   reason: "time match, 2 events overlapped", unsure: true,

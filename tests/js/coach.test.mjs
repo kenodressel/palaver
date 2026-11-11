@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { liveCoachFor, speakingText, questionsNote } from "../../palaver/webapp/static/logic.js";
+import { liveCoachFor, speakingText, questionsNote } from "../../web/logic.js";
 
 const ID = "2026-10-30T10-00-00";
 const coach = { meeting: ID, talk: { speaking: "me" }, text: "You 62 % of the last 10 min", nudge: null };
@@ -31,7 +31,7 @@ test("questionsNote says which model answered and that it keeps to the transcrip
     "Anthropic API found nothing in the transcript to ask about yet.");
 });
 
-import { questionButton } from "../../palaver/webapp/static/logic.js";
+import { questionButton } from "../../web/logic.js";
 
 test("questionButton names the model, waits for it, and says why it is off", () => {
   const local = { ready: true, reason: null, label: "Best next question (Gemma, on this Mac)", local: true, warning: null };

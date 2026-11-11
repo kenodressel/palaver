@@ -31,9 +31,9 @@
 #
 #   sh tools/smoke_install.sh DIST [PYTHON]
 #
-# PYTHON (the build's, default `uv run python`) only rebuilds the app at other versions and renders 0.3.14's swap
-# script. The old releases' own updaters run on OLD_UPDATER_PYTHON (default: the checkout's .venv), as they ran on
-# their runtime.
+# PYTHON (the dev tooling's, default `uv run python`) only rebuilds the app at other versions and renders 0.3.14's
+# swap script. The old releases' own updaters run on OLD_UPDATER_PYTHON (default: the checkout's .venv), as they ran
+# on their runtime.
 set -eu
 
 DIST="$1"
@@ -118,9 +118,9 @@ engine_hello "after install"
 for program in "${MACOS}/Palaver" "${MACOS}/palaver-engine" "${MACOS}/palaver-server" "${MACOS}/palaver-worker" \
     "${MACOS}/palaver-lm" "${RES}/bin/palaver"; do
   codesign --verify --strict "${program}" || fail "${program##*/}'s signature does not verify"
-  # As 0.5: no hardened runtime until notarization (palaver/app_bundle.py HARDENED_RUNTIME).
+  # As 0.5: no hardened runtime until notarization (tools/app_bundle.py HARDENED_RUNTIME).
   if codesign -d --verbose=2 "${program}" 2>&1 | grep "flags=" | grep -q "runtime)"; then
-    fail "${program##*/} has the hardened runtime (0.6.0rc1 signs as 0.5 did)"
+    fail "${program##*/} has the hardened runtime (0.6 signs as 0.5 did)"
   fi
   file "${program}" | grep -q "Mach-O 64-bit executable arm64" || fail "${program} is not an arm64 program"
 done
@@ -172,12 +172,11 @@ ok "palaver-server answers /api/ping with its key (and refuses it without) and s
 
 # --- an update through install.sh: the app only ---------------------------------------------------------
 # What the app keeps in Application Support survives every update: its state with the queue (a crash
-# is recovered from it), the developer's marker.
+# is recovered from it).
 mkdir -p "${SUPPORT}"
 printf '%s\n' '{"state": "stopped", "queued": ["'"${H}"'/Meetings/Recordings/2026-11-01T10-00-00"], "cut": null}' \
   > "${SUPPORT}/daemon.json"
 cp "${SUPPORT}/daemon.json" "${T}/daemon.json.before"
-touch "${SUPPORT}/legacy-server"
 # A later version than the one built: rc1 -> rc2, else 0.6.0 -> 0.6.0.1.
 later() { case "$1" in *rc[0-9]*) echo "${1%rc*}rc$(( ${1##*rc} + $2 ))" ;; *) echo "$1.$2" ;; esac; }
 build_at() {  # build_at VERSION DIR [BASE_URL]: the app rebuilt as that version, the placeholder and the manifest
@@ -230,10 +229,8 @@ sandboxed /bin/sh "${SWAP}" || fail "the Swift updater's swap script failed"
 [ ! -e "${SUPPORT}/runtime" ] || fail "the Swift updater installed a runtime"
 codesign --verify --strict "${APP}" || fail "the updated app's signature does not verify"
 cmp -s "${SUPPORT}/daemon.json" "${T}/daemon.json.before" || fail "an update changed daemon.json"
-[ -f "${SUPPORT}/legacy-server" ] || fail "an update removed the legacy-server marker"
-rm -f "${SUPPORT}/legacy-server"
 no_python_ran "the updates"
-ok "update to ${LAST} by the app's Swift updater: the app only, swapped after quitting, daemon.json and the markers kept"
+ok "update to ${LAST} by the app's Swift updater: the app only, swapped after quitting, daemon.json kept"
 
 # --- the update from 0.3.14 (the last Python app): its swap.sh, which can never change ---------------
 # 0.3.14 writes its own swap script (tests/fixtures/updater_0.3.14/swap.sh.txt, from git 8956274) and

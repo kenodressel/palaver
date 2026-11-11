@@ -252,7 +252,8 @@ public enum CLIMain {
     // MARK: - what replaces the commands of earlier versions
 
     static let byTheApp = "the app runs it itself now (palaver-worker)"
-    static let fromACheckout = "is a developer tool now: run it from a checkout (uv run palaver"
+    /// The developer tools of the Python app, removed with it in 0.6.0 (they stay in the repository's history).
+    static let removedTool = "is gone: it was a developer tool of the Python app, removed in 0.6.0"
 
     /// The one line for a command (or `app`/`daemon`/`report`/`calendar` action) of earlier versions; nil for one it has.
     static func replaced(_ name: String, _ rest: [String]) -> String? {
@@ -261,7 +262,7 @@ public enum CLIMain {
         case "record": return "palaver record is gone: Palaver.app records (its menu: Start recording now; calls on their own)."
         case "rename": return "palaver rename is gone: name the speakers in the Meetings window (click a speaker's name)."
         case "bench", "bench-live":
-            return "palaver \(name) \(fromACheckout) \(name) …)."
+            return "palaver \(name) \(removedTool)."
         case "next-question": return "palaver next-question is gone: the Meetings window asks for the next question (palaver-lm)."
         case "live", "stream", "coach", "cloud-transcribe": return "palaver \(name) is gone: \(byTheApp)."
         case "menubar": return "palaver menubar is gone: Palaver.app is the menu bar app (open it, or `palaver app install` from a checkout)."
@@ -281,7 +282,7 @@ public enum CLIMain {
             default: return nil
             }
         case "report" where action == "open" || action == "usage":
-            return "palaver report \(action!) \(fromACheckout) report \(action!) …)."
+            return "palaver report \(action!) \(removedTool)."
         default: return nil
         }
     }

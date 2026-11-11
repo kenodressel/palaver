@@ -12,6 +12,7 @@ from playwright.sync_api import expect
 
 from .helpers import about, about_line, goto, lane, open_meeting
 from .recordings import A, LIVE, _at
+from .stores import add_project
 
 
 def _invite(served, *people: tuple[str, str], title: str = "Team standup") -> None:
@@ -127,13 +128,8 @@ def open_meeting_titled(page, served, title: str) -> None:
 
 
 def test_with_a_confirmed_project_the_suggestions_go_into_the_picker(page, app_server):
-    from palaver import projects
-
-    store = projects.ProjectStore()
-    pid = store.create("Foundry")
-    store.assign(A, pid)
-    others = {name: store.create(name) for name in ("Internal", "Northwind Terminal")}
-    store.save()
+    add_project("Foundry", {A: {}})
+    others = {name: add_project(name) for name in ("Internal", "Northwind Terminal")}
     suggestions = [{"id": others["Internal"], "name": "Internal", "score": 0.5, "why": "same people"},
                    {"id": others["Northwind Terminal"], "name": "Northwind Terminal", "score": 0.4, "why": "title"}]
 

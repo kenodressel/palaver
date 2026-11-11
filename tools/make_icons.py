@@ -1,4 +1,5 @@
-"""Draw Palaver's icons into palaver/assets/ (run: make icons).
+"""Draw Palaver's icons into native/Bundle/ (run: make icons): the app icon (Palaver.icns) and the menu bar
+icon (menubar.png, also the Swift app's resource native/Sources/Palaver/Resources/menubar.png).
 
 The "Tonspur" mark: three speakers' lanes as pills, as the Meetings window
 draws them. The app icon is the coloured mark on violet in macOS's icon
@@ -16,7 +17,9 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter
 
-ASSETS = Path(__file__).resolve().parent.parent / "palaver" / "assets"
+ROOT = Path(__file__).resolve().parent.parent
+ASSETS = ROOT / "native" / "Bundle"
+APP_RESOURCE = ROOT / "native" / "Sources" / "Palaver" / "Resources" / "menubar.png"
 
 VIOLET = "#5b3df5"
 # On a 100 × 100 square: x, y, width, colour; every pill is 12 high.
@@ -79,12 +82,11 @@ def main() -> int:
         print("iconutil (macOS) is needed for the .icns", file=sys.stderr)
         return 1
     ASSETS.mkdir(exist_ok=True)
-    master = app_icon()
-    master.save(ASSETS / "icon.png")
-    write_icns(master, ASSETS / "Palaver.icns")
+    write_icns(app_icon(), ASSETS / "Palaver.icns")
     menubar_icon().save(ASSETS / "menubar.png")
-    for name in ("icon.png", "Palaver.icns", "menubar.png"):
-        print(ASSETS / name)
+    shutil.copyfile(ASSETS / "menubar.png", APP_RESOURCE)
+    for path in (ASSETS / "Palaver.icns", ASSETS / "menubar.png", APP_RESOURCE):
+        print(path)
     return 0
 
 

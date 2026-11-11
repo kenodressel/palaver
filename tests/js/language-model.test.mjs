@@ -1,9 +1,9 @@
 // Settings → Language model: the choices, what goes where, the access log
-// (palaver/webapp/static/logic.js).
+// (web/logic.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { engineOptions, sendsText, accessLogText, testText, tokensText } from "../../palaver/webapp/static/logic.js";
+import { engineOptions, sendsText, accessLogText, testText, tokensText } from "../../web/logic.js";
 
 function lm(extra = {}) {
   return {

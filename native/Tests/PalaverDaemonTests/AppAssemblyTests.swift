@@ -7,12 +7,10 @@ import PalaverCore
 @testable import PalaverDaemon
 
 @Suite struct HelperJobsTests {
-    let python = "/A/Contents/MacOS/palaver-python"
     let lm = "/A/Contents/MacOS/palaver-lm"
 
-    func jobs(_ out: URL, lm: String? = "/A/Contents/MacOS/palaver-lm", spawn: HelperJobs.Spawn? = nil,
-              alive: @escaping (Int32) -> Bool = { _ in false }) -> HelperJobs {
-        HelperJobs(outputDir: { out }, python: python, lm: lm, cliOptions: ["--config", "/c.toml"], taskpolicy: "/usr/sbin/taskpolicy",
+    func jobs(_ out: URL, spawn: HelperJobs.Spawn? = nil, alive: @escaping (Int32) -> Bool = { _ in false }) -> HelperJobs {
+        HelperJobs(outputDir: { out }, lm: lm, cliOptions: ["--config", "/c.toml"], taskpolicy: "/usr/sbin/taskpolicy",
                    spawn: spawn, now: { 1000 }, alive: alive)
     }
 
@@ -22,10 +20,8 @@ import PalaverCore
         let j = jobs(out)
         #expect(try j.argv(kind: "notes", args: [folder.path, "--force"])
                 == ["/usr/sbin/taskpolicy", "-c", "utility", lm, "--config", "/c.toml", "--no-notify", "notes", folder.path, "--force"])
-        // The legacy-server fallback (no palaver-lm): Python's command.
-        #expect(try jobs(out, lm: nil).argv(kind: "projects", args: ["--no-wait", "suggest"])
-                == ["/usr/sbin/taskpolicy", "-c", "utility", python, "-m", "palaver", "--config", "/c.toml", "--no-notify",
-                    "projects", "--no-wait", "suggest"])
+        #expect(try j.argv(kind: "projects", args: ["--no-wait", "suggest"])
+                == ["/usr/sbin/taskpolicy", "-c", "utility", lm, "--config", "/c.toml", "--no-notify", "projects", "--no-wait", "suggest"])
         #expect(Array(try j.argv(kind: "projects", args: ["--no-wait", "suggest"]).suffix(3)) == ["projects", "--no-wait", "suggest"])
         #expect(Array(try j.argv(kind: "projects", args: ["--no-wait", "describe", "ab12"]).suffix(2)) == ["describe", "ab12"])
         for (kind, args) in [("notes", ["/etc", "--force"]), ("notes", [out.path + "/x/../../etc", "--force"]),
@@ -43,7 +39,7 @@ import PalaverCore
 
     @Test func aLaunchedHelperIsRecordedUntilItEndsWithItsExitCodeAndItsOutputKept() throws {
         let out = tempDir()
-        let j = HelperJobs(outputDir: { out }, python: "/bin/sh", cliOptions: [], taskpolicy: nil,
+        let j = HelperJobs(outputDir: { out }, lm: "/bin/sh", cliOptions: [], taskpolicy: nil,
                            spawn: { argv, fd in
                                // The real spawn with the command swapped: prints, then exits 3.
                                try spawnChild(["/bin/sh", "-c", "echo 'error: the model is not downloaded'; sleep 0.3; exit 3"],

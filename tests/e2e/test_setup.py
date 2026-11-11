@@ -12,19 +12,16 @@ from datetime import datetime, timedelta
 import pytest
 from playwright.sync_api import expect
 
-from palaver import settings
-from palaver.calendar_events import Attendee, Event
-
 from .conftest import _serve
 from .helpers import expect_toast, goto, hash_of, heading, reload
+from .stores import attendee, config_dir, event, read_settings, update_settings
 from .stub_hub import E5, E5_REVISION, MIB, StubHub
 
 
 def _events() -> list[dict]:
     at = datetime.now().astimezone() - timedelta(days=1)
-    me = Attendee("Timo Strauss", "timo@kloud.io", is_self=True)
-    return [Event("Contoso Northwind Weekly", at, at + timedelta(hours=1),
-                  (me, Attendee("Stefan Dornbusch", "stefan@contoso.at"))).to_dict()]
+    me = attendee("Timo Strauss", "timo@kloud.io", is_self=True)
+    return [event("Contoso Northwind Weekly", at, at + timedelta(hours=1), [me, attendee("Stefan Dornbusch", "stefan@contoso.at")])]
 
 
 @pytest.fixture
@@ -112,10 +109,10 @@ def test_the_first_start_takes_three_steps(page, fresh):
     assert hash_of(page) == "#/today"  # the start page
     expect(heading(page)).to_have_text("Today")
 
-    saved = settings.read_raw()
+    saved = read_settings()
     assert saved["setup"]["done"] and saved["setup"]["hardware"] == "Apple M4 Pro, 48 GB"
     assert saved["user_name"] == "Timo Strauss"
-    assert sorted(t["term"] for t in json.loads((settings.path().parent / "glossary.json").read_text())["terms"].values()) \
+    assert sorted(t["term"] for t in json.loads((config_dir() / "glossary.json").read_text())["terms"].values()) \
         == ["Northwind", "Stefan Dornbusch"]
 
 
@@ -126,13 +123,13 @@ def test_skip_a_step_changes_nothing_and_skip_setup_is_remembered(page, fresh):
     step_title(page, "Recommended for this Mac")
     page.locator("#main .setup-actions").get_by_role("button", name="Skip this step").click()
     step_title(page, "Test recording")
-    assert "local_model" not in settings.read_raw() and "engines" not in settings.read_raw()
+    assert "local_model" not in read_settings() and "engines" not in read_settings()
     assert fresh.probe.fetched == [] and not fresh.probe.autostart_on
     page.locator("#main .setup-actions").get_by_role("button", name="Back").click()
     step_title(page, "Recommended for this Mac")
     page.get_by_role("button", name="Skip setup").click()
     expect_toast(page, "Setup skipped. It is in Settings when you want it.")
-    assert settings.read_raw()["setup"]["skipped"]
+    assert read_settings()["setup"]["skipped"]
     reload(page)
     page.wait_for_load_state("networkidle")
     expect(page.locator("#main .setup")).to_have_count(0)  # not offered again
@@ -159,7 +156,7 @@ def test_customize_picks_an_alternative(page, fresh):
     expect(pack(page, "language_model")).to_contain_text("recommended: Gemma 4 12B on this Mac")
     primary(page).click()
     step_title(page, "Test recording")
-    assert settings.read_raw()["engines"] == {"notes": "pending", "projects": "pending"}
+    assert read_settings()["engines"] == {"notes": "pending", "projects": "pending"}
 
 
 def test_reopen_from_settings_with_the_recommendations(page, app_server):
@@ -190,7 +187,7 @@ def test_an_existing_user_is_not_shown_the_assistant(page, app_server):
 
 
 def test_a_new_mac_offers_a_review(page, app_server):
-    settings.update({"setup": {"done": "2026-10-01T09:00:00+02:00", "hardware": "Apple M1, 16 GB"}})
+    update_settings({"setup": {"done": "2026-10-01T09:00:00+02:00", "hardware": "Apple M1, 16 GB"}})
     goto(page, app_server)
     t = expect_toast(page, "This is another Mac (Apple M4 Pro, 48 GB). Review the recommended settings?")
     t.get_by_role("button", name="Review").click()
@@ -198,7 +195,7 @@ def test_a_new_mac_offers_a_review(page, app_server):
 
 
 def test_reopening_keeps_a_deliberate_choice(page, fresh):
-    settings.update({"realtime": False, "setup": {"done": "2026-10-01T09:00:00+02:00",
+    update_settings({"realtime": False, "setup": {"done": "2026-10-01T09:00:00+02:00",
                                                   "hardware": "Apple M4 Pro, 48 GB"}})
     page.goto(fresh.url + "#/setup/recommended")
     expect(pack(page, "realtime")).to_contain_text("Off")
@@ -207,7 +204,7 @@ def test_reopening_keeps_a_deliberate_choice(page, fresh):
     expect(page.locator("#main .setup-actions .setup-secondary")).to_have_text("Use recommended")
     primary(page).click()
     step_title(page, "Test recording")
-    assert settings.read_raw()["realtime"] is False  # kept
+    assert read_settings()["realtime"] is False  # kept
 
 
 def test_a_failed_download_can_be_tried_again(page, fresh):
@@ -291,7 +288,7 @@ def test_a_cloud_model_that_is_not_set_up_leaves_notes_off(page, fresh):
     primary(page).click()
     step_title(page, "Test recording")
     # Notes wait for a cloud model: never left on Gemma, and Gemma is not downloaded.
-    assert settings.read_raw()["engines"] == {"notes": "pending", "projects": "pending"}
+    assert read_settings()["engines"] == {"notes": "pending", "projects": "pending"}
     assert "gemma" not in fresh.probe.fetched
 
 

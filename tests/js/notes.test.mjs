@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { notesEstimate } from "../../palaver/webapp/static/logic.js";
+import { notesEstimate } from "../../web/logic.js";
 
 test("no estimate before there are two runs", () => {
   assert.equal(notesEstimate([]), null);
@@ -19,7 +19,7 @@ test("only the last five runs count", () => {
 });
 
 // After the window's server restarted (#57), notes still being written show again, from /api/model-jobs.
-import { notesFromJobs } from "../../palaver/webapp/static/logic.js";
+import { notesFromJobs } from "../../web/logic.js";
 
 test("notesFromJobs: a running notes job shows as being written, and ends when it is done", () => {
   const jobs = { running: [{ kind: "notes", key: "A", started: 1000 }, { kind: "projects", key: "projects", started: 5 }] };
