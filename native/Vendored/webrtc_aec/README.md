@@ -34,6 +34,8 @@ Pre-built libraries are included in `lib/`:
 - `lib/Darwin/libraven_aec.a` - the C API below (arm64)
 - `lib/macos/libwebrtc_audio_processing.a`, `libcommon_audio.a`, `libsystem_wrappers.a`,
   `libwebrtc.a` - Universal (x86_64 + arm64)
+  `libwebrtc_audio_processing.a` had WebRTC's `transient_click_annotate` tool in it, which defines `main`; it was
+  removed from both slices (`ar d`) because newer linkers refuse a test bundle with a second `main`.
 
 ## C API
 
