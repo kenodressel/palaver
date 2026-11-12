@@ -225,17 +225,17 @@ public enum Coach {
         let fillerSum = tics.reduce(0) { $0 + $1.1 }
         let all = me + others
         // In typed parts: one literal of all of it is more than the type checker manages on a slower Mac (CI).
-        let wpm: JSONValue = minutes >= 1 && !atMic ? .int(try roundInt(Double(words) / minutes)) : .null
+        let wpmOut: JSONValue = minutes >= 1 && !atMic ? .int(try roundInt(Double(words) / minutes)) : .null
         let fastestAt: JSONValue = fastest.map { f -> JSONValue in
             .object([("start", .double(f.start)), ("wpm", .int(f.wpm))])
         } ?? .null
-        let pace: JSONValue = .object([("wpm", wpm), ("fastest", fastestAt)])
+        let paceOut: JSONValue = .object([("wpm", wpmOut), ("fastest", fastestAt)])
         let perMinute: JSONValue = minutes >= 1 && !atMic ? rounded(Double(fillerSum) / minutes, 2) : .null
         let top: [JSONValue] = tics.filter { $0.1 != 0 }.prefix(5).map { t -> JSONValue in
             .object([("word", .string(t.0)), ("count", .int(t.1))])
         }
-        let hesitations: JSONValue = hesitationCount.map { JSONValue.int($0) } ?? .null
-        let fillers: JSONValue = .object([("per_minute", perMinute), ("top", .array(top)), ("hesitations", hesitations)])
+        let hesitationsOut: JSONValue = hesitationCount.map { JSONValue.int($0) } ?? .null
+        let fillers: JSONValue = .object([("per_minute", perMinute), ("top", .array(top)), ("hesitations", hesitationsOut)])
         let perHour: JSONValue = all >= 600 ? rounded(Double(questions.count) / (all / 3600), 1) : .null
         let wait: JSONValue = PyStatistics.median(waits).map { rounded($0, 1) } ?? .null
         let list: [JSONValue] = questions.map { q -> JSONValue in
@@ -257,7 +257,7 @@ public enum Coach {
         let fields: [(String, JSONValue)] = [
             ("talk", talk),
             ("monologues", .array(monologues)),
-            ("pace", pace),
+            ("pace", paceOut),
             ("fillers", fillers),
             ("questions", .object(questionFields)),
             ("interruptions", .object(interruptions)),

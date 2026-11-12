@@ -551,7 +551,7 @@ Mac. `palaver mcp --install` adds it to Claude Code (runs `claude mcp add
 --scope user palaver …`); `--install --desktop` adds it to Claude Desktop.
 The server is called "palaver" (its instructions and tool descriptions name
 meetings, calls, Teams, transcripts, next steps, customers, so Claude picks it
-for such questions). Before 0.6.3 it was "meetings": at every start the app
+for such questions). Before 0.6.5 it was "meetings": at every start the app
 renames Palaver's "meetings" entry to "palaver" in `~/.claude.json` (user and
 project servers, and a project's `mcp__meetings__…` allowed tools) and in
 Claude Desktop's config, its options and place kept; another server called
