@@ -300,6 +300,9 @@ public enum DaemonFactory {
         // Slack's speaker as the huddle, and the daemon stops without the grace.
         let huddle = SlackHuddleState()
         detector.huddleLeft = { huddle.left }
+        // A Teams recording's follower says when the call window closed: with Teams' call audio gone, hung up,
+        // and the daemon stops without the grace.
+        let teamsCall = TeamsCallState()
         // A call's recording does not keep the mic while the user is muted in it (respect_call_mute).
         // With the real capture only: given sources (tests) never read another app's mute.
         // A Slack huddle is followed without it too, for its end (the mic is then kept: `gatesMic` false).
@@ -309,7 +312,8 @@ public enum DaemonFactory {
             let callStart = made?.continuingSince.map { hostNanos() - Int64(Date().timeIntervalSince($0) * 1e9) }
                 ?? detector.callSince(app)
             askAccessibility?()  // to read Teams' mic button, Slack's huddle
-            return { log in CallMute.make(app: app, callStart: callStart, home: paths.home, huddle: huddle, log: log) }
+            return { log in CallMute.make(app: app, callStart: callStart, home: paths.home, huddle: huddle,
+                                        teams: teamsCall, log: log) }
         }
         var deps = DaemonDeps(
             detect: { detector.detect(recording: $0) },
@@ -334,7 +338,7 @@ public enum DaemonFactory {
                              maxSession: Double(config.maxSessionHours) * 3600),
             clock: { ProcessInfo.processInfo.systemUptime })
         deps.ignore = { detector.ignore(named: $0) }
-        deps.callLeft = { $0 == .slack && huddle.left }
+        deps.callLeft = { $0 == .slack ? huddle.left : teamsCall.left }
         deps.ignored = { detector.ignored.map(\.rawValue) }
         deps.launchNotes = { try launcher.launch("notes", $0, qos: .utility) }
         deps.notesWanted = { let v = notion.value; return !v.autoSync && v.notes }

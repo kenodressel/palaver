@@ -44,6 +44,10 @@ final class MenuBar: NSObject {
     private let keepItem = NSMenuItem(title: MenuText.keepTitle, action: nil, keyEquivalent: "")
     private let updateItem = NSMenuItem(title: MenuText.updateItemTitle, action: nil, keyEquivalent: "")
     private var hasIcon = true
+    private var plainIcon: NSImage?
+    /// The icon with a mic-slash badge: recording while muted in the call (the mic is not kept).
+    private var mutedIcon: NSImage?
+    private var showsMuted = false
     private let mono = [NSAttributedString.Key.font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)]
 
     init(actions: MenuActions, statusBar: NSStatusBar = .system) {
@@ -52,6 +56,8 @@ final class MenuBar: NSObject {
         liveItems = (0..<MenuText.menuLines).map { _ in NSMenuItem(title: "", action: nil, keyEquivalent: "") }
         super.init()
         let icon = Self.icon()
+        plainIcon = icon
+        mutedIcon = icon.map(Self.badged)
         statusItem.button?.image = icon
         hasIcon = icon != nil
         if icon == nil { statusItem.button?.title = "Palaver" }  // no icon found: say so in text
@@ -68,6 +74,27 @@ final class MenuBar: NSObject {
         guard let url, let image = NSImage(contentsOf: url) else { return nil }
         image.size = NSSize(width: 20, height: 20)
         image.isTemplate = true
+        return image
+    }
+
+    /// `base` with a mic slashed through in its lower right corner, cut free of the icon by a thin ring.
+    private static func badged(_ base: NSImage) -> NSImage {
+        let image = NSImage(size: base.size, flipped: false) { rect in
+            base.draw(in: rect)
+            guard let symbol = NSImage(systemSymbolName: "mic.slash.fill", accessibilityDescription: "Mic muted")?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 10, weight: .bold)) else { return true }
+            let side = rect.height * 0.55
+            let scale = min(side / symbol.size.width, side / symbol.size.height)
+            let size = NSSize(width: symbol.size.width * scale, height: symbol.size.height * scale)
+            let badge = NSRect(x: rect.maxX - size.width, y: rect.minY, width: size.width, height: size.height)
+            NSGraphicsContext.current?.compositingOperation = .clear
+            NSBezierPath(roundedRect: badge.insetBy(dx: -1.5, dy: -1.5), xRadius: 3, yRadius: 3).fill()
+            NSGraphicsContext.current?.compositingOperation = .sourceOver
+            symbol.draw(in: badge)
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = "Palaver, mic muted"
         return image
     }
 
@@ -154,6 +181,11 @@ final class MenuBar: NSObject {
                                    update: MenuText.updateArrow(s.update))
         statusItem.button?.title = hasIcon ? title : ("Palaver " + title).trimmingCharacters(in: .whitespaces)
         statusLine.title = MenuText.statusLine(s.status, now: s.now, progress: s.progress)
+        let muted = MenuText.mutedIn(s.status) != nil
+        if hasIcon, muted != showsMuted {
+            showsMuted = muted
+            statusItem.button?.image = muted ? mutedIcon : plainIcon
+        }
         manualItem.title = MenuText.manualTitle(s.status)
         keepItem.isHidden = !MenuText.keepVisible(s.status)
         let update = MenuText.updateTitle(s.update)

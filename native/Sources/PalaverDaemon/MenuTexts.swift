@@ -62,7 +62,8 @@ public enum MenuText {
         if error { return "⚠️" }
         let state = status["state"]?.stringValue
         if state == "recording" {
-            let icon = truthy(status, "missing") || truthy(status, "warnings") ? "🔴⚠" : "🔴"  // never for a hint
+            var icon = truthy(status, "missing") || truthy(status, "warnings") ? "🔴⚠" : "🔴"  // never for a hint
+            if mutedIn(status) != nil { icon += "🔇" }  // the mic is not kept now (the icon gets its badge too)
             return icon + (now.map { " " + clock(elapsed(status, $0)) } ?? "")
         }
         if truthy(status, "transcribing") {
@@ -72,6 +73,23 @@ public enum MenuText {
         if state == "paused" { return "⏸" }
         if update { return "↑" }  // a new release, until it is installed: the icon says so too, not only a notification
         return ""
+    }
+
+    // MARK: - muted in the call
+
+    /// The call app the user is muted in while recording ("Teams"): their mic is not kept now. The menu bar
+    /// icon gets a mic-slash badge, the title a 🔇, the status line says so.
+    public static func mutedIn(_ status: JSONValue) -> String? {
+        guard status["state"]?.stringValue == "recording", let app = status["muted"]?.stringValue else { return nil }
+        return app == "slack" ? "Slack" : "Teams"
+    }
+
+    public static func mutedLine(_ app: String) -> String { "Mic muted in \(app) — not recorded" }
+
+    /// The call app whose mute can't be followed (no Accessibility, no readable log): the mic is recorded.
+    public static func muteUnfollowed(_ status: JSONValue) -> String? {
+        guard status["state"]?.stringValue == "recording", let app = status["why"]?["mute_unfollowed"]?.stringValue else { return nil }
+        return app == "slack" ? "Slack" : "Teams"
     }
 
     // MARK: - a recording, where the menu bar icon may be out of sight (#23)
@@ -127,6 +145,7 @@ public enum MenuText {
     public static func statusLine(_ status: JSONValue, now: Date, progress: Progress? = nil) -> String {
         let state = status["state"]?.stringValue
         if state == "recording" {
+            if let app = mutedIn(status) { return mutedLine(app) }  // what matters most while it lasts
             if let why = status["why_text"]?.stringValue, !why.isEmpty { return why }  // "Recording · Teams call since 12:06 · mic AirPods (24 kHz)" (#47)
             let minutes = Int((elapsed(status, now) / 60).rounded(.down))
             let folder = status["folder"]?.stringValue ?? ""
@@ -168,6 +187,9 @@ public enum MenuText {
         let warnings = (status["warnings"]?.arrayValue ?? []).compactMap(\.stringValue)  // issue #50: two at most, the window has them all
         lines += warnings.prefix(menuWarnings).map { "⚠ \($0)" }
         if warnings.count > menuWarnings { lines.append("+\(warnings.count - menuWarnings) more — open Palaver for all") }
+        if let app = muteUnfollowed(status) {
+            lines.append("⚠ Can't see whether you're muted in \(app): your mic is recorded (allow Accessibility in Settings)")
+        }
         var source = sources[status["system_source"]?.stringValue ?? ""] ?? "unknown"
         if let rate = status["why"]?["system"]?["rate"]?.doubleValue, rate != 0 { source += " (\(Lifecycle.khz(rate)))" }
         let trigger = truthy(status, "manual") ? "manual recording" : (truthy(status, "teams_active") ? "Call active" : "Call ended — stopping soon")

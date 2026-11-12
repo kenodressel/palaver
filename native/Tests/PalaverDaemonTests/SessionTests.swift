@@ -175,7 +175,9 @@ func rows(_ url: URL) -> [[String: Any]] {
         let folder = try s.start()
         #expect(source.calls == ["start"] && s.mutedIn == nil)
         timeline!.set(true, at: hostNanos() - 2_000_000_000)
-        #expect(s.mutedIn == "teams")
+        #expect(s.mutedIn == "teams" && s.muteUnfollowed == nil)
+        source.unfollowed = true  // no Accessibility, no readable log
+        #expect(s.muteUnfollowed == "teams")
         _ = try s.stop(reason: "call_ended")
         #expect(source.calls == ["start", "refresh", "stop"] && s.mutedIn == nil)
         let log = rows(folder.appendingPathComponent("session.log"))
@@ -201,6 +203,8 @@ func rows(_ url: URL) -> [[String: Any]] {
         timeline!.set(true, at: hostNanos() - 3_000_000_000)
         timeline!.set(false, at: hostNanos() - 1_000_000_000)
         #expect(s.mutedIn == nil && source.calls == ["start"])
+        source.unfollowed = true
+        #expect(s.muteUnfollowed == nil)  // the mic is kept anyway
         _ = try s.stop(reason: "call_ended")
         #expect(source.calls == ["start", "refresh", "stop"])
         let log = rows(folder.appendingPathComponent("session.log"))
@@ -281,6 +285,7 @@ final class FakeMuteSource: CallMuteSource, @unchecked Sendable {
     private var _calls: [String] = []
     var calls: [String] { lock.withLock { _calls } }
     var tellsLate = false
+    var unfollowed = false
     var onRefresh: () -> Void = {}
     func start() { lock.withLock { _calls.append("start") } }
     func refresh() { lock.withLock { _calls.append("refresh") }; onRefresh() }

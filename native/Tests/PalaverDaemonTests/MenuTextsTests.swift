@@ -37,6 +37,26 @@ private typealias Levels = [(label: String, db: Double?, silentFor: Double)]
         #expect(MenuText.title(rec(), update: true) == "🔴")  // what happens now wins
     }
 
+    @Test func whileMutedInTheCallTheIconAndTheStatusLineSaySo() {
+        let why = "Recording · Teams call since 14:48 · Muted in Teams"
+        let muted = rec([("since", .string(ago(65))), ("why_text", .string(why)), ("muted", .string("teams"))])
+        #expect(MenuText.mutedIn(muted) == "Teams")
+        #expect(MenuText.title(muted, now: now) == "🔴🔇 1:05")
+        #expect(MenuText.statusLine(muted, now: now) == "Mic muted in Teams — not recorded")
+        #expect(MenuText.statusLine(rec([("muted", .string("slack"))]), now: now) == "Mic muted in Slack — not recorded")
+        let unmuted = rec([("since", .string(ago(65))), ("why_text", .string(why)), ("muted", .null)])
+        #expect(MenuText.mutedIn(unmuted) == nil && MenuText.title(unmuted, now: now) == "🔴 1:05")
+        #expect(MenuText.statusLine(unmuted, now: now) == why)
+        #expect(MenuText.mutedIn(status([("muted", .string("teams"))])) == nil)  // only while recording
+    }
+
+    @Test func aMuteThatCantBeFollowedIsALiveLine() {
+        let blind = rec([("why", .object([("trigger", .string("teams")), ("mute_unfollowed", .string("teams"))]))])
+        #expect(MenuText.recordingLines(blind, levels: [], now: now).contains(
+            "⚠ Can't see whether you're muted in Teams: your mic is recorded (allow Accessibility in Settings)"))
+        #expect(!MenuText.recordingLines(rec(), levels: [], now: now).contains { $0.contains("Can't see whether") })
+    }
+
     // #23: when the menu bar icon is hidden (the notch), the start says so in a notification, and
     // the window's title and the Dock icon show the recording while the window is open.
     @Test func theStartOfARecordingIsSaidInWords() {

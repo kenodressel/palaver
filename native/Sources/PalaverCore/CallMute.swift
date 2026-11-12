@@ -125,10 +125,13 @@ public protocol CallMuteSource: AnyObject {
     func stop()
     /// Its changes come late (Teams' log): the stop keeps following it for the timeline's hold.
     var tellsLate: Bool { get }
+    /// The mute state can't be followed right now (Teams: no Accessibility, no readable log): the mic is kept.
+    var unfollowed: Bool { get }
 }
 
 extension CallMuteSource {
     public var tellsLate: Bool { false }
+    public var unfollowed: Bool { false }
 }
 
 // MARK: - Teams: its SlimCore log
@@ -191,17 +194,39 @@ public enum TeamsMuteLog {
     }
 
     /// The log Teams writes now: the newest by name (its date), then by modification time.
-    public static func current(in dir: URL, fm: FileManager = .default) throws -> URL? {
-        let all: [String] = try fm.contentsOfDirectory(atPath: dir.path)
+    public static func current(in dir: URL, files: TeamsLogFiles = .system) throws -> URL? {
+        let all: [String] = try files.list(dir)
         let names: [String] = all.filter { (n: String) -> Bool in n.hasPrefix(filePrefix) && n.hasSuffix(".log") }
-        func mtime(_ n: String) -> Date {
-            let attributes = try? fm.attributesOfItem(atPath: dir.appendingPathComponent(n).path)
-            return (attributes?[.modificationDate] as? Date) ?? .distantPast
-        }
+        func mtime(_ n: String) -> Date { files.modified(dir.appendingPathComponent(n)) ?? .distantPast }
         let dated: [(name: String, time: Date)] = names.map { (n: String) -> (name: String, time: Date) in (n, mtime(n)) }
         let newest = dated.max { (a, b) -> Bool in a.name != b.name ? a.name < b.name : a.time < b.time }
         return newest.map { dir.appendingPathComponent($0.name) }
     }
+}
+
+/// How Teams' log folder is reached: every access goes through it (reading Teams' group container may make
+/// macOS ask the user whether Palaver may access another app's data; tests count the accesses).
+public struct TeamsLogFiles: Sendable {
+    /// The folder's file names.
+    public var list: @Sendable (URL) throws -> [String]
+    public var modified: @Sendable (URL) -> Date?
+    public var size: @Sendable (URL) -> UInt64?
+    /// A descriptor to read the file with, or -1 (errno says why).
+    public var open: @Sendable (URL) -> Int32
+
+    public init(list: @escaping @Sendable (URL) throws -> [String], modified: @escaping @Sendable (URL) -> Date?,
+                size: @escaping @Sendable (URL) -> UInt64?, open: @escaping @Sendable (URL) -> Int32) {
+        self.list = list; self.modified = modified; self.size = size; self.open = open
+    }
+
+    public static let system = TeamsLogFiles(
+        list: { try FileManager.default.contentsOfDirectory(atPath: $0.path) },
+        modified: { (try? FileManager.default.attributesOfItem(atPath: $0.path))?[.modificationDate] as? Date },
+        size: { url in
+            var st = stat()
+            return stat(url.path, &st) == 0 ? UInt64(st.st_size) : nil
+        },
+        open: { Darwin.open($0.path, O_RDONLY | O_CLOEXEC) })
 }
 
 /// Follows Teams' log during a Teams recording and sets the timeline by each line's own time.
@@ -216,6 +241,7 @@ public final class TeamsMuteWatcher: CallMuteSource, @unchecked Sendable {
     public static let rotationSeconds = 2.0
 
     private let directory: URL
+    private let files: TeamsLogFiles
     private let timeline: MuteTimeline
     private let callStart: Int64
     private let host: @Sendable () -> Int64
@@ -230,6 +256,9 @@ public final class TeamsMuteWatcher: CallMuteSource, @unchecked Sendable {
     private var lastRotationCheck: Int64?
     private var toldUnreadable = false
     private var toldFormat = false
+    /// The log could not be read at the last try (read from other threads: `stateLock`).
+    private let stateLock = NSLock()
+    private var _failing = false
     private var timer: DispatchSourceTimer?
     private let poll: Double?
 
@@ -240,8 +269,9 @@ public final class TeamsMuteWatcher: CallMuteSource, @unchecked Sendable {
     public init(directory: URL, timeline: MuteTimeline, callStart: Int64,
                 host: @escaping @Sendable () -> Int64 = hostNanos, wall: @escaping @Sendable () -> Date = Date.init,
                 poll: Double? = TeamsMuteWatcher.pollSeconds, sink: (@Sendable (Bool, Int64) -> Void)? = nil,
-                log: @escaping @Sendable (String) -> Void) {
+                files: TeamsLogFiles = .system, log: @escaping @Sendable (String) -> Void) {
         self.poll = poll
+        self.files = files
         self.sink = sink
         self.directory = directory
         self.timeline = timeline
@@ -276,6 +306,9 @@ public final class TeamsMuteWatcher: CallMuteSource, @unchecked Sendable {
         timer = nil
     }
 
+    /// Its last try to read the log failed (no folder, no log, not allowed): Teams' mute is not known from it.
+    public var failing: Bool { stateLock.withLock { _failing } }
+
     /// Reads what is new; skipped while a read is under way (never waits on one).
     public func refresh() {
         guard lock.try() else { return }
@@ -290,7 +323,7 @@ public final class TeamsMuteWatcher: CallMuteSource, @unchecked Sendable {
         let now = host()
         if file == nil || lastRotationCheck.map({ Double(now - $0) / 1e9 >= Self.rotationSeconds }) ?? true {
             lastRotationCheck = now
-            if let newer = try? TeamsMuteLog.current(in: directory), newer != file {
+            if let newer = try? TeamsMuteLog.current(in: directory, files: files), newer != file {
                 if file != nil { log("Teams started a new log: following \(newer.lastPathComponent)") }
                 open(tail: file == nil)
                 return
@@ -304,7 +337,7 @@ public final class TeamsMuteWatcher: CallMuteSource, @unchecked Sendable {
         opened = true
         lastRotationCheck = host()
         let found: URL?
-        do { found = try TeamsMuteLog.current(in: directory) } catch {
+        do { found = try TeamsMuteLog.current(in: directory, files: files) } catch {
             unreadable("\(error.localizedDescription)")
             return
         }
@@ -312,23 +345,19 @@ public final class TeamsMuteWatcher: CallMuteSource, @unchecked Sendable {
         file = found
         partial = Data()
         offset = 0
-        if tail, let size = size(found), size > UInt64(Self.tailBytes) {
+        if tail, let size = files.size(found), size > UInt64(Self.tailBytes) {
             offset = size - UInt64(Self.tailBytes)
             skipLine = true
         }
         read()
     }
 
-    private func size(_ url: URL) -> UInt64? {
-        var st = stat()
-        return stat(url.path, &st) == 0 ? UInt64(st.st_size) : nil
-    }
-
     private func read() {
         guard let file else { return }
-        let fd = Darwin.open(file.path, O_RDONLY | O_CLOEXEC)
+        let fd = files.open(file)
         guard fd >= 0 else { unreadable(String(cString: strerror(errno))); return }
         defer { close(fd) }
+        stateLock.withLock { _failing = false }
         var st = stat()
         guard fstat(fd, &st) == 0 else { return }
         let size = UInt64(st.st_size)
@@ -374,6 +403,7 @@ public final class TeamsMuteWatcher: CallMuteSource, @unchecked Sendable {
     }
 
     private func unreadable(_ why: String) {
+        stateLock.withLock { _failing = true }
         guard !toldUnreadable else { return }
         toldUnreadable = true
         log("⚠ can't read Teams' log (\(why)); your microphone is recorded while muted in Teams")
@@ -532,13 +562,15 @@ public final class CoreAudioProcessEvents: AudioProcessEvents, @unchecked Sendab
 
 /// The timeline and its source for one recording of a call; nil for anything else.
 public enum CallMute {
-    /// How long the mic is held before it is written at first: Teams' follower shortens it once it
-    /// reads the mic button (TeamsMuteFollower). Slack's: a look every 0.5 s at its mic button (a mute dated to
-    /// the look before), or its mic release, told at once.
-    public static func delay(_ app: CallApp) -> Double { app == .teams ? TeamsMuteFollower.logDelay : 1.0 }
+    /// How long the mic is held before it is written at first: Teams' follower lengthens it only when it
+    /// has to follow Teams' log (TeamsMuteFollower). Slack's: a look every 0.5 s at its mic button (a mute dated
+    /// to the look before), or its mic release, told at once.
+    public static func delay(_ app: CallApp) -> Double { app == .teams ? TeamsMuteFollower.buttonDelay : 1.0 }
 
-    /// `huddle`: where a Slack recording's follower says the user left the huddle.
+    /// `huddle`: where a Slack recording's follower says the user left the huddle; `teams`: where a Teams
+    /// recording's says the user hung up.
     public static func make(app: CallApp, callStart: Int64?, home: URL, huddle: SlackHuddleState = SlackHuddleState(),
+                            teams: TeamsCallState = TeamsCallState(),
                             lister: ProcessLister = CoreAudioProcessLister(),
                             log: @escaping @Sendable (String) -> Void) -> (MuteTimeline, CallMuteSource) {
         let timeline = MuteTimeline(app: app, delay: delay(app), log: log)
@@ -546,7 +578,7 @@ public enum CallMute {
         case .teams:
             let start = callStart ?? hostNanos()
             return (timeline, TeamsMuteFollower(
-                button: AXTeamsMuteButton(), timeline: timeline,
+                button: AXTeamsMuteButton(), timeline: timeline, state: teams,
                 watcher: { sink in
                     TeamsMuteWatcher(directory: TeamsMuteLog.directory(home: home), timeline: timeline, callStart: start,
                                      sink: sink, log: log)

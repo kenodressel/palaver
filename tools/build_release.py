@@ -162,10 +162,16 @@ def bundle_problems(app: Path, home: str | None = None, checkout: Path = ROOT) -
     ``.py``/``.pyc`` file, an interpreter: any file named like python but the MCP shim, which must be a shell
     script), a runtime.json that does not name the placeholder runtime, or a path of the building Mac (its home
     folder, the checkout) in any file. Empty when the bundle is fine."""
+    home_given = home
     home = home if home is not None else os.path.expanduser("~")
     shim = app / "Contents" / "Resources" / "bin" / "python"
     problems = []
     needles = [n.encode() for n in {home.rstrip("/") + "/", str(checkout).rstrip("/") + "/"} if len(n) > 2]
+    # On GitHub Actions this build's own paths are the runner's (/Users/runner/…), which name nobody; a prebuilt
+    # dependency carries such paths of its own build too (the Makefile's no-build-paths skips them there as well).
+    # Paths a caller names (the tests) are always checked.
+    if os.environ.get("GITHUB_ACTIONS") == "true" and home_given is None and checkout == ROOT:
+        needles = []
     for path in sorted(app.rglob("*")):
         rel = path.relative_to(app.parent)
         name = path.name.lower()

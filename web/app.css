@@ -347,6 +347,17 @@ h1 {
 .audio-warning::before { content: "⚠"; }
 /* A soft hint while recording, e.g. a muted mic: no alarm. */
 .audio-hint { margin-top: 4px; color: var(--ink-2); font-size: 13px; font-style: italic; }
+/* Muted in the recorded call: the mic is not kept now. Plain to see, no alarm: a slashed mic in a strong pill. */
+.muted-pill { display: inline-flex; align-items: center; gap: 8px; width: fit-content; margin: 8px 8px 0 0;
+  padding: 4px 16px 4px 12px; border-radius: 999px; background: var(--ink); color: var(--surface);
+  font-size: 13px; font-weight: 600; }
+.muted-pill::before { content: ""; flex: none; width: 15px; height: 15px; background: currentColor;
+  -webkit-mask: var(--mic-slash) center / contain no-repeat; mask: var(--mic-slash) center / contain no-repeat; }
+.live-now > .muted-pill { margin: 12px 0 0; }
+.record-card .record-text .muted-pill { margin: 0; }
+.unfollowed-hint { max-width: 60ch; }
+.unfollowed-hint .link { font-style: normal; }
+:root { --mic-slash: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 9v3a3 3 0 0 0 5.1 2.1M15 9.3V5a3 3 0 0 0-5.9-.7'/%3E%3Cpath d='M19 10v2a7 7 0 0 1-.9 3.4M5 10v2a7 7 0 0 0 11.6 5.3M12 19v3'/%3E%3Cpath d='M3 3l18 18'/%3E%3C/svg%3E"); }
 
 /* The live coach (#41): a quiet line under a recording's header, the questions on demand. */
 .coach-live { margin-top: 12px; }

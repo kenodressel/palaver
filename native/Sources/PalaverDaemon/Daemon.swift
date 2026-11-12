@@ -412,6 +412,9 @@ public final class Daemon {
                 .object([("kind", .string($0.kind)), ("track", .string($0.track)), ("start", .double($0.start))])
             })))
         }
+        if let app = s.muteUnfollowed {  // its mute can't be read (no Accessibility, no readable log): the mic is kept
+            fields.append(("mute_unfollowed", .string(app)))
+        }
         let hints = s.hints
         if !hints.isEmpty {  // soft: no notification, no ⚠ (a muted mic)
             fields.append(("hints", .array(hints.map { .object([("kind", .string($0.kind)), ("track", .string($0.track))]) })))

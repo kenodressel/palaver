@@ -144,6 +144,27 @@ export function audioHints(m, recording) {
   return recording.hints || [];
 }
 
+// The call app the user's mic is muted in right now ("Teams"), while meeting ``m``
+// records: Palaver keeps silence instead of the mic. Null otherwise.
+export function mutedIn(m, recording) {
+  if (!m || !recording || recording.meeting !== m.id || !(m.status === "recording" || m.live)) return null;
+  return callAppName(recording.muted);
+}
+
+// The call app whose mute Palaver can't follow during meeting ``m``'s recording
+// (no Accessibility, no readable log): the mic is recorded while muted.
+export function muteUnfollowed(m, recording) {
+  if (!m || !recording || recording.meeting !== m.id || !(m.status === "recording" || m.live)) return null;
+  return callAppName(recording.mute_unfollowed);
+}
+
+const callAppName = (app) => (app === "teams" ? "Teams" : app === "slack" ? "Slack" : null);
+
+export const mutedText = (app) => `Your mic is muted in ${app}: not recorded`;
+
+export const unfollowedText = (app) =>
+  `Palaver can't see whether you're muted in ${app}, so your mic is recorded even while muted. Allow Accessibility so it can see the mute button.`;
+
 // The pauses in a recording (Palaver restarted) to show before transcript
 // line ``i``: those after the line before it; ``i`` = the number of lines
 // gives those after the last line.

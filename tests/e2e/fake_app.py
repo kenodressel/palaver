@@ -326,7 +326,9 @@ class FakeApp:
         if view:
             status.setdefault("folder", str(self.root / view["meeting"]))
             status.update(why_text=view.get("text"), warnings=view.get("warnings") or [],
-                          hints=view.get("hints") or [])
+                          hints=view.get("hints") or [], muted=view.get("muted"))
+            if view.get("mute_unfollowed"):  # in ``why``, as the app writes it
+                status["why"] = {"mute_unfollowed": view["mute_unfollowed"]}
         return status
 
     def write_state(self) -> None:

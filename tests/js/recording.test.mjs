@@ -69,6 +69,28 @@ test("audioHints: the running recording's soft hints, only on its own page", () 
   assert.deepEqual(audioHints(null, rec), []);
 });
 
+import { mutedIn, muteUnfollowed, mutedText } from "../../web/logic.js";
+
+test("mutedIn: the call app the running recording's mic is muted in, only on its own page", () => {
+  const rec = { meeting: ID, text: "Recording", warnings: [], hints: [], muted: "teams", mute_unfollowed: null };
+  assert.equal(mutedIn({ id: ID, status: "recording" }, rec), "Teams");
+  assert.equal(mutedIn({ id: ID, status: "processing", live: { until: 30 } }, rec), "Teams");
+  assert.equal(mutedIn({ id: ID, status: "recording" }, { ...rec, muted: "slack" }), "Slack");
+  assert.equal(mutedIn({ id: ID, status: "recording" }, { ...rec, muted: null }), null);
+  assert.equal(mutedIn({ id: ID, status: "ready" }, rec), null);
+  assert.equal(mutedIn({ id: "other", status: "recording" }, rec), null);
+  assert.equal(mutedIn(null, rec), null);
+  assert.equal(mutedText("Teams"), "Your mic is muted in Teams: not recorded");
+});
+
+test("muteUnfollowed: a Teams recording whose mute can't be seen", () => {
+  const rec = { meeting: ID, text: "Recording", muted: null, mute_unfollowed: "teams" };
+  assert.equal(muteUnfollowed({ id: ID, status: "recording" }, rec), "Teams");
+  assert.equal(muteUnfollowed({ id: ID, status: "recording" }, { ...rec, mute_unfollowed: null }), null);
+  assert.equal(muteUnfollowed({ id: ID, status: "recording" }, { meeting: ID, text: "Recording" }), null);
+  assert.equal(muteUnfollowed({ id: ID, status: "ready" }, rec), null);
+});
+
 // While the window's server restarts (#57): a quiet "Reconnecting…" after 2 s without an answer.
 import { heartbeat } from "../../web/logic.js";
 

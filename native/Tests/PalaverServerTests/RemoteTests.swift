@@ -71,13 +71,24 @@ private func expectRefused(_ text: String, _ body: () throws -> Any) {
         let r = f.remote()
         #expect(r.question() == STATUS["stop_question"])
         #expect(r.recording() == .object([("meeting", .string(MEETING)), ("text", STATUS["why_text"]!),
-                                          ("warnings", STATUS["warnings"]!), ("hints", STATUS["hints"]!)]))
+                                          ("warnings", STATUS["warnings"]!), ("hints", STATUS["hints"]!),
+                                          ("muted", .null), ("mute_unfollowed", .null)]))
         #expect(r.coach().map { PythonJSON.dumps($0) } == PythonJSON.dumps(.object([
             ("meeting", .string(MEETING)), ("talk", STATUS["talk"]!), ("text", .string("You 40 %")), ("nudge", .null),
             ("quiet", .strings(["Rico"]))])))
         #expect(r.memory() == .object([("app", .int(300)), ("workers", .array([]))]))
         #expect(r.indexing() == .object([("indexing", .bool(true)), ("downloading", .bool(false))]))
         #expect(r.busy())
+    }
+
+    @Test func test_the_recording_says_where_the_mic_is_muted_and_where_its_mute_cant_be_followed() {
+        let f = AppFolder()
+        let muted = with(STATUS, [("muted", .string("teams"))])
+        #expect(f.remote(muted).recording()?["muted"] == .string("teams"))
+        #expect(f.remote(muted).recording()?["mute_unfollowed"] == .null)
+        let blind = with(STATUS, [("why", .object([("trigger", .string("teams")), ("mute_unfollowed", .string("teams"))]))])
+        #expect(f.remote(blind).recording()?["mute_unfollowed"] == .string("teams"))
+        #expect(f.remote(blind).recording()?["muted"] == .null)
     }
 
     @Test func test_idle_has_nothing_live() {
@@ -213,7 +224,8 @@ private func expectRefused(_ text: String, _ body: () throws -> Any) {
         let r = f.remote(status, now: updated.addingTimeInterval(1))
         #expect(r.question() == status["stop_question"] && r.question()?["reason"] == .string("silence"))
         #expect(r.recording() == .object([("meeting", .string("2026-11-04T09-00-00")), ("text", status["why_text"]!),
-                                          ("warnings", .strings(["No system audio is arriving"])), ("hints", .array([]))]))
+                                          ("warnings", .strings(["No system audio is arriving"])), ("hints", .array([])),
+                                          ("muted", .null), ("mute_unfollowed", .null)]))
         #expect(r.memory() == status["memory"] && r.busy())
         #expect(r.indexing() == .object([("indexing", .bool(false)), ("downloading", .bool(false))]))
     }

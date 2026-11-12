@@ -84,3 +84,54 @@ def test_the_palette_starts_and_stops(page, app_server):
     page.keyboard.press("Enter")
     expect_toast(page, "Recording. Stop it here, or from the menu bar icon.")
     assert app_server.recording.recorded == [("start", None)]
+
+
+# Muted in the recorded call: the mic is not kept, and the window says so plainly.
+def _recording_view(served, **extra) -> dict:
+    view = {"meeting": LIVE, "text": "Recording · Teams call since 11:00", "warnings": [], "hints": [], **extra}
+    served.recording.recording = lambda: view
+    return view
+
+
+def test_while_muted_in_teams_the_recording_says_its_mic_is_not_recorded(page, app_server):
+    view = _recording_view(app_server, muted="teams")
+    goto(page, app_server, f"#/{LIVE}")
+    pill = page.locator("#main .head .muted-pill")
+    expect(pill).to_have_text("Your mic is muted in Teams: not recorded")
+    expect(pill).to_have_attribute("role", "status")
+    view["muted"] = None  # unmuted
+    page.wait_for_timeout(300)  # the fake app writes daemon.json every 0.1 s
+    page.evaluate("window.palaver.poll()")
+    expect(pill).to_have_count(0)
+    view["muted"] = "teams"
+    page.wait_for_timeout(300)
+    page.evaluate("window.palaver.poll()")
+    expect(pill).to_be_visible()
+
+
+def test_todays_live_card_says_so_too(page, app_server):
+    view = _recording_view(app_server, muted="teams")
+    goto(page, app_server, "#/today")
+    pill = page.locator("#main .today .live-now .muted-pill")
+    expect(pill).to_have_text("Your mic is muted in Teams: not recorded")
+    view["muted"] = None
+    page.wait_for_timeout(300)
+    page.evaluate("window.palaver.poll()")
+    expect(pill).to_have_count(0)
+    expect(page.locator("#main .today .live-now")).to_be_visible()
+
+
+def test_unmuted_there_is_no_pill(page, app_server):
+    _recording_view(app_server, muted=None)
+    goto(page, app_server, f"#/{LIVE}")
+    expect(page.locator("#main .head .recorded")).to_have_text("Recording · Teams call since 11:00")
+    expect(page.locator("#main .muted-pill")).to_have_count(0)
+    expect(page.locator("#main .unfollowed-hint")).to_have_count(0)
+
+
+def test_a_teams_mute_that_cant_be_seen_points_to_accessibility(page, app_server):
+    _recording_view(app_server, muted=None, mute_unfollowed="teams")
+    goto(page, app_server, f"#/{LIVE}")
+    hint = page.locator("#main .head .unfollowed-hint")
+    expect(hint).to_contain_text("Palaver can't see whether you're muted in Teams, so your mic is recorded")
+    expect(hint.get_by_role("button", name="Open System Settings")).to_be_visible()

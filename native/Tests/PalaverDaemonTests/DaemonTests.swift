@@ -177,6 +177,28 @@ extension DaemonTicks {
             #expect(audioOnly.h.sessions[0].stopped)
         }
 
+        @Test func hangingUpTeamsStopsAtOnceWhenItsCallWindowIsGone() async throws {
+            // Keno's call, 2026-11-12: Teams' modulehost let go of mic and speaker at 300; the call window's mic
+            // button went with it, its follower confirmed it a second later.
+            let r = try HeldRig(tempDir(), teams: [(10, 300)], heard: [(10, 300)], grace: Self.grace, teamsLeft: { $0 >= 301.5 })
+            await r.h.run { $0 > 303 }
+            #expect(r.h.sessions.count == 1 && r.h.sessions[0].stopped && r.h.sessions[0].stopReason == "call_ended")
+            // Without the button (no Accessibility, Teams hidden): the grace.
+            let audioOnly = try HeldRig(tempDir(), teams: [(10, 300)], heard: [(10, 300)], grace: Self.grace,
+                                        teamsLeft: { _ in false })
+            await audioOnly.h.run { $0 > 303 }
+            #expect(!audioOnly.h.sessions[0].stopped)
+            await audioOnly.h.run { $0 > 308 }
+            #expect(audioOnly.h.sessions[0].stopped)
+        }
+
+        @Test func aTeamsCallWindowGoneWhileTheCallPlaysRecordsOn() async throws {
+            // The button gone (screen sharing's bar) but Teams' call audio still there: no hang-up.
+            let r = try HeldRig(tempDir(), teams: [(10, 600)], heard: [(10, 600)], grace: Self.grace, teamsLeft: { $0 >= 200 })
+            await r.h.run { $0 > 400 }
+            #expect(r.h.sessions.count == 1 && !r.h.sessions[0].stopped)
+        }
+
         @Test func aMutedHuddleWhoseControlsAreThereRecordsOn() async throws {
             let r = try HeldRig(tempDir(), slack: [(10, 100), (200, 600)], slackSpeaker: [(100, 200)], heard: [(10, 600)],
                                 grace: Self.grace, huddleLeft: { _ in false })
@@ -388,6 +410,10 @@ extension DaemonTicks {
             made?.mutedIn = "teams"
             #expect(h.status()["muted"] == .string("teams"))
             #expect(h.status()["why_text"] == .string("Recording · Teams call since 12:06 · Muted in Teams"))
+            #expect(h.status()["why"]?["mute_unfollowed"] == nil)
+            made?.mutedIn = nil
+            made?.muteUnfollowed = "teams"  // Teams' mute can't be read: the window says so
+            #expect(h.status()["why"]?["mute_unfollowed"] == .string("teams") && h.status()["muted"] == .null)
             h.daemon.shutdown()
         }
 

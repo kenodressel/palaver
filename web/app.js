@@ -31,6 +31,7 @@ import { reportMeeting, reportDraft, reportDoneText, actionCatalog } from "./log
 // Export and import of a meeting (#58).
 import { inferredText, importedLine, importedText, GLOBAL_COMMANDS } from "./logic.js";
 import { recordingNow, recordingCommand, RECORD_TEXT } from "./logic.js";
+import { mutedIn, muteUnfollowed, mutedText, unfollowedText } from "./logic.js";
 import { eventPickerChoices, EVENT_FILTER_AFTER } from "./logic.js";
 import { openExport, pickImport, wireDrop, importFile, askVoices, decideVoices, dialog } from "./exchange.js";
 // Updates and uninstalling (#60).
@@ -687,6 +688,8 @@ function renderMeeting() {
       dateLine(m, start),
       renderEventLink(m),
       live && recordingLine(m, state.recording) ? h("div", { class: "recorded" }, recordingLine(m, state.recording)) : null,
+      mutedPill(mutedIn(m, state.recording)),
+      unfollowedHint(muteUnfollowed(m, state.recording)),
       importedVoices(m),
       sharedLine(m),
       (live ? audioWarnings(m, state.recording) : []).map((text) => h("div", { class: "audio-warning", role: "status" }, text,
@@ -1152,7 +1155,8 @@ function recordCard(where) {
     return h("section", { class: `${cls} recording`, "aria-label": "Recording" },
       h("div", { class: "record-text" },
         h("span", { class: "pill live-badge" }, "Recording"),
-        h("span", { class: "meta" }, start ? `since ${timeFmt.format(start)}` : "")),
+        h("span", { class: "meta" }, start ? `since ${timeFmt.format(start)}` : ""),
+        where === "today" ? mutedPill(mutedIn(rec, state.recording)) : null),
       h("div", { class: "record-actions" },
         where === "today" ? h("button", { type: "button", class: "tbtn", onclick: () => openMeeting(rec.id) }, "Open") : null,
         h("button", { type: "button", class: "tbtn", onclick: (e) => stopRecording(rec.id, e.currentTarget) },
@@ -2393,6 +2397,19 @@ function renderStopQuestion(m) {
         "Stop recording"),
       h("button", { type: "button", class: "btn", onclick: (e) => answerStopQuestion(m.id, "keep", e.currentTarget) },
         "Keep recording")));
+}
+
+// While the user is muted in the recorded call, their mic is not kept: said where the recording shows.
+function mutedPill(app) {
+  return app ? h("div", { class: "muted-pill", role: "status" }, mutedText(app)) : null;
+}
+
+// A Teams recording whose mute Palaver can't see (no Accessibility, no readable log): its mic is recorded.
+function unfollowedHint(app) {
+  if (!app) return null;
+  return h("div", { class: "audio-hint unfollowed-hint" }, h("span", {}, unfollowedText(app)), " ",
+    h("button", { type: "button", class: "link", onclick: (e) => openAccessibilitySettings(e.currentTarget) },
+      "Open System Settings"));
 }
 
 async function loadQuestion() {
@@ -5887,8 +5904,9 @@ const todaySignatures = () => {
   const next = state.upcoming.find((x) => new Date(x.end) > now);
   const rec = recordingNow(state.meetings);
   return {
-    record: JSON.stringify(rec ? [rec.id, rec.start, !!live] : null),
-    live: JSON.stringify(live ? [live.id, live.live?.until, live.transcript.slice(-4), live.speakers.map((x) => x.display)] : null),
+    record: JSON.stringify(rec ? [rec.id, rec.start, !!live, mutedIn(rec, state.recording)] : null),
+    live: JSON.stringify(live ? [live.id, live.live?.until, live.transcript.slice(-4), live.speakers.map((x) => x.display),
+      mutedIn(live, state.recording)] : null),
     next: JSON.stringify(next ? [next, startsInText(next.start, next.end, now)] : null),
     recent: JSON.stringify([state.meetings.slice(0, 6), state.meetings.length > 6,
       state.meetings.slice(0, 6).map((m) => needsOf(m.id)), [...state.writing.keys()]]),
@@ -5901,6 +5919,10 @@ async function refreshToday() {
   const rec = state.meetings.find((m) => m.status === "recording");
   const live = rec ? await api(`/api/meetings/${encodeURIComponent(rec.id)}`).catch(() => state.todayLive) : null;
   state.todayLive = live?.live ? live : null;
+  if (rec) {  // whether the mic is muted in the call now
+    const asked = await api("/api/recording/question").catch(() => null);
+    if (asked) [state.question, state.recording] = [asked.question, asked.recording ?? null];
+  }
   patchToday();
 }
 
@@ -5964,6 +5986,7 @@ function liveNowCard(first = false) {
         m.finishing ? h("span", { class: "meta" }, "Stopped, finishing…")
           : h("button", { type: "button", class: "tbtn", onclick: (e) => stopRecording(m.id, e.currentTarget) },
             h("span", { class: "stop-mark", "aria-hidden": "true" }), "Stop"))),
+    mutedPill(mutedIn(m, state.recording)),
     h("h2", {}, titleOf(m)),
     h("div", { class: "live-speakers" }, m.speakers.map((s) => personToken(s.display || s.name || labelDisplay(s.label),
       color(s.label), { named: !!s.name }))),

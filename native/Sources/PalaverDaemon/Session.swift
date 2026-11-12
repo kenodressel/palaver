@@ -41,10 +41,13 @@ public protocol RecordingSessionLike: AnyObject {
     var hints: [(kind: String, track: String)] { get }
     /// The call app the user is muted in right now ("teams"), while the mic is not kept (CallMute).
     var mutedIn: String? { get }
+    /// The call app whose mute can't be followed right now ("teams": no Accessibility, no readable log).
+    var muteUnfollowed: String? { get }
 }
 
 public extension RecordingSessionLike {
     var mutedIn: String? { nil }
+    var muteUnfollowed: String? { nil }
     var missing: [String] { [] }
     var systemSource: String? { nil }
     var micSource: String? { nil }
@@ -70,10 +73,12 @@ public protocol SessionCapture: AnyObject {
     var problems: [RecordingProblem] { get }
     var hints: [(kind: String, track: String)] { get }
     var mutedIn: String? { get }
+    var muteUnfollowed: String? { get }
 }
 
 public extension SessionCapture {
     var mutedIn: String? { nil }
+    var muteUnfollowed: String? { nil }
 }
 
 /// The real capture: the recorder writing `mic_raw.wav(.part)` and `system.wav(.part)`, with its
@@ -159,6 +164,10 @@ public final class LiveCapture: SessionCapture {
         guard gatesMic else { return nil }
         return mute.flatMap { $0.timeline.mutedNow ? $0.timeline.app.rawValue : nil }
     }
+    public var muteUnfollowed: String? {
+        guard gatesMic else { return nil }
+        return mute.flatMap { $0.source.unfollowed ? $0.timeline.app.rawValue : nil }
+    }
     public var missing: [String] { recorder.missing }
     public var systemSource: String? { recorder.systemSource }
     public var micSource: String? { recorder.micSource }
@@ -236,6 +245,7 @@ public final class RecordingSession: RecordingSessionLike {
     public var problems: [RecordingProblem] { capture?.problems ?? [] }
     public var hints: [(kind: String, track: String)] { capture?.hints ?? [] }
     public var mutedIn: String? { recording ? capture?.mutedIn : nil }
+    public var muteUnfollowed: String? { recording ? capture?.muteUnfollowed : nil }
 
     public func start() throws -> URL {
         let folder = try RecordingFolders.new(in: outputDir, at: wall(), timeZone: timeZone)

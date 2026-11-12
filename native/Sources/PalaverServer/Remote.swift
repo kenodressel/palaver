@@ -104,12 +104,15 @@ public final class Remote: RecordingRemote, @unchecked Sendable {
         }
     }
 
-    /// `recording_view`: why the running recording records (#47) and what is wrong with its audio (#50), or nil.
+    /// `recording_view`: why the running recording records (#47), what is wrong with its audio (#50), the call
+    /// app the mic is muted in now ("teams": not kept), and the one whose mute can't be followed (the mic is kept).
     static func recordingView(_ status: JSONValue?) -> JSONValue? {
         guard let status, let folder = status["folder"], folder.truthy, let why = status["why_text"], why.truthy,
               let meeting = pathName(folder) else { return nil }
+        func app(_ v: JSONValue?) -> JSONValue { v?.stringValue.map(JSONValue.string) ?? .null }
         return .object([("meeting", .string(meeting)), ("text", why), ("warnings", orEmpty(status["warnings"])),
-                        ("hints", orEmpty(status["hints"]))])
+                        ("hints", orEmpty(status["hints"])), ("muted", app(status["muted"])),
+                        ("mute_unfollowed", app(status["why"]?["mute_unfollowed"]))])
     }
 
     /// `coach_view`: who talks in the running recording and the coach's nudge (#41), or nil.
