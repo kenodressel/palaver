@@ -6,6 +6,23 @@ huddles by itself, writes down who said what, and turns the call into notes:
 a summary, the topics, decisions and next steps with their owners. The
 recording, the transcript and the notes stay on your Mac.
 
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kenodressel/palaver/master/install.sh | sh
+```
+
+macOS 15 or later on Apple Silicon. Palaver opens its window and a setup
+assistant that downloads the models you choose (about 9.3 GB in all) and asks
+for the microphone and system audio; updates come through the app. To start Palaver at
+login and get the `palaver` command in `~/.local/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kenodressel/palaver/master/install.sh | sh -s -- --autostart --cli
+```
+
+More in [Requirements](#requirements) and [What the installer puts where](#what-the-installer-puts-where).
+
 ![Today in Palaver: the next meeting, what needs you, and the latest meetings](docs/images/today.png)
 
 ## Why Palaver
@@ -101,20 +118,10 @@ to the new folders at the first start.
 
 Nothing else: no Python, Homebrew, Hugging Face account or Notion.
 
-## Install
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/kenodressel/palaver/master/install.sh | sh
-```
+## What the installer puts where
 
 Options: `--autostart` starts Palaver at login, and `--cli` adds the
-`palaver` command to `~/.local/bin`:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/kenodressel/palaver/master/install.sh | sh -s -- --autostart --cli
-```
-
-The installer writes only into your home folder and changes no shell or
+`palaver` command to `~/.local/bin`. The installer writes only into your home folder and changes no shell or
 `PATH` setting:
 
 | What | Where | Size | Downloaded |
