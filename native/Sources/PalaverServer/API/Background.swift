@@ -130,13 +130,17 @@ public final class Background: @unchecked Sendable {
     }
 
     /// `warm_up`: what the window's first visits would otherwise wait for — the glossary's suggestions read every
-    /// transcript (a second or more the first time).
+    /// transcript (seconds the first time), and so do Review and Needs you (#29). Needs you without the calendar:
+    /// its cuts are looked up when the window asks.
     public func warmUp() {
         guard let app else { return }
         do {
             _ = try GlossaryAPI.page(app, userName: app.userName)
+            for m in try MeetingsAPI.listMeetings(app: app) where m["status"]?.stringValue == "ready" {
+                _ = try ReviewAPI.meetingNeeds(app, m, calendar: false)
+            }
         } catch {
-            app.log?.message("could not prepare the glossary's suggestions: \(error)", level: "WARNING", logger: "palaver.webapp.process")
+            app.log?.message("could not prepare the glossary's suggestions and Needs you: \(error)", level: "WARNING", logger: "palaver.webapp.process")
         }
     }
 
@@ -149,6 +153,42 @@ public final class Background: @unchecked Sendable {
         let warm = Thread { [weak self] in self?.warmUp() }
         warm.name = "warm-up"
         warm.start()
+    }
+
+    // MARK: - what follows a change
+
+    private let followUps = DispatchQueue(label: "palaver.follow-up", qos: .userInitiated)
+    private let following = DispatchGroup()
+    private var queued = Set<String>()
+
+    /// Work a change starts that its answer does not wait for (#31: after a change of event, every meeting's voices
+    /// recognized again and the names inferred across meetings), one after the other on a queue of its own. Work of
+    /// a `kind` already waiting to start is not queued again: that run sees this change too. A stop waits for it as
+    /// for a change (`inflight`); a failure is logged.
+    public func followUp(_ kind: String, _ work: @escaping (ServerApp) throws -> Void) {
+        guard let app else { return }
+        let fresh = lock.withLock { queued.insert(kind).inserted }
+        guard fresh else { return }
+        let ticket = app.inflight.enter()
+        following.enter()
+        followUps.async { [weak self, weak app] in
+            defer {
+                ticket.leave()
+                self?.following.leave()
+            }
+            _ = self?.lock.withLock { self?.queued.remove(kind) }
+            guard let app else { return }
+            do { try work(app) } catch {
+                app.log?.message("\(kind) failed: \(error)", level: "ERROR", logger: "palaver.webapp.api")
+            }
+        }
+    }
+
+    /// Until the follow-ups started so far are done, at most `timeout` seconds; true when they are. A change waits
+    /// for them first, so it never meets one half done; the page asks (`/api/settled`) to show what they found.
+    @discardableResult
+    public func settle(_ timeout: Double) -> Bool {
+        following.wait(timeout: .now() + timeout) == .success
     }
 
     // MARK: - the cut suggestions

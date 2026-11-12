@@ -306,3 +306,65 @@ def test_silence_before_the_first_word_is_offered_for_removal_and_removed(page, 
     offer.get_by_role("button", name="Remove it").click()
     expect(offer).to_have_count(0)
     assert app_server.api(f"/api/meetings/{mid}")["duration"] == 62.0  # from 3:18, two seconds before the first word
+
+
+# --- the ⋯ menu in Review (#30) --------------------------------------------------------------
+
+def _in_review(page, at: str, title: str) -> None:
+    expect(page.locator("#main .review-bar .meta")).to_have_text(at)
+    expect(page.locator("#main .review h1")).to_have_text(title)
+
+
+def test_review_has_the_meetings_menu_beside_skip(page, shared_server):
+    goto(page, shared_server, "#/review")
+    _in_review(page, "Review · 1 of 3", "Design review, part two")
+    bar = page.locator("#main .review-bar")
+    expect(bar.locator("button")).to_have_text(["", "Skip", "Done, next →"])  # ⋯ first, then Skip
+    more(page).click()
+    labels = page.locator(".menu .menu-label").all_text_contents()
+    assert labels[:5] == ["Rename…", "Change Event…", "Join with Previous", "Join with Next", "Split At…"]
+    assert labels[-1] == "Move to Trash"
+    page.keyboard.press("Escape")
+
+
+def test_rename_in_review_stays_on_the_meeting(page, app_server):
+    goto(page, app_server, "#/review")
+    _in_review(page, "Review · 1 of 3", "Design review, part two")
+    run_from_menu(page, "More actions", "Rename…")
+    field = page.locator("#main h1").get_by_role("textbox", name="Meeting title")
+    field.fill("Design follow-up")
+    field.press("Enter")
+    expect_toast(page, "Renamed to “Design follow-up”")
+    _in_review(page, "Review · 1 of 3", "Design follow-up")
+    assert hash_of(page) == "#/review"
+    assert app_server.api(f"/api/meetings/{C}")["title"] == "Design follow-up"
+
+
+def test_join_in_review_goes_on_with_the_joined_meeting_and_undo_comes_back(page, app_server):
+    goto(page, app_server, "#/review")
+    _in_review(page, "Review · 1 of 3", "Design review, part two")
+    run_from_menu(page, "More actions", "Join with Previous")
+    expect_toast(page, "Joined with “Design review”")
+    _in_review(page, "Review · 1 of 2", "Design review")  # the joined meeting, still in Review
+    assert app_server.meeting_ids() == [LIVE, B, A]
+    undo_in_toast(page)
+    _in_review(page, "Review · 1 of 3", "Design review, part two")
+
+
+def test_trash_in_review_moves_on_and_undo_comes_back(page, app_server):
+    goto(page, app_server, "#/review")
+    _in_review(page, "Review · 1 of 3", "Design review, part two")
+    run_from_menu(page, "More actions", "Move to Trash")
+    expect_toast(page, "“Design review, part two” moved to Trash")
+    _in_review(page, "Review · 1 of 2", "Design review")
+    assert C not in app_server.meeting_ids()
+    undo_in_toast(page)
+    _in_review(page, "Review · 1 of 3", "Design review, part two")
+
+
+def test_split_in_review_opens_the_cut_bar_there(page, app_server):
+    goto(page, app_server, "#/review")
+    _in_review(page, "Review · 1 of 3", "Design review, part two")
+    run_from_menu(page, "More actions", "Split At…")
+    expect(page.locator("#main .review .cut-bar")).to_be_visible()
+    assert hash_of(page) == "#/review"

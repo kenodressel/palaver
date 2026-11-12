@@ -87,7 +87,7 @@ extension DaemonTicks {
             #expect(keys(mine) == keys(recording))
             // In Python's order too (json.dumps keeps the dict's).
             #expect(topKeys(h.statePath) == topKeys(pythonFixtures.appendingPathComponent("recording.json")))
-            #expect(topKeys(h.statePath).count == 32)
+            #expect(topKeys(h.statePath).count == 33)
             #expect(sameShape(mine, recording).isEmpty, "\(sameShape(mine, recording))")
             h.daemon.shutdown()
             let stopped = try #require(JSONValue.parse(Data(try pythonState("stopped.json", root: root).utf8)))

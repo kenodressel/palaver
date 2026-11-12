@@ -19,7 +19,7 @@ import { meetingCommands, nextAfter, laneCommands, laneLines, linesText, namingT
   SETUP_STEPS, setupStepAfter, setupStepBefore, stepButtons, gbText, downloadsText,
   downloadProgress, permissionText, recommendedHint, setupOfferText, testRecordingText, seedChecked,
   optionLabel, liveCoachFor, speakingText, questionsNote, questionButton, heartbeat, notesFromJobs,
-  titleChange, updateCard, withTitle, retitledText, calendarHint, TITLE_MAX } from "./logic.js";
+  titleChange, updateCard, withTitle, retitledText, TITLE_MAX } from "./logic.js";
 import { notepad, flushNotepads, leaveNotepads, notepadFocus, restoreNotepadFocus } from "./mynotes.js";
 import { meetingTime } from "./mynotes-logic.js";
 // Today, Needs you and the ⌘K palette (UI spec, phase 2).
@@ -31,6 +31,7 @@ import { reportMeeting, reportDraft, reportDoneText, actionCatalog } from "./log
 // Export and import of a meeting (#58).
 import { inferredText, importedLine, importedText, GLOBAL_COMMANDS } from "./logic.js";
 import { recordingNow, recordingCommand, RECORD_TEXT } from "./logic.js";
+import { eventPickerChoices, EVENT_FILTER_AFTER } from "./logic.js";
 import { openExport, pickImport, wireDrop, importFile, askVoices, decideVoices, dialog } from "./exchange.js";
 // Updates and uninstalling (#60).
 import { updateIndicator, updateView, SETTINGS_PANES, settingsPane, settingsEntries } from "./logic.js";
@@ -188,7 +189,6 @@ const state = {
   titleEdit: null, // the open meeting's title being typed: {id, draft}
   cutNotice: null, // what the last cut or join did
   sharedAsk: null, // the meeting just unmarked whose series is still remembered (#56)
-  respelled: null, // the last spelling fixed in a meeting
   question: null,  // whether to stop the manual recording (/api/recording/question)
   mcp: null,       // Claude access: connected clients, the access log, setup (/api/mcp)
   mcpFilter: { client: "", meeting: "" },  // the access log's filters in Settings
@@ -533,7 +533,6 @@ async function openMeeting(id, at, { how = "push", tab = null } = {}) {
     if (switching) {
       flushNotepads();
       state.cutNotice = null;
-      state.respelled = null;
       state.eventPicker?.close?.();  // another meeting: its pop-up goes
       state.eventPicker = null;
       state.stream = null;
@@ -671,7 +670,7 @@ function renderMeeting() {
   renderLater = false;
   const typing = notepadFocus();  // before the notepad moves into the new page
   if (state.view === "review") {
-    renderReview();
+    keepingTitle(renderReview);  // a title being renamed keeps focus
     commands.publish();
     return;
   }
@@ -682,11 +681,9 @@ function renderMeeting() {
   // What the recording itself says (how it started, its audio, who transcribed it, what Claude read) is
   // in About this recording at the bottom; only while it records does its line stay up here.
   const live = m.status === "recording" || !!m.live;
-  const hint = calendarHint(m);
   const head = h("header", { class: "head" },
     h("div", { class: "head-text" },
       renderTitle(m),
-      hint ? h("div", { class: "title-hint", title: linkTitle(m.calendar?.link) }, hint) : null,
       dateLine(m, start),
       renderEventLink(m),
       live && recordingLine(m, state.recording) ? h("div", { class: "recorded" }, recordingLine(m, state.recording)) : null,
@@ -720,7 +717,6 @@ function renderMeeting() {
     renderNeedsStrip(m),
     renderStopQuestion(m),
     cutNotice,
-    respelledNotice(),
     renderCutSuggestion(m),
     renderSilenceSuggestion(m),
     renderSharedSuggestion(m),
@@ -768,8 +764,13 @@ function keepingTitle(build) {
 }
 
 // The big title: a click makes it a field (Enter and leaving it save, Esc cancels).
+// In Review a click opens the meeting; Rename… in its ⋯ menu makes it the field.
 function renderTitle(m) {
   const edit = state.titleEdit?.id === m.id ? state.titleEdit : null;
+  if (!edit && state.view === "review") {
+    return h("h1", {}, h("button", { type: "button", class: "link", title: "Open the meeting", onclick: () => openMeeting(m.id) },
+      titleOf(m)));
+  }
   if (!edit) {
     return h("h1", {}, h("button", { type: "button", class: "title-button", title: "Rename", onclick: () => startRename() },
       titleOf(m)));
@@ -785,27 +786,22 @@ function renderTitle(m) {
   return h("h1", { class: "editing" }, field);
 }
 
-// Only the title and the line under it are made again: a click that left the
-// field lands on the page as it was.
+// Only the title is made again: a click that left the field lands on the page as it was.
 function showTitle(id) {
   const m = state.meeting;
   if (m?.id !== id || !onPage(id)) return;
-  const old = state.view === "meetings" ? $("#main .head h1") : null;
+  const old = $("#main .head h1");
   if (!old) {
     renderMeeting();
     return;
   }
   keepingTitle(() => old.replaceWith(renderTitle(m)));
-  const hint = calendarHint(m);
-  const line = $("#main .head .title-hint");
-  if (hint && line) line.textContent = hint;
-  else if (hint) $("#main .head h1").after(h("div", { class: "title-hint" }, hint));
-  else line?.remove();
 }
 
+// On the meeting's page or in Review, wherever it is shown.
 function startRename() {
   const m = state.meeting;
-  if (!m || state.view !== "meetings") return;
+  if (!m || !onPage(m.id)) return;
   state.titleEdit = { id: m.id, draft: m.title || "" };
   showTitle(m.id);
   const field = $("#main .title-input");
@@ -820,13 +816,13 @@ function endRename(id, save, refocus) {
   state.titleEdit = null;
   const m = state.meeting?.id === id ? state.meeting : null;
   showTitle(id);
-  if (refocus) $("#main .title-button")?.focus({ preventScroll: true });
+  if (refocus) $("#main .head h1 button")?.focus({ preventScroll: true });
   if (save && m) renameMeeting(m, edit.draft);
 }
 
 // A meeting's title in the list and the search results, until they are loaded again.
 function retitle(id, m) {
-  for (const list of [state.meetings, state.results, state.related]) {
+  for (const list of [state.meetings, state.results, state.related, state.review]) {
     for (const x of list || []) if (x.id === id) Object.assign(x, { title: m.title, title_from: m.title_from });
   }
   renderList();
@@ -915,6 +911,7 @@ const ICONS = {
 
 // What each command does to a meeting; ``from`` is the button (⋯ or the
 // list item) that shows the work is under way. Every call is counted (#59).
+// Rename, Change Event and Split work in place in Review too (#30).
 const ACTIONS = tracked("meeting", {
   play: () => playPause(),
   writeNotes: () => writeNotes(state.meeting.id),
@@ -965,9 +962,13 @@ for (const name of Object.keys(ACTIONS)) {
   });
 }
 
+// The meeting's page, unless it is shown already: there or in Review.
 async function showMeeting(m) {
-  if (state.view !== "meetings" || state.meeting?.id !== m.id) await openMeeting(m.id);
+  if (!onPage(m.id)) await openMeeting(m.id);
 }
+
+// The meeting Review shows.
+const inReview = (id) => state.view === "review" && state.meeting?.id === id;
 
 const listItem = (id) => document.querySelector(`#list .item[data-id="${CSS.escape(id)}"]`);
 
@@ -1173,7 +1174,11 @@ async function restoreMeetings(token, prefer, undid = [prefer]) {
   if (state.query) await runSearch();
   await loadList();
   const id = r.restored.includes(prefer) ? prefer : r.restored[0];
-  if (id) {
+  if (id && state.view === "review") {
+    // Review shows it again where it was, audio too.
+    state.meeting = null;
+    await openReview(state.reviewAt, "replace", id);
+  } else if (id) {
     const same = state.view === "meetings" && state.meeting?.id === id;
     await openMeeting(id, undefined, { how: undoStep(location.hash, undid) });
     if (same) reloadAudio();
@@ -1202,6 +1207,7 @@ async function trashMeeting(m, from) {
   } finally {
     pending.delete(m.id);
   }
+  const reviewing = inReview(m.id);
   const open = state.view === "meetings" && state.meeting?.id === m.id;
   // What the list shows (search results, a filter), not all meetings.
   const shownIds = [...document.querySelectorAll("#list .item[data-id]")].map((el) => ({ id: el.dataset.id }));
@@ -1216,8 +1222,14 @@ async function trashMeeting(m, from) {
     listItem(m.id)?.setAttribute("aria-current", "false");
     listItem(next?.id ?? "")?.setAttribute("aria-current", "true");
   }
+  if (reviewing) {
+    audio.pause();
+    state.meeting = null;
+  }
   const item = listItem(m.id);
   if (item) await leave(item);
+  // Review goes on with the meeting that took its place.
+  if (reviewing && state.view === "review" && !state.meeting) await openReview(state.reviewAt, "replace");
   if (open && state.view === "meetings" && !state.meeting) {
     if (next) {
       await openMeeting(next.id, undefined, { how: "replace" });
@@ -1244,10 +1256,19 @@ async function joinMeeting(m, side, from) {
     }
     remember(`Joined with “${other.title || fallbackTitle(other)}”`, () => restoreMeetings(r.undo, m.id, [m.id, other.id]));
     const goneId = r.id === m.id ? other.id : m.id;
+    const reviewing = inReview(m.id);
     dropResult(goneId);
     const gone = listItem(goneId);
     if (gone) await leave(gone);
     await loadList();
+    if (reviewing && state.view === "review") {
+      // Review stays on the joined meeting while it waits there, audio loaded again.
+      state.meeting = null;
+      await openReview(state.reviewAt, "replace", r.id);
+      const kept = listItem(r.id);
+      if (kept) flash(kept);
+      return;
+    }
     const same = state.view === "meetings" && state.meeting?.id === r.id;
     await openMeeting(r.id, undefined, { how: "replace" });
     if (same) reloadAudio();
@@ -2503,7 +2524,6 @@ async function cutMeeting(id, at, how, button) {
   }
   const kind = cutKind(r);
   state.cutNotice = { text: CUT_DONE[kind], id: r.rest };
-  remember(CUT_DONE[kind], () => cutBack(id, r.undo, r.rest));
   const part = r.discarded && onPage(id) ? document.querySelector(`#main .cut-part.cut-${r.discarded}`) : null;
   if (part) await Promise.all([leave(part), bar?.isConnected ? leave(bar) : null]);
   state.cutAt = null;
@@ -2515,6 +2535,8 @@ async function cutMeeting(id, at, how, button) {
     await openMeeting(id);
     reloadAudio();  // the audio is shorter now
   }
+  // Said once the page shows the cut: a click right after the toast is not undone by the page being built again.
+  remember(CUT_DONE[kind], () => cutBack(id, r.undo, r.rest));
   const rest = r.rest && listItem(r.rest);
   if (rest) {
     rest.scrollIntoView({ block: "nearest" });
@@ -3606,8 +3628,7 @@ async function respellEverywhere(id, heard, term) {
       { action: { label: "Try again", run: () => respellEverywhere(id, heard, term) } });
     return;
   }
-  state.respelled = `“${heard}” is now “${d.term.term}”. ${changedText(d.changed)}`;
-  remember(`“${heard}” is now “${d.term.term}” everywhere`, () => respellBack(id, d.undo));
+  remembered(`“${heard}” is now “${d.term.term}” everywhere`, d, () => respellBack(id, d.undo));
   await showRespelled(id);
 }
 
@@ -3622,15 +3643,13 @@ async function unrespell(id, heard, term) {
       { action: { label: "Try again", run: () => unrespell(id, heard, term) } });
     return;
   }
-  state.respelled = `“${heard}” is no longer “${d.term.term}”. ${changedText(d.changed)}`;
-  remember(`“${heard}” is no longer “${d.term.term}”`, () => respellBack(id, d.undo));
+  remembered(`“${heard}” is no longer “${d.term.term}”`, d, () => respellBack(id, d.undo));
   await showRespelled(id);
 }
 
 // Undo of Fix everywhere: the glossary as it was, and every meeting with it.
 async function respellBack(id, token) {
   await api("/api/undo", { token });
-  state.respelled = null;
   await showRespelled(id);
 }
 
@@ -3640,9 +3659,11 @@ async function showRespelled(id) {
   else if (state.view === "glossary") await openGlossary();
 }
 
-function respelledNotice() {
-  return state.respelled ? h("p", { class: "inline-notice" }, state.respelled, " ",
-    h("button", { class: "link", onclick: () => { state.respelled = null; openGlossary(); } }, "Open the glossary")) : null;
+// Said once, in a toast with Undo: what changed in the meetings, and the way to the glossary.
+function remembered(label, d, undo) {
+  const changed = changedText(d.changed);
+  remember(label, undo, { text: changed ? `${label}. ${changed}` : label,
+    action: { label: "Open the glossary", run: () => openGlossary() } });
 }
 
 // The selection is final once the mouse is up.
@@ -3743,13 +3764,15 @@ async function loadReview() {
 }
 
 // ``at``: which meeting of the review; Back comes back to the one it left.
-async function openReview(at = 0, how = "push") {
+// ``id``: that meeting instead, while it is in the review (after a change to it).
+async function openReview(at = 0, how = "push", id = null) {
   const here = arrive("#/review", how);
   setView("review");
   state.prepping = null;
   await loadReview();
   if (movedOn(here)) return;
-  state.reviewAt = Math.min(at, Math.max(0, state.review.length - 1));
+  const found = id == null ? -1 : state.review.findIndex((x) => x.id === id);
+  state.reviewAt = Math.min(found >= 0 ? found : at, Math.max(0, state.review.length - 1));
   saveHere();  // the entry knows which meeting of the review it shows
   const item = state.review[state.reviewAt];
   if (!item) {
@@ -3828,16 +3851,15 @@ async function chooseEvent(id, key, title = null, button = null) {
   const before = state.eventPicker ? events.find((e) => e.current)?.key ?? null : undefined;
   title = title ?? (key === null ? "none" : events.find((e) => e.key === key)?.title || "the event");
   let token = null;
-  if (button) button.disabled = true;
+  const done = changingEvent(button);
   try {
     const { undo: t, ...m } = await api(`/api/meetings/${encodeURIComponent(id)}/event`, { key });
     token = t;
     if (state.meeting?.id === id) state.meeting = m;
     state.eventPicker?.close?.();
     state.eventPicker = null;
-    await loadList();
   } catch (err) {
-    if (button) button.disabled = false;
+    done();
     if (state.eventPicker) {
       state.eventPicker = { ...state.eventPicker, error: `Not changed: ${err.message}` };
       renderEventPicker();
@@ -3846,15 +3868,45 @@ async function chooseEvent(id, key, title = null, button = null) {
       return;
     }
   }
+  // The page at once, with the server's answer; the list and Review's queue follow.
   if (state.meeting?.id === id && onPage(id)) renderMeeting();
   const chip = token && onPage(id) ? document.querySelector("#main .event-link") : null;
   if (chip) flash(chip);
-  if (token && before !== key) remember(eventChangeText(key, title), () => eventBack(id, token));
+  if (!token) return;
+  if (before !== key) remember(eventChangeText(key, title), () => eventBack(id, token));
+  loadList();
+  showSettled(id);
 }
 
-// The event the recording is linked to and why ("time match, 2 events
-// overlapped"): dotted when Palaver is not sure, with ✓ and Change…; when
-// events overlapped the recording about as much, the question which one.
+// What a change of event goes on to do after its answer (#31: the voices and the names inferred across meetings),
+// on the page once it is done: the meeting again, or Review's queue and meeting; not while something is being typed.
+// ``eventChanges``: an undo or another change meanwhile shows itself; this one is then old news.
+let eventChanges = 0;
+async function showSettled(id) {
+  const run = ++eventChanges;
+  try {
+    await api("/api/settled");
+  } catch {
+    return;  // the next visit shows it
+  }
+  if (run !== eventChanges) return;
+  if (inReview(id)) {
+    await openReview(state.reviewAt, "replace", id);
+    return;
+  }
+  const quiet = () => state.view === "meetings" && state.meeting?.id === id && !state.busy && state.editAt == null
+    && !state.titleEdit && !typingMyNotes();
+  if (!quiet()) return;
+  const m = await api(`/api/meetings/${encodeURIComponent(id)}`).catch(() => null);
+  if (!m || !quiet() || run !== eventChanges) return;
+  state.meeting = m;
+  keepingFocus(renderMeeting);
+}
+
+// The event line under the date (#30): the event the recording is linked to,
+// with Change…; dotted when Palaver is not sure, with why and ✓ too. "No event"
+// with Pick… while the calendar is on. When events overlapped the recording
+// about as much, the question which one.
 function renderEventLink(m) {
   const v = eventLinkView(m);
   if (!v) return null;
@@ -3868,50 +3920,108 @@ function renderEventLink(m) {
       h("button", { type: "button", class: "btn btn-quiet small", onclick: (e) => chooseEvent(m.id, null, null, e.currentTarget) },
         "None of these"));
   }
+  const change = (label, aria) => h("button", { type: "button", class: "chip-btn", title: "Another event, or none",
+    "aria-label": aria, onclick: () => ACTIONS.changeEvent(m) }, label);
+  if (v.kind === "none") {
+    return h("div", { class: "event-link" },
+      h("span", { class: "link-chip quiet none", title: "Linked to no calendar event" },
+        h("span", { class: "link-kind" }, "No event"), change("Pick…", "Pick the event")));
+  }
   const link = m.calendar.link;
   return h("div", { class: "event-link" },
-    h("span", { class: `link-chip${v.unsure ? " unsure" : ""}`, title: linkTitle(link) },
-      h("span", { class: "link-kind" }, "Event"), v.title,
+    h("span", { class: `link-chip${v.unsure ? " unsure" : " quiet"}`, title: linkTitle(link) },
+      h("span", { class: "link-kind" }, "Event"), h("span", { class: "link-title" }, v.title),
       v.why ? h("span", { class: "link-why" }, v.why) : null,
       v.canConfirm ? h("button", { type: "button", class: "chip-btn", title: `Yes, this was ${v.title}`,
         "aria-label": `Confirm the event ${v.title}`, onclick: (e) => chooseEvent(m.id, "current", v.title, e.currentTarget) }, "✓") : null,
-      v.unsure ? h("button", { type: "button", class: "chip-btn", title: "Another event, or none",
-        "aria-label": "Change the event", onclick: () => ACTIONS.changeEvent(m) }, "Change…") : null));
+      change("Change…", "Change the event")));
+}
+
+// The click on an event shows at once (#31): its button spins, the rest of the
+// picker or the event line waits until the change lands. Answers what undoes it.
+function changingEvent(button) {
+  const group = button?.closest(".event-picker, .event-link");
+  if (!button || !group) return () => {};
+  const others = [...group.querySelectorAll("button, input")].filter((b) => !b.disabled);
+  for (const b of others) b.disabled = true;
+  group.setAttribute("aria-busy", "true");
+  button.setAttribute("aria-busy", "true");
+  button.classList.add("spinning");
+  return () => {
+    for (const b of others) b.disabled = false;
+    group.removeAttribute("aria-busy");
+    button.removeAttribute("aria-busy");
+    button.classList.remove("spinning");
+  };
 }
 
 // Undo of a change of event: the meeting's event, projects and preparation as they were.
 async function eventBack(id, token) {
+  eventChanges++;
   await api("/api/undo", { token });
-  if (state.view === "meetings" && state.meeting?.id === id) await openMeeting(id);
+  if (inReview(id)) await openReview(state.reviewAt, "replace", id);
+  else if (state.view === "meetings" && state.meeting?.id === id) await openMeeting(id);
   loadList();
 }
 
-// The pop-up's content, again after a change (an error, a rule forgotten).
+// The pop-up's content, again after a change (an error, a rule forgotten):
+// the events of the recording's day and the days around it (#28), a title
+// filter when there are many.
 function renderEventPicker() {
   const p = state.eventPicker;
   if (!p?.holder) return;
   const id = p.id;
-  const span = (e) => `${timeFmt.format(new Date(e.start))}–${timeFmt.format(new Date(e.end))}`;
+  const list = h("div", { class: "event-options" });
+  const filter = p.events.length > EVENT_FILTER_AFTER
+    ? h("input", { type: "search", class: "event-filter", placeholder: "Filter by title", "aria-label": "Filter events by title",
+      value: p.query || "", oninput: (ev) => {
+        if (state.eventPicker?.holder !== p.holder) return;
+        state.eventPicker.query = ev.currentTarget.value;
+        renderEventOptions(list);
+      } })
+    : null;
+  renderEventOptions(list);
   p.holder.replaceChildren(...[
     p.error ? h("p", { class: "error" }, p.error) : null,
     p.events.length ? null : h("p", { class: "meta" }, "No calendar events around this recording."),
-    ...p.events.map((e) => h("button", { type: "button", class: `event-option${e.current ? " current" : ""}`,
-      onclick: () => chooseEvent(id, e.key) },
-      h("span", { class: "event-time" }, span(e)),
-      h("span", { class: "event-title" }, e.title),
-      e.invited ? h("span", { class: "meta" }, `${e.invited} invited`) : null,
-      e.rejected ? h("span", { class: "meta", title: "Recordings you said were not this event. Said twice, Palaver no longer links it by time." },
-        `not it ${e.rejected}×`) : null,
-      e.current ? h("span", { class: "meta" }, "✓ now") : null)),
+    filter,
+    list,
     // Rules the user's corrections made: say them, and a way to drop one.
     ...[...new Map(p.events.filter((e) => e.rule).map((e) => [e.rule.series, e])).values()].map((e) =>
       h("p", { class: "event-rule" }, h("span", {}, e.rule.text),
         h("button", { type: "button", class: "btn btn-quiet small", onclick: (ev) => forgetRule(id, e, ev.currentTarget) },
           "Forget this rule"))),
     h("div", { class: "event-actions" },
-      h("button", { type: "button", class: "btn", onclick: () => chooseEvent(id, null) }, "None of these (an ad-hoc call)")),
+      h("button", { type: "button", class: "btn", onclick: (ev) => chooseEvent(id, null, null, ev.currentTarget) },
+        "None of these (an ad-hoc call)")),
     h("p", { class: "meta" }, "The notes keep the old event until you rewrite them."),
   ].filter(Boolean));  // replaceChildren, unlike h(), would show a null
+}
+
+// The picker's events, as the filter has them: when each is ("Today 14:00–14:30"), and a line where those
+// overlapping the recording end.
+function renderEventOptions(list) {
+  const p = state.eventPicker;
+  if (!p) return;
+  const id = p.id;
+  const span = (e) => `${timeFmt.format(new Date(e.start))}–${timeFmt.format(new Date(e.end))}`;
+  const shown = eventPickerChoices(p.events, p.query || "");
+  const firstOther = shown.findIndex((e) => e.overlaps === false);
+  list.replaceChildren(...[
+    p.events.length && !shown.length ? h("p", { class: "meta" }, "No event has that in its title.") : null,
+    ...shown.flatMap((e, i) => [
+      i === firstOther ? h("p", { class: "meta event-group" }, i === 0
+        ? "None overlaps the recording. Events that day and the days around it, nearest first:"
+        : "Other events that day and the days around it, nearest first:") : null,
+      h("button", { type: "button", class: `event-option${e.current ? " current" : ""}`, onclick: (ev) => chooseEvent(id, e.key, null, ev.currentTarget) },
+        h("span", { class: "event-time" }, h("span", { class: "event-day" }, dayLabel(new Date(e.start))), span(e)),
+        h("span", { class: "event-title" }, e.title),
+        e.invited ? h("span", { class: "meta" }, `${e.invited} invited`) : null,
+        e.rejected ? h("span", { class: "meta", title: "Recordings you said were not this event. Said twice, Palaver no longer links it by time." },
+          `not it ${e.rejected}×`) : null,
+        e.current ? h("span", { class: "meta" }, "✓ now") : null),
+    ]),
+  ].filter(Boolean));
 }
 
 // "Not linked by time any more": forgotten, so the series is linked by time again.
@@ -4032,23 +4142,25 @@ function renderReview() {
   const step = (title, done, ...body) => h("section", { class: `review-step${done ? " done" : ""}` },
     h("h2", {}, h("span", { class: "tick" }, done ? "✓" : "•"), title), ...body);
 
+  // The meeting's ⋯ menu, as on its page (#30): rename, change the event, split, join, trash it here.
+  const more = moreButton(() => itemsFor(m, more), "More actions");
   const page = h("article", { class: "meeting review" },
     h("div", { class: "review-bar" },
       h("span", { class: "meta" }, `Review · ${state.reviewAt + 1} of ${state.review.length}`),
       h("span", { class: "spacer" }),
+      more,
       h("button", { type: "button", class: "btn btn-quiet", disabled: state.reviewSaving, onclick: () => finishReview(false) }, "Skip"),
       h("button", { class: "btn primary", disabled: state.reviewSaving, onclick: () => finishReview(true) },
         state.reviewSaving ? "Saving…" : "Done, next →")),
     cutNotice,
-    respelledNotice(),
     renderCutSuggestion(m),
     renderSilenceSuggestion(m),
     h("header", { class: "head" }, h("div", { class: "head-text" },
-      h("h1", {}, h("button", { class: "link", title: "Open the meeting", onclick: () => openMeeting(m.id) },
-        titleOf(m))),
+      renderTitle(m),
       h("div", { class: "when" },
         start ? h("span", {}, `${dayFmt.format(start)}, ${timeFmt.format(start)}`) : null,
-        m.duration ? h("span", {}, minutes(m.duration)) : null))));
+        m.duration ? h("span", {}, minutes(m.duration)) : null),
+      renderEventLink(m))));
   if (state.error) page.append(h("p", { class: "error" }, state.error));
   if (state.notice) page.append(h("p", { class: "inline-notice" }, state.notice));
 
@@ -4229,12 +4341,13 @@ async function openSettings(how = "push", pane = null) {
   }
   try {
     let rec;
-    [state.settings, state.lm, state.tr, , , , , rec, state.update, state.calendar] = await Promise.all([api("/api/settings"),
+    [state.settings, state.lm, state.tr, , , , , rec, state.update, state.calendar, state.accessibility] = await Promise.all([api("/api/settings"),
       api("/api/language-model"), api("/api/transcription"), refreshMcp(), refreshMemory(), refreshStorage(),
       refreshNotifications(),
       // "Recommended for this Mac" (#55): the setup assistant's recommendations; the page works without them.
       api("/api/setup/recommendations").catch(() => null),
-      api("/api/update").catch(() => null), api("/api/setup/calendar").catch(() => null)]);
+      api("/api/update").catch(() => null), api("/api/setup/calendar").catch(() => null),
+      api("/api/accessibility").catch(() => null)]);
     state.recommended = rec?.recommendations || null;
     showUpdateIndicator();
     state.error = state.lmError = state.trError = null;
@@ -4292,6 +4405,16 @@ function notificationsSection() {
       on ? null : h("button", { type: "button", class: "btn", onclick: (e) => openNotificationSettings(e.currentTarget) },
         "Open System Settings"))));
   return section;
+}
+
+async function openAccessibilitySettings(button) {
+  try {
+    state.accessibility = await working(button, api("/api/accessibility/open", {}));
+  } catch (err) {
+    errorToast(`System Settings did not open: ${err.message}`);
+    return;
+  }
+  toast("Turn Palaver on under Accessibility; it applies from the next Teams call.", { short: true });
 }
 
 async function openNotificationSettings(button) {
@@ -4411,7 +4534,12 @@ function settingsContent(pane) {
       h("div", { class: "gloss-card settings-card" },
         settingSwitch("record_teams", "Record Teams calls automatically"),
         settingSwitch("record_slack", "Record Slack huddles automatically"),
-        h("p", { class: "meta" }, "Start recording now in the menu bar works either way.")),
+        h("p", { class: "meta" }, "Start recording now in the menu bar works either way."),
+        settingSwitch("respect_call_mute", "Don't record my microphone while I'm muted in Teams or Slack"),
+        h("p", { class: "meta" }, "While you're muted in the call, Palaver keeps silence instead of your microphone, so people talking near you stay out of the recording. The others in the call are recorded as always. Recordings you start yourself are not affected."),
+        state.settings.respect_call_mute && state.accessibility?.state === "denied" ? h("div", { class: "lm-row accessibility-hint" },
+          h("span", { class: "meta" }, "Allow Accessibility so Palaver can see Teams' mute button. Without it, Teams' mute is known only up to half a minute late, and your microphone shows in the live text that much later."),
+          h("button", { type: "button", class: "btn", onclick: (e) => openAccessibilitySettings(e.currentTarget) }, "Open System Settings")) : null),
       h("h2", {}, "Live"),
       h("div", { class: "gloss-card settings-card" },
         settingSwitch("realtime", "Realtime transcription"),

@@ -236,3 +236,22 @@ private let module = "com.microsoft.teams2.modulehost"
     l.list = [proc(module, true)]  // let go in between: a new hold, mic only
     #expect(d.detect(recording: nil) == .teams)
 }
+
+@Test func aHuddleLeftIsNoHuddleThoughSlackStillPlays() {
+    let l = FakeLister()
+    let left = Cell(false)
+    let d = CallDetector(lister: l)
+    d.huddleLeft = { left.value }
+    l.list = [proc(slackId, true, out: true)]
+    #expect(d.detect(recording: .slack) == .slack)
+    l.list = [proc(slackId, false, out: true)]
+    #expect(d.detect(recording: .slack) == .slack)  // muted, or left: by audio the same
+    left.value = true
+    #expect(d.detect(recording: .slack) == nil)  // the huddle's controls are gone
+    #expect(d.detect(recording: .slack) == nil)
+    left.value = false
+    l.list = [proc(slackId, true, out: true)]  // a new huddle
+    #expect(d.detect(recording: .slack) == .slack)
+    left.value = true
+    #expect(d.detect(recording: .slack) == .slack)  // holding the mic: in a huddle whatever the UI says
+}

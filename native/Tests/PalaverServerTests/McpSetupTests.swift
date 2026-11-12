@@ -80,14 +80,17 @@ private func entry(_ command: String, _ args: [String], extra: String = "") -> S
         let c = try #require(read(h.code))
         if case .object(let top) = c { #expect(top.map(\.0) == ["numStartups", "mcpServers", "projects", "userID"]) }  // order kept
         #expect(c["numStartups"] == .int(41) && c["userID"] == .string("abc"))
-        #expect(dumps(c["mcpServers"]?["meetings"]) == dumps(parse(entry(BIN, ["mcp"]))))
+        // Palaver's "meetings" is "palaver" now, in its place.
+        if case .object(let servers)? = c["mcpServers"] { #expect(servers.map(\.0) == ["palaver", "other", "notes"]) }
+        #expect(dumps(c["mcpServers"]?["palaver"]) == dumps(parse(entry(BIN, ["mcp"]))))
         #expect(dumps(c["mcpServers"]?["notes"]) == dumps(parse(entry(BIN, ["--config", "/Users/x/c.toml", "mcp"], extra: #", "timeout": 30"#))))
         #expect(dumps(c["mcpServers"]?["other"]) == dumps(parse(entry("npx", ["-y", "server-palaver-mcp"]))))  // not Palaver's
         let work = c["projects"]?["/Users/x/work"]
-        #expect(work?["mcpServers"]?["meetings"]?["command"] == .string(BIN) && work?["mcpServers"]?["venv"]?["command"] == .string(BIN))
+        #expect(work?["mcpServers"]?["palaver"]?["command"] == .string(BIN) && work?["mcpServers"]?["venv"]?["command"] == .string(BIN))
         #expect(work?["allowedTools"] == .array([]))
-        // A checkout's own venv is the developer's, and a moved entry stays as it is.
-        #expect(c["projects"]?["/Users/x/dev/palaver"]?["mcpServers"]?["dev"]?["command"] == .string("/Users/x/dev/palaver/.venv/bin/python"))
+        // A checkout's venv running `-m palaver` is moved too: there is no Python Palaver any more (#32). A moved entry
+        // stays as it is.
+        #expect(dumps(c["projects"]?["/Users/x/dev/palaver"]?["mcpServers"]?["dev"]) == dumps(parse(entry(BIN, ["mcp"]))))
         #expect(dumps(c["projects"]?["/Users/x/other"]?["mcpServers"]?["done"]) == dumps(parse(entry(BIN, ["mcp"]))))
         var st = stat()
         #expect(stat(h.code.path, &st) == 0 && st.st_mode & 0o777 == 0o600)  // still the user's own
@@ -109,10 +112,75 @@ private func entry(_ command: String, _ args: [String], extra: String = "") -> S
         try write(h.desktop, text)
         #expect(h.setup().migrate() == ["desktop"])
         let d = try #require(read(h.desktop))
-        #expect(dumps(d["mcpServers"]?["meetings"]) == #"{"command": "\#(BIN)", "args": ["--config", "/c/config.toml", "mcp"], "env": {"A": "1"}}"#)
+        #expect(dumps(d["mcpServers"]?["palaver"]) == #"{"command": "\#(BIN)", "args": ["--config", "/c/config.toml", "mcp"], "env": {"A": "1"}}"#)
         #expect(dumps(d["mcpServers"]?["fs"]) == #"{"command": "npx", "args": ["fs"]}"#)
         #expect(try String(contentsOf: URL(fileURLWithPath: h.desktop.path + ".bak"), encoding: .utf8) == text)
         #expect(h.setup().migrate() == [])
+    }
+
+    @Test func palaversEntryNamedMeetingsIsRenamedInPlaceWithItsToolsAndOptions() throws {
+        let h = Home()
+        // Already the Swift server: only the name changes. The project's allowed tools follow the user's entry.
+        try write(h.code, """
+            {"mcpServers": {"fs": \(entry("npx", ["fs"])), "meetings": \(entry(BIN, ["--config", "/c.toml", "mcp"], extra: #", "timeout": 30"#)), \
+            "zz": \(entry("uvx", ["zz"]))}, \
+            "projects": {"/Users/x/work": {"allowedTools": ["Bash(ls)", "mcp__meetings__get_meeting", "mcp__meetings", \
+            "mcp__palaver__get_meeting", "mcp__meetingsx__y"], "mcpServers": {}}, \
+            "/Users/x/own": {"allowedTools": ["mcp__meetings__notes"], "mcpServers": {"meetings": \(entry("uvx", ["meeting-notes"]))}}}}
+            """)
+        #expect(h.setup().migrate() == ["code"])
+        let c = try #require(read(h.code))
+        if case .object(let servers)? = c["mcpServers"] { #expect(servers.map(\.0) == ["fs", "palaver", "zz"]) }
+        #expect(dumps(c["mcpServers"]?["palaver"]) == dumps(parse(entry(BIN, ["--config", "/c.toml", "mcp"], extra: #", "timeout": 30"#))))
+        #expect(c["projects"]?["/Users/x/work"]?["allowedTools"]
+                == .strings(["Bash(ls)", "mcp__palaver__get_meeting", "mcp__palaver", "mcp__meetingsx__y"]))
+        // A project with a "meetings" of its own that isn't Palaver: its server and tools stay.
+        let own = c["projects"]?["/Users/x/own"]
+        #expect(own?["allowedTools"] == .strings(["mcp__meetings__notes"]))
+        #expect(dumps(own?["mcpServers"]?["meetings"]) == dumps(parse(entry("uvx", ["meeting-notes"]))))
+        #expect(h.setup().migrate() == [])  // once is enough
+        #expect(try McpLog.registered(stores: h.stores)["name"] == .string("palaver"))
+    }
+
+    @Test func aMeetingsServerThatIsNotPalaversIsNeverTouched() throws {
+        let h = Home()
+        let code = #"{"mcpServers": {"meetings": \#(entry("npx", ["-y", "meetings-mcp"])), "palaver": \#(entry(BIN, ["mcp"]))}, "projects": {"/p": {"allowedTools": ["mcp__meetings__x"]}}}"#
+        try write(h.code, code)
+        let desktop = #"{"mcpServers": {"meetings": {"command": "/opt/palaver-notes/bin/serve", "args": ["--port", "1"]}, "palaver": {"command": "\#(BIN)", "args": ["mcp"]}}}"#
+        try write(h.desktop, desktop)
+        #expect(h.setup().migrate() == [])
+        #expect(try String(contentsOf: h.code, encoding: .utf8) == code)
+        #expect(try String(contentsOf: h.desktop, encoding: .utf8) == desktop)
+        // Nor by adding Palaver to Claude Desktop: "palaver" is merged, the other "meetings" stays.
+        try h.setup().installDesktop()
+        #expect(read(h.desktop)?["mcpServers"]?["meetings"]?["command"] == .string("/opt/palaver-notes/bin/serve"))
+    }
+
+    @Test func withBothNamesPalaversNewEntryStaysAndTheOldOneGoes() throws {
+        let h = Home()
+        try write(h.code, """
+            {"mcpServers": {"meetings": \(entry("/Applications/Palaver.app/Contents/Resources/bin/python", ["-m", "palaver", "mcp"])), \
+            "palaver": \(entry(BIN, ["--config", "/new.toml", "mcp"]))}, \
+            "projects": {"/p": {"allowedTools": ["mcp__meetings__get_meeting", "mcp__palaver__get_meeting"]}}}
+            """)
+        try write(h.desktop, #"{"mcpServers": {"palaver": {"command": "\#(BIN)", "args": ["mcp"]}, "meetings": {"command": "\#(BIN)", "args": ["--config", "/old.toml", "mcp"]}}}"#)
+        #expect(h.setup().migrate() == ["code", "desktop"])
+        let c = try #require(read(h.code))
+        #expect(dumps(c["mcpServers"]) == dumps(parse(#"{"palaver": \#(entry(BIN, ["--config", "/new.toml", "mcp"]))}"#)))
+        #expect(c["projects"]?["/p"]?["allowedTools"] == .strings(["mcp__palaver__get_meeting"]))
+        #expect(dumps(read(h.desktop)) == #"{"mcpServers": {"palaver": {"command": "\#(BIN)", "args": ["mcp"]}}}"#)
+        // Another "palaver" that is not Palaver's: Palaver's "meetings" is kept, both stay.
+        let foreign = #"{"mcpServers": {"meetings": {"command": "\#(BIN)", "args": ["mcp"]}, "palaver": {"command": "npx", "args": ["palaver-x"]}}}"#
+        try write(h.desktop, foreign)
+        #expect(h.setup().migrate() == [])
+        #expect(try String(contentsOf: h.desktop, encoding: .utf8) == foreign)
+    }
+
+    @Test func addingToClaudeDesktopRenamesPalaversOldEntryInItsPlace() throws {
+        let h = Home()
+        try write(h.desktop, #"{"mcpServers": {"meetings": {"command": "/old/bin/palaver", "args": ["mcp"], "env": {"X": "1"}}, "fs": {"command": "npx"}}}"#)
+        try h.setup().installDesktop()
+        #expect(dumps(read(h.desktop)) == #"{"mcpServers": {"palaver": {"command": "\#(BIN)", "args": ["mcp"], "env": {"X": "1"}}, "fs": {"command": "npx"}}}"#)
     }
 
     @Test func missingBrokenOrForeignConfigsAreLeftAlone() throws {
@@ -140,9 +208,9 @@ private func entry(_ command: String, _ args: [String], extra: String = "") -> S
         #expect(try String(contentsOf: h.code, encoding: .utf8) == old)
         var said: [String] = []
         #expect(McpSetup.migrateAtStart(bundle: installed, stores: h.stores, log: { said.append($0) }, isExecutable: yes) == ["code"])
-        #expect(read(h.code)?["mcpServers"]?["meetings"]?["command"]
+        #expect(read(h.code)?["mcpServers"]?["palaver"]?["command"]
                 == .string(installed.resolvingSymlinksInPath().appendingPathComponent("Contents/Resources/bin/palaver").path))
-        #expect(said == ["Claude's MCP entries now start the Swift server (code)"])
+        #expect(said == ["Claude's MCP entries were updated (code)"])
         #expect(McpSetup.isInstalled(bundle: URL(fileURLWithPath: "/Applications/Palaver.app"), applications: h.stores.applications,
                                      isExecutable: yes))
     }
@@ -167,7 +235,7 @@ private func entry(_ command: String, _ args: [String], extra: String = "") -> S
         try FileManager.default.createSymbolicLink(atPath: h.code.path, withDestinationPath: dotfiles.path)
         #expect(h.setup().migrate() == ["code"])
         #expect(try FileManager.default.destinationOfSymbolicLink(atPath: h.code.path) == dotfiles.path)  // still the link
-        #expect(read(dotfiles)?["mcpServers"]?["meetings"]?["command"] == .string(BIN))
+        #expect(read(dotfiles)?["mcpServers"]?["palaver"]?["command"] == .string(BIN))
         var st = stat()
         #expect(stat(dotfiles.path, &st) == 0 && st.st_mode & 0o777 == 0o600)
         #expect((try FileManager.default.contentsOfDirectory(atPath: dotfiles.deletingLastPathComponent().path)) == ["claude.json"])
@@ -234,7 +302,7 @@ private func entry(_ command: String, _ args: [String], extra: String = "") -> S
     @Test func installRunsClaudeMcpAddWithTheAppsOptions() throws {
         let h = Home()
         try h.setup(options: ["--config", "/c/config.toml"]).install()
-        #expect(h.calls == [["/fake/claude", "mcp", "add", "--scope", "user", "meetings", "--", BIN, "--config", "/c/config.toml", "mcp"]])
+        #expect(h.calls == [["/fake/claude", "mcp", "add", "--scope", "user", "palaver", "--", BIN, "--config", "/c/config.toml", "mcp"]])
     }
 
     @Test func installRemovesTheOldInstallersStaleEntryFirstAndSaysWhatFailed() throws {
@@ -260,12 +328,12 @@ private func entry(_ command: String, _ args: [String], extra: String = "") -> S
     @Test func installDesktopMergesTheEntryKeepsEverythingElseAndTheOldFile() throws {
         let h = Home()
         try h.setup().installDesktop()  // no config yet: a new one
-        #expect(dumps(read(h.desktop)) == #"{"mcpServers": {"meetings": {"command": "\#(BIN)", "args": ["mcp"]}}}"#)
+        #expect(dumps(read(h.desktop)) == #"{"mcpServers": {"palaver": {"command": "\#(BIN)", "args": ["mcp"]}}}"#)
         #expect(!FileManager.default.fileExists(atPath: h.desktop.path + ".bak"))
-        let before = #"{"theme": "dark", "mcpServers": {"fs": {"command": "npx"}, "meetings": {"command": "/old", "args": [], "env": {"X": "1"}}}}"#
+        let before = #"{"theme": "dark", "mcpServers": {"fs": {"command": "npx"}, "palaver": {"command": "/old", "args": [], "env": {"X": "1"}}}}"#
         try write(h.desktop, before)
         try h.setup(options: ["--config", "/c.toml"]).installDesktop()
-        #expect(dumps(read(h.desktop)) == #"{"theme": "dark", "mcpServers": {"fs": {"command": "npx"}, "meetings": {"command": "\#(BIN)", "args": ["--config", "/c.toml", "mcp"], "env": {"X": "1"}}}}"#)
+        #expect(dumps(read(h.desktop)) == #"{"theme": "dark", "mcpServers": {"fs": {"command": "npx"}, "palaver": {"command": "\#(BIN)", "args": ["--config", "/c.toml", "mcp"], "env": {"X": "1"}}}}"#)
         #expect(try String(contentsOf: URL(fileURLWithPath: h.desktop.path + ".bak"), encoding: .utf8) == before)
         #expect(try String(contentsOf: h.desktop, encoding: .utf8).hasSuffix("}\n"))
         for broken in ["{not json", "[]", #"{"mcpServers": []}"#] {
@@ -293,17 +361,17 @@ private func entry(_ command: String, _ args: [String], extra: String = "") -> S
         try FileManager.default.createDirectory(at: s.app.claudeDesktopApp, withIntermediateDirectories: true)
         let stores = s.app.stores
         h.answer = { argv in
-            try? write(stores.claudeConfig, #"{"mcpServers": {"meetings": {"command": "\#(argv[7])", "args": ["mcp"]}}}"#)
+            try? write(stores.claudeConfig, #"{"mcpServers": {"\#(argv[5])": {"command": "\#(argv[7])", "args": ["mcp"]}}}"#)
             return McpSetup.Ran(status: 0)
         }
         s.app.mcpSetup = McpSetup(stores: stores, executable: BIN, options: ["--config", "/c/config.toml"],
                                   findClaude: { "/fake/claude" }, run: h.setup().run)
         var r = s.post("/api/mcp/install")
-        #expect(r.status == 200 && dumps(r.json?["registered"]) == #"{"registered": true, "name": "meetings", "scope": "user"}"#)
+        #expect(r.status == 200 && dumps(r.json?["registered"]) == #"{"registered": true, "name": "palaver", "scope": "user"}"#)
         #expect(h.calls.first?.suffix(4) == [BIN, "--config", "/c/config.toml", "mcp"])
         r = s.post("/api/mcp/install", .object([("target", .string("desktop"))]))
-        #expect(r.status == 200 && dumps(r.json?["desktop"]) == #"{"installed": true, "registered": true, "name": "meetings"}"#)
-        #expect(read(stores.claudeDesktopConfig)?["mcpServers"]?["meetings"]?["args"] == .strings(["--config", "/c/config.toml", "mcp"]))
+        #expect(r.status == 200 && dumps(r.json?["desktop"]) == #"{"installed": true, "registered": true, "name": "palaver"}"#)
+        #expect(read(stores.claudeDesktopConfig)?["mcpServers"]?["palaver"]?["args"] == .strings(["--config", "/c/config.toml", "mcp"]))
         #expect(h.calls.count == 1)  // Claude Desktop needs no command
 
         s.app.mcpSetup = McpSetup(stores: stores, executable: BIN, findClaude: { nil })

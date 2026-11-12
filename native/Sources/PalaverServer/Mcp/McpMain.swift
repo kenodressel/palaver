@@ -98,7 +98,7 @@ public enum McpMain {
         do {
             if o.desktop {
                 try setup.installDesktop()
-                print("Added \"meetings\" to \(stores.claudeDesktopConfig.path) (the previous file is kept as .bak).\n"
+                print("Added \"\(McpSetup.NAME)\" to \(stores.claudeDesktopConfig.path) (the previous file is kept as .bak).\n"
                       + "Quit and reopen Claude Desktop to use it.")
             } else {
                 print(setup.installCommand().joined(separator: " "))

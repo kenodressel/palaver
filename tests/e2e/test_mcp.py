@@ -25,15 +25,15 @@ def test_the_claude_access_pane_adds_palaver_to_claude_code_and_desktop(page, ap
 
     section.get_by_role("button", name="Add to Claude Code").click()
     expect(toast(page)).to_contain_text("Added to Claude Code")
-    expect(section).to_contain_text("Claude Code starts Palaver's MCP server (“meetings”, all projects).")
+    expect(section).to_contain_text("Claude Code starts Palaver's MCP server (“palaver”, all projects).")
     [args] = app_server.claude_calls
-    assert args[:6] == ["mcp", "add", "--scope", "user", "meetings", "--"]
+    assert args[:6] == ["mcp", "add", "--scope", "user", "palaver", "--"]
     assert args[6].endswith("/palaver-cli") and args[7] == "--config" and args[-1] == "mcp"
 
     section.get_by_role("button", name="Add to Claude Desktop").click()
     expect(toast(page)).to_contain_text("Added to Claude Desktop")
-    expect(section).to_contain_text("Claude Desktop starts Palaver's MCP server (“meetings”).")
-    entry = json.loads(app_server.claude_desktop_config.read_text())["mcpServers"]["meetings"]
+    expect(section).to_contain_text("Claude Desktop starts Palaver's MCP server (“palaver”).")
+    entry = json.loads(app_server.claude_desktop_config.read_text())["mcpServers"]["palaver"]
     assert entry == {"command": args[6], "args": args[7:]}
     assert app_server.mcp_installs == ["code", "desktop"]
 

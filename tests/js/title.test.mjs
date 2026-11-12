@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { titleChange, withTitle, retitledText, calendarHint, meetingCommands, TITLE_MAX }
+import { titleChange, withTitle, retitledText, eventLinkView, meetingCommands, TITLE_MAX }
   from "../../web/logic.js";
 
 const fromNotes = { id: "m", title: "Budget talk", title_from: "notes", notes: { title: "Budget talk" }, calendar: null };
@@ -53,11 +53,10 @@ test("the toast says the new title, or which one shows again", () => {
   assert.equal(retitledText(untitled, "Meeting at 12:04"), "Title back to “Meeting at 12:04”");
 });
 
-test("under a title of one's own, a quiet line says what the calendar calls the meeting", () => {
-  assert.equal(calendarHint(mine), "Calendar: Weekly sync");
-  assert.equal(calendarHint(fromCalendar), null);
-  assert.equal(calendarHint({ ...mine, calendar: null }), null);
-  assert.equal(calendarHint({ ...mine, title: "Weekly sync" }), null);  // the same words: nothing to add
+test("under a title of one's own, the event line still names the calendar's event (#30)", () => {
+  assert.equal(eventLinkView(mine).title, "Weekly sync");
+  assert.equal(eventLinkView(fromCalendar).title, "Weekly sync");
+  assert.equal(eventLinkView({ ...mine, calendar: null }), null);
 });
 
 test("a meeting can be renamed in any state, also while it is recorded", () => {

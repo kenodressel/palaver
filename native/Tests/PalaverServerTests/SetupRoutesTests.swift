@@ -141,7 +141,7 @@ private final class Fixture {
     /// Targets Palaver was added to: "code" per `claude mcp add`, "desktop" once Claude Desktop's config has it.
     var installed: [String] {
         claude.value.filter { $0.count > 2 && $0[2] == "add" }.map { _ in "code" }
-            + (PythonJSON.read(app.stores.claudeDesktopConfig)?["mcpServers"]?["meetings"] != nil ? ["desktop"] : [])
+            + (PythonJSON.read(app.stores.claudeDesktopConfig)?["mcpServers"]?["palaver"] != nil ? ["desktop"] : [])
     }
 
     init(userName: String = "User", calendar: Bool = true, config: Config = Config()) throws {

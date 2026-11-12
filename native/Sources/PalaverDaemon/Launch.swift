@@ -282,6 +282,7 @@ public enum DaemonFactory {
                              log: @escaping (String, String) -> Void,
                              sources: ((Daemon?) -> CaptureSources)? = nil,
                              beforeRecord: @escaping (() throws -> URL) throws -> URL = { try $0() },
+                             askAccessibility: (() -> Void)? = nil,
                              testRecorder: TestRecorder? = nil) throws -> Daemon {
         let levels = RecordingLevels()
         let usage = UsageLog(url: paths.support.appendingPathComponent("usage.jsonl"))
@@ -295,12 +296,31 @@ public enum DaemonFactory {
         }
         facts.searchMeaning = { settings.searchMeaning }
         facts.calendarEnabled = { config.calendarEnabled }
+        // A Slack recording's follower says when the user left the huddle (#25): the detector stops counting
+        // Slack's speaker as the huddle, and the daemon stops without the grace.
+        let huddle = SlackHuddleState()
+        detector.huddleLeft = { huddle.left }
+        // A call's recording does not keep the mic while the user is muted in it (respect_call_mute).
+        // With the real capture only: given sources (tests) never read another app's mute.
+        // A Slack huddle is followed without it too, for its end (the mic is then kept: `gatesMic` false).
+        let mute: (String) -> ((@escaping @Sendable (String) -> Void) -> (MuteTimeline, CallMuteSource))? = { trigger in
+            guard sources == nil, let app = CallApp(rawValue: trigger), settings.respectCallMute || app == .slack else { return nil }
+            // The call began when its app took the mic, or, going on from before a restart, when it began then.
+            let callStart = made?.continuingSince.map { hostNanos() - Int64(Date().timeIntervalSince($0) * 1e9) }
+                ?? detector.callSince(app)
+            askAccessibility?()  // to read Teams' mic button, Slack's huddle
+            return { log in CallMute.make(app: app, callStart: callStart, home: paths.home, huddle: huddle, log: log) }
+        }
         var deps = DaemonDeps(
             detect: { detector.detect(recording: $0) },
             newSession: { trigger in
-                RecordingSession(outputDir: config.outputDir, trigger: trigger,
-                                 capture: { folder, sessionLog in LiveCapture(folder: folder, log: sessionLog, sources: captureSources()) },
-                                 stamp: stamp, usage: usage)
+                let muted = mute(trigger), gates = settings.respectCallMute
+                return RecordingSession(outputDir: config.outputDir, trigger: trigger,
+                                        capture: { folder, sessionLog in
+                                            LiveCapture(folder: folder, log: sessionLog, sources: captureSources(), mute: muted,
+                                                        gatesMic: gates)
+                                        },
+                                        stamp: stamp, usage: usage)
             },
             // Locally, notes are written apart, when no call is recorded; the Notion upload needs
             // them at once, so `run` keeps writing them itself.
@@ -314,6 +334,7 @@ public enum DaemonFactory {
                              maxSession: Double(config.maxSessionHours) * 3600),
             clock: { ProcessInfo.processInfo.systemUptime })
         deps.ignore = { detector.ignore(named: $0) }
+        deps.callLeft = { $0 == .slack && huddle.left }
         deps.ignored = { detector.ignored.map(\.rawValue) }
         deps.launchNotes = { try launcher.launch("notes", $0, qos: .utility) }
         deps.notesWanted = { let v = notion.value; return !v.autoSync && v.notes }
@@ -323,6 +344,8 @@ public enum DaemonFactory {
         deps.launchIndex = { try launcher.launch("index", nil, qos: .background) }
         deps.memoryFreeGB = FreeMemory.availableGB
         deps.notesMemoryGB = { facts.notesMemoryGB($0) }
+        // `budgetsNow` asks for the Recordings folder, no one meeting: the Settings' choice, shown in daemon.json and
+        // standing in until a meeting's own answer is known; a running meeting's notes are judged by `budgetFor`.
         deps.watchdog = Watchdog(
             MemoryBudgets(config: config.memory),
             budgetsNow: { MemoryBudgets(config: config.memory, notes: facts.notesMemoryGB(config.outputDir)) },

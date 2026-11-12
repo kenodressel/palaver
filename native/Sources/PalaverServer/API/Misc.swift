@@ -54,6 +54,8 @@ public enum UsageAPI {
     /// `record_usage`: what the page counted (actions, views, tabs, ⌘K, errors shown) and, at its start, its catalog of
     /// features. Anything else is left out.
     public static func record(_ app: ServerApp, _ body: JSONValue) throws -> JSONValue {
+        // The catalog first: whoever sees this post's events in usage.jsonl finds its catalog written too.
+        if case .object? = body["catalog"] { try Usage.saveCatalog(body["catalog"], path: app.stores.usageFeatures) }
         let given = try PyBody.get(body, "events")
         let events = given.map { $0.truthy ? $0 : .array([]) } ?? .array([])
         guard case .array(let items) = events else { throw BadRequest("events is a list") }
@@ -68,7 +70,6 @@ public enum UsageAPI {
             let cut = String(String.UnicodeScalarView(id.unicodeScalars.prefix(80)))
             Usage.record(kind, cut.isEmpty ? nil : cut, fields: extra, path: app.stores.usage)
         }
-        if case .object? = body["catalog"] { try Usage.saveCatalog(body["catalog"], path: app.stores.usageFeatures) }
         return .object([("ok", .bool(true))])
     }
 }

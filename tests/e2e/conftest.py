@@ -434,7 +434,7 @@ class SwiftServed(_Api):
         """Targets Palaver was added to: "code" per `claude mcp add`, "desktop" once Claude Desktop's config has it."""
         code = ["code" for args in self.claude_calls if args[:2] == ["mcp", "add"]]
         try:
-            desktop = "meetings" in json.loads(self.claude_desktop_config.read_text()).get("mcpServers", {})
+            desktop = "palaver" in json.loads(self.claude_desktop_config.read_text()).get("mcpServers", {})
         except FileNotFoundError:
             desktop = False
         return code + (["desktop"] if desktop else [])

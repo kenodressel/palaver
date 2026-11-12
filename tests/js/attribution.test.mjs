@@ -3,8 +3,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { linkWhy, linkTitle, yourLink, eventChangeText, eventLinkView, withName, withProject, labelDisplay }
-  from "../../web/logic.js";
+import { linkWhy, linkTitle, yourLink, eventChangeText, eventLinkView, withName, withProject, labelDisplay,
+  eventPickerChoices, EVENT_FILTER_AFTER } from "../../web/logic.js";
 
 const link = (extra = {}) => ({ kind: "event", target: "Northwind", source: "calendar", confidence: 0.6,
   reason: "time match, 2 events overlapped", unsure: true,
@@ -31,17 +31,22 @@ test("yourLink is a link the user set: sure, final", () => {
     reason: "", unsure: false, label: "Speaker: Henrik (you)" });
 });
 
-test("the event chip asks about an unsure link, or which event when events overlapped; a sure one is no chip", () => {
+test("the event line names the event with Change…; an unsure one is dotted, says why, with ✓ (#30)", () => {
   const sure = eventLinkView({ calendar: { title: "Northwind", link: link({ unsure: false, confidence: 0.9, reason: "time match" }) } });
-  assert.equal(sure, null);
+  assert.deepEqual(sure, { kind: "link", title: "Northwind", why: null, unsure: false, canConfirm: false });
   const unsure = eventLinkView({ calendar: { title: "Northwind", link: link() } });
-  assert.equal(unsure.why, "time match, 2 events overlapped");
-  assert.equal(unsure.unsure, true);
-  assert.equal(unsure.canConfirm, true);
+  assert.deepEqual(unsure, { kind: "link", title: "Northwind", why: "time match, 2 events overlapped", unsure: true, canConfirm: true });
+  // Stored before links kept theirs: still the event, with Change….
+  assert.equal(eventLinkView({ calendar: { title: "Northwind" } }).kind, "link");
+});
+
+test("no event: Pick… while the calendar is on, nothing without it; overlapping events ask which one", () => {
+  assert.deepEqual(eventLinkView({ calendar: null, event_question: null, calendar_on: true }), { kind: "none" });
+  assert.equal(eventLinkView({ calendar: null, event_question: null, calendar_on: false }), null);
+  assert.equal(eventLinkView({ calendar: null }), null);
   const choices = [{ key: "a|2026-10-27", title: "Contoso sync" }, { key: "l|2026-10-27", title: "Northwind" }];
-  const asking = eventLinkView({ calendar: null, event_question: { reason: "2 events overlapped the recording", choices } });
+  const asking = eventLinkView({ calendar: null, calendar_on: true, event_question: { reason: "2 events overlapped the recording", choices } });
   assert.deepEqual(asking, { kind: "question", why: "2 events overlapped the recording", choices });
-  assert.equal(eventLinkView({ calendar: null, event_question: null }), null);
 });
 
 test("the toast after choosing the event", () => {
@@ -65,4 +70,16 @@ test("a project confirmed at once is a sure link", () => {
   const m = { projects: [{ id: "b2", name: "Foundry", by: "auto", why: "title", link: link({ kind: "project" }) }],
     project_suggestions: [], all_projects: [] };
   assert.deepEqual(withProject(m, { project: "b2" }).projects[0].link, yourLink("project", "Foundry"));
+});
+
+test("the event picker's filter keeps the events whose title has the words, in their order (#28)", () => {
+  const events = [{ key: "a", title: "Contoso weekly", overlaps: true }, { key: "b", title: "1:1 Timo Strauß", overlaps: false },
+    { key: "c", title: "Zürich offsite", overlaps: false }, { key: "d", title: "Contoso Sync", overlaps: false }];
+  assert.equal(eventPickerChoices(events), events);
+  assert.equal(eventPickerChoices(events, "  "), events);
+  assert.deepEqual(eventPickerChoices(events, "contoso").map((e) => e.key), ["a", "d"]);
+  assert.deepEqual(eventPickerChoices(events, " STRAUß ").map((e) => e.key), ["b"]);
+  assert.deepEqual(eventPickerChoices(events, "zurich").map((e) => e.key), ["c"]);
+  assert.deepEqual(eventPickerChoices(events, "nothing like it"), []);
+  assert.equal(EVENT_FILTER_AFTER, 8);
 });

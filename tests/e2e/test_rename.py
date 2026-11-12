@@ -50,13 +50,13 @@ def test_renamed_from_the_menu_the_title_wins_over_the_calendar_which_shows_belo
     title_field(page).fill("Standup with Carla")
     page.locator("#main .when").click()  # away from the field: saved
     expect(heading(page)).to_have_text("Standup with Carla")
-    expect(page.locator("#main .title-hint")).to_have_text("Calendar: Team standup")
+    expect(page.locator("#main .event-link .link-title")).to_have_text("Team standup")
     expect_toast(page, "Renamed to “Standup with Carla”")
 
     unfocus(page)
     cmd(page, "z")
     expect(heading(page)).to_have_text("Team standup")
-    expect(page.locator("#main .title-hint")).to_have_count(0)
+    expect(page.locator("#main .event-link .link-title")).to_have_text("Team standup")
 
 
 def test_rename_meeting_in_the_palette_opens_the_title_field(page, app_server):

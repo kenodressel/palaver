@@ -50,10 +50,19 @@ extension DaemonTicks {
             #expect(status["why"]?["since"] == .string(WallTime.iso(WALL0.addingTimeInterval(14), TZ, seconds: true)))  // the meeting's start
             #expect(status["why"]?["restarts"] == .int(1))
             #expect(h.titles.contains("Recording continued"))
+            // A mute from before the restart still counts: the call began then (CallMute).
+            #expect(h.daemon.continuingSince == WALL0.addingTimeInterval(14))
             await h.run { $0 > 1100 }
             #expect(sessions[1].stopReason == "call_ended")
             #expect(p(h.launched) == [rec0.path])  // one meeting, processed once
             #expect(h.status()["continues"] == .array([]))
+        }
+
+        @Test func aCallWithNothingToContinueBeganWhenItsAppTookTheMic() async throws {
+            let h = try Harness(tempDir(), activity: teams { $0 >= 10 })
+            await h.run { $0 > 30 }
+            #expect(h.sessions.count == 1 && h.daemon.continuingSince == nil)
+            h.daemon.shutdown()
         }
 
         @Test func twoRestartsInOneCallMakeOneMeeting() async throws {

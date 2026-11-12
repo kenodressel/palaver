@@ -90,7 +90,8 @@ private final class QuietProvider: ProviderHelper {
         #expect(dumps(try SettingsAPI.set(.object([("record_teams", .bool(false))]), defaults: noSlack, stores: stores)) == dumps(parse("""
             {"realtime": false, "record_teams": false, "record_slack": false, "search_meaning": true,
              "live_processing": true, "nudge_talk_share": true, "nudge_monologue": true, "nudge_quiet_invitee": true,
-             "nudge_pace": false, "nudge_fillers": false, "nudge_notify": true, "check_updates": true}
+             "nudge_pace": false, "nudge_fillers": false, "nudge_notify": true, "check_updates": true,
+             "respect_call_mute": true}
             """)))
         #expect(file() == #"{"realtime": false, "future": 1, "record_teams": false}"#)
         try write(stores.settings, "[broken")

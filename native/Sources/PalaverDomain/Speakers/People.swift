@@ -206,39 +206,49 @@ public enum People {
         var changed = 0
         let rejected = try rejectedVoices(outputDir)
         for paths in meetings(outputDir) {
-            let raw = try embeddings(paths)
-            if raw.isEmpty || !exists(paths.transcriptJson) { continue }
-            let invited = CalendarEvents.invitedNames(paths, try bank.names().keys)
-            let talk = Speakers.talkSeconds(try turns(paths))
-            // A short talker's voice is never read (recognize skips it first).
-            let vectors = PyDict(try raw.map { label, value in
-                (label, (talk[label] ?? 0.0) < Voices.MIN_TALK_SECONDS ? [] : try VoiceMath.vector(value, "a voice of speaker_embeddings.json"))
-            })
-            let found = try Voices.recognize(vectors, talk: talk, bank: bank, invited: invited, rejected: rejected)
-            let auto = JSONValue.object(found.map { label, hit in
-                (label, .object([("name", .string(hit.0)), ("similarity", .double(Py.round(hit.1, 3)))]))
-            })
-            let wrote = try StoreLock.meeting(paths) { () throws -> Bool in
-                var before: JSONValue = .object([])
-                if let data = try? Data(contentsOf: paths.speakersAuto), let parsed = try? PythonJSON.parse(data) { before = parsed }
-                guard case .object(let stored) = before else { throw SpeakerFileError(description: "speakers_auto.json is not an object") }
-                let was = try stored.map { label, hit -> (String, JSONValue) in
-                    guard case .object = hit, let name = hit["name"] else {
-                        throw SpeakerFileError(description: "speakers_auto.json: \(label) has no name")
-                    }
-                    return (label, name)
-                }
-                let now = found.map { ($0.key, JSONValue.string($0.value.0)) }
-                if PythonJSON.equal(.object(now), .object(was)) { return false }
-                try PythonJSON.write(auto, to: paths.speakersAuto, indent: 2, ensureAscii: false)
-                return true
-            }
-            guard wrote else { continue }
-            // Outside the meeting's lock: saving the names learns voices, which takes the bank's.
-            try Speakers.saveSpeakerNames(paths, try Speakers.loadSpeakerNames(paths), bank: bank, stores: stores)
-            changed += 1
+            if try recognize(paths, bank: bank, rejected: rejected, stores: stores) { changed += 1 }
         }
         return changed + (try Inference.refresh(outputDir: outputDir, userName: userName, bank: bank, stores: stores))
+    }
+
+    /// Recognizes the bank's voices in one meeting (#31: the meeting whose event changed, at once; every other one
+    /// after the answer). True when its names changed. `bank`, `rejected`: as `refreshRecognition` has them.
+    @discardableResult
+    public static func recognize(_ paths: RecordingPaths, bank: VoiceBank? = nil, rejected: [(String, [Double])]? = nil,
+                                 stores: StorePaths = .current()) throws -> Bool {
+        let bank = bank ?? VoiceBank(directory: stores.voices)
+        let rejected = try rejected ?? rejectedVoices(paths.folder.deletingLastPathComponent())
+        let raw = try embeddings(paths)
+        if raw.isEmpty || !exists(paths.transcriptJson) { return false }
+        let invited = CalendarEvents.invitedNames(paths, try bank.names().keys)
+        let talk = Speakers.talkSeconds(try turns(paths))
+        // A short talker's voice is never read (recognize skips it first).
+        let vectors = PyDict(try raw.map { label, value in
+            (label, (talk[label] ?? 0.0) < Voices.MIN_TALK_SECONDS ? [] : try VoiceMath.vector(value, "a voice of speaker_embeddings.json"))
+        })
+        let found = try Voices.recognize(vectors, talk: talk, bank: bank, invited: invited, rejected: rejected)
+        let auto = JSONValue.object(found.map { label, hit in
+            (label, .object([("name", .string(hit.0)), ("similarity", .double(Py.round(hit.1, 3)))]))
+        })
+        let wrote = try StoreLock.meeting(paths) { () throws -> Bool in
+            var before: JSONValue = .object([])
+            if let data = try? Data(contentsOf: paths.speakersAuto), let parsed = try? PythonJSON.parse(data) { before = parsed }
+            guard case .object(let stored) = before else { throw SpeakerFileError(description: "speakers_auto.json is not an object") }
+            let was = try stored.map { label, hit -> (String, JSONValue) in
+                guard case .object = hit, let name = hit["name"] else {
+                    throw SpeakerFileError(description: "speakers_auto.json: \(label) has no name")
+                }
+                return (label, name)
+            }
+            let now = found.map { ($0.key, JSONValue.string($0.value.0)) }
+            if PythonJSON.equal(.object(now), .object(was)) { return false }
+            try PythonJSON.write(auto, to: paths.speakersAuto, indent: 2, ensureAscii: false)
+            return true
+        }
+        guard wrote else { return false }
+        // Outside the meeting's lock: saving the names learns voices, which takes the bank's.
+        try Speakers.saveSpeakerNames(paths, try Speakers.loadSpeakerNames(paths), bank: bank, stores: stores)
+        return true
     }
 
     /// Names the speakers (meeting, label), e.g. one recurring voice in several meetings, then recognizes the voice

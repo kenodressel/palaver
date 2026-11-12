@@ -52,10 +52,10 @@ public enum Queries {
         return .object([("key", events.isEmpty ? .null : .str(CalendarEvents.eventKeyAt(events, when)))])
     }
 
-    /// `{"gb": float}`: the free memory the notes of `folder` wait for (llm.notes_memory_gb): the local model's need,
-    /// none for a cloud model.
+    /// `{"gb": float}`: the free memory the notes run of `folder` waits for, and its memory budget: the largest need of
+    /// the models it runs (the notes' and the projects sort's, `ModelChoice.notesRunMemoryGB`), none for cloud models.
     public static func notesMemory(folder: URL, config: Config, stores: StorePaths = .current()) -> JSONValue {
-        .object([("gb", .double(ModelChoice.memoryGB(feature: "notes", folder: folder, config: config, stores: stores)))])
+        .object([("gb", .double(ModelChoice.notesRunMemoryGB(folder: folder, config: config, stores: stores)))])
     }
 
     /// `{"zipf": bool}`: whether the glossary's word frequencies are found (a bundling check).

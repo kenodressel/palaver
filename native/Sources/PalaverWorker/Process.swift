@@ -328,6 +328,14 @@ public enum Pipeline {
             }
         }
 
+        // Stretches of the mic silenced after they were written (a call's mute told late): the live worker may
+        // have heard them, so the mic track is made again from the silenced raw mic.
+        if let muted = MicMuted.settled(folder), !muted.late.isEmpty, exists(paths.micRawWav) {
+            say("Redoing the mic track: \(muted.late.count) muted stretch(es) were silenced after the live worker read them")
+            unlink(paths.micWav.path)
+            unlink(paths.micSegments.path)
+        }
+
         if !exists(paths.micWav) {
             say("Running AEC (mic_raw.wav + system.wav → mic.wav)…")
             if !exists(paths.micRawWav) {

@@ -20,11 +20,12 @@ public struct AppCore {
                              sources: ((Daemon?) -> CaptureSources)? = nil,
                              testRecorder: TestRecorder, helpers: HelperJobs?,
                              restartWeb: @escaping () -> Int32? = { nil },
-                             refresh: @escaping () -> Void = {}) throws -> AppCore {
+                             refresh: @escaping () -> Void = {},
+                             askAccessibility: (() -> Void)? = nil) throws -> AppCore {
         let daemon = try DaemonFactory.build(config: config, settings: settings, paths: paths, launcher: launcher,
                                              facts: facts, notion: notion,
                                              detector: detector, version: version, notify: notify, log: log,
-                                             sources: sources, testRecorder: testRecorder)
+                                             sources: sources, askAccessibility: askAccessibility, testRecorder: testRecorder)
         let actions = DaemonActions(
             daemon: daemon, refresh: refresh,
             launchHelper: { kind, key, args in

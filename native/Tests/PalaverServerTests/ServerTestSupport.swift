@@ -126,7 +126,8 @@ final class TestServer {
     /// `dir`: a folder an earlier server used (its Meetings, stores and log), kept by `stop()`; else a new one.
     init(key: String? = nil, userName: String = "Timo Strauß", staticDir: URL? = nil, helpers: HelperRunner = StubHelperRunner(),
          recording: RecordingRemote? = nil, probe: SetupProbe = FakeProbe(), speechHere: @escaping () -> Bool = { true },
-         openURL: @escaping (String) -> Void = { _ in }, notifyState: String? = nil, calendar: CalendarProvider? = nil,
+         openURL: @escaping (String) -> Void = { _ in }, notifyState: String? = nil, accessibilityState: String? = nil,
+         calendar: CalendarProvider? = nil,
          notesEnabled: Bool? = nil, nextQuestion: NextQuestionAsker = StubNextQuestionAsker(),
          provider: ProviderHelper = StubProviderHelper(), report: ReportMaker = StubReportMaker(),
          settingsDefaults: SettingsValues? = nil,
@@ -143,7 +144,7 @@ final class TestServer {
         app = ServerApp(outputDir: out, userName: userName, stores: stores, staticDir: staticDir ?? ServerApp.defaultStaticDir,
                         settingsDefaults: settingsDefaults, notesEnabled: notesEnabled, freeMemoryGB: freeMemoryGB, recording: recording, calendar: calendar,
                         probe: probe, helpers: helpers, nextQuestion: nextQuestion, provider: provider, report: report, speechHere: speechHere, openURL: openURL,
-                        notifyState: notifyState)
+                        notifyState: notifyState, accessibilityState: accessibilityState)
         let router = Router.palaver(app: app)
         routes(router, app)
         logFile = dir.appendingPathComponent("daemon.log")

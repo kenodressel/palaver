@@ -139,7 +139,7 @@ public struct MacReportProbe: ReportProbe {
     }
 
     public func memory(config: Config) throws -> JSONValue {
-        let notes = ModelChoice.memoryGB(feature: "notes", config: config, stores: stores)
+        let notes = ModelChoice.notesRunMemoryGB(config: config, stores: stores)
         return .object([("available_gb", .double((FreeMemory.availableGB() * 10).rounded() / 10)),
                         ("budgets_gb", MemoryBudgets(config: config.memory, notes: notes).json)])
     }

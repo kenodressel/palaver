@@ -115,6 +115,20 @@ public enum AppAPI {
         SetupPermissions.notifications(statePath: app.notifyState)
     }
 
+    /// System Settings at Accessibility, where Palaver is allowed to read Teams' mic button (respect_call_mute).
+    public static let ACCESSIBILITY_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+
+    /// Whether the app may use Accessibility: "allowed", "denied", or "unknown" (outside the app).
+    public static func accessibilityStatus(_ app: ServerApp) -> JSONValue {
+        .object([("state", .string(AccessibilityStateFile.read(app.accessibilityState)))])
+    }
+
+    /// System Settings at Accessibility; then the state as GET answers it.
+    public static func openAccessibilitySettings(_ app: ServerApp) -> JSONValue {
+        app.openURL(ACCESSIBILITY_URL)
+        return accessibilityStatus(app)
+    }
+
     /// System Settings at Palaver's notifications; then the state as GET answers it.
     public static func openNotificationSettings(_ app: ServerApp) -> JSONValue {
         app.openURL(SETTINGS_URL)
@@ -190,6 +204,8 @@ extension Router {
         }
         r.post("/api/update/(check|install)") { _, m in .json(try AppAPI.updateAction(app, m.group(1)!)) }
         r.post("/api/notifications/open") { _, _ in .json(AppAPI.openNotificationSettings(app)) }
+        r.get("/api/accessibility") { _, _ in .json(AppAPI.accessibilityStatus(app)) }
+        r.post("/api/accessibility/open") { _, _ in .json(AppAPI.openAccessibilitySettings(app)) }
         r.post("/api/uninstall") { req, _ in .json(try AppAPI.uninstall(app, req.json)) }
     }
 }

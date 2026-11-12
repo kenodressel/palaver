@@ -39,6 +39,8 @@ public final class Settings: @unchecked Sendable {
     public var realtime: Bool { bool("realtime", true) }
     public var recordTeams: Bool { bool("record_teams", true) }
     public var recordSlack: Bool { bool("record_slack", defaults.recordSlack) }
+    /// Don't keep the microphone while muted in the recorded call (CallMute).
+    public var respectCallMute: Bool { bool("respect_call_mute", defaults.respectCallMute) }
     public var liveProcessing: Bool { bool("live_processing", defaults.processingLive) }
     public var searchMeaning: Bool { bool("search_meaning", true) }
     public var checkUpdates: Bool { bool("check_updates", true) }

@@ -234,7 +234,9 @@ You don't need any of these. Each one is off until you set it up.
   database after the call (see [Advanced settings](#advanced-settings)).
 - **Claude (MCP):** `palaver mcp --install` lets Claude Code read your
   meetings, notes, projects and people, read-only (`--install --desktop` for
-  Claude Desktop). Settings → Claude Access shows what Claude read.
+  Claude Desktop). The server is called "palaver" (it was "meetings" before
+  0.6.3; the app renames that entry). Settings → Claude Access shows what
+  Claude read.
 
 ## Storage, updates, uninstall
 

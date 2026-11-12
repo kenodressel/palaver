@@ -33,10 +33,22 @@ import Testing
         let folder = t.url.appendingPathComponent("m")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         #expect(Queries.notesMemory(folder: folder, config: config(t.url), stores: stores)["gb"] == .double(14.0))  // the local model
-        try SettingsFile.update([("engines", .object([("notes", .string("anthropic"))]))], stores: stores)
-        #expect(Queries.notesMemory(folder: folder, config: config(t.url), stores: stores)["gb"] == .double(0.0))  // a cloud model
+        try SettingsFile.update([("engines", .object([("notes", .string("anthropic")), ("projects", .string("anthropic"))]))],
+                                stores: stores)
+        #expect(Queries.notesMemory(folder: folder, config: config(t.url), stores: stores)["gb"] == .double(0.0))  // cloud models
         try "{}".write(to: RecordingPaths(folder).localOnly, atomically: true, encoding: .utf8)
         #expect(Queries.notesMemory(folder: folder, config: config(t.url), stores: stores)["gb"] == .double(14.0))  // kept here
+    }
+
+    /// #26: notes by a cloud model, then the projects sort on the local model (chosen: local) in the same run.
+    @Test func notesMemoryCountsTheLocalProjectsSortAfterCloudNotes() throws {
+        let t = TempFolder("queries"); defer { t.remove() }
+        let stores = StorePaths(configDir: t.url.appendingPathComponent("config"), home: t.url.appendingPathComponent("home"))
+        let folder = t.url.appendingPathComponent("m")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try SettingsFile.update([("engines", .object([("notes", .string("claude-cli")), ("projects", .string("local"))]))], stores: stores)
+        #expect(Queries.notesMemory(folder: folder, config: config(t.url), stores: stores)["gb"] == .double(14.0))
+        #expect(Queries.notesMemory(folder: t.url, config: config(t.url), stores: stores)["gb"] == .double(14.0))  // the Recordings folder
     }
 
     @Test func test_missing_models_lists_the_labels() throws {

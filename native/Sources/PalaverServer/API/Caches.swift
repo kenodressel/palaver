@@ -40,8 +40,12 @@ public final class SignatureCache<Value>: @unchecked Sendable {
     /// The value kept for `key` while `files` have not changed since it was made; else `make()`'s, kept for next time.
     /// `make` runs outside the lock: two requests that miss at once both make it, the later one is kept.
     public func get(key: String, files: [URL], make: () throws -> Value) rethrows -> Value {
+        try get(key: key, signature: Self.signature(files), make: make)
+    }
+
+    /// `get` with the files' `signature` taken already: caches made of the same files share one look at them.
+    public func get(key: String, signature: [Int]?, make: () throws -> Value) rethrows -> Value {
         let k = ScalarKey(key)
-        let signature = Self.signature(files)
         if let signature {
             let kept: Value? = lock.withLock {
                 guard let e = entries[k], e.signature == signature else { return nil }

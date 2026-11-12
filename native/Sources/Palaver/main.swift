@@ -121,6 +121,13 @@ MainActor.assumeIsolated {
     let notifications = startNotifications(opener: { meeting in
         DispatchQueue.main.async { MainActor.assumeIsolated { box.app?.openWindow(meeting, lookForUpdate: false) } }
     })
+    // Whether Palaver may use Accessibility (Teams' mute button), for Settings in the window.
+    let accessibility: AccessibilityStateFile? = bundled ? AccessibilityStateFile(directory: NSTemporaryDirectory()) : nil
+    if let accessibility {
+        accessibility.start()
+        childEnv["PALAVER_AX_STATE"] = accessibility.path
+        setenv("PALAVER_AX_STATE", accessibility.path, 1)
+    }
     // palaver-server, palaver-worker and palaver-lm; one not built is said once in app.log.
     let programs = AppPrograms.find(location: location, environment: environment)
     for line in programs.said { print(line) }

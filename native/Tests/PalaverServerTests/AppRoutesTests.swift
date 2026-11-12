@@ -465,6 +465,29 @@ private final class Flag: @unchecked Sendable {
         #expect(outside.get("/api/notifications").json?["state"] == .string("unknown"))
     }
 
+    @Test func accessibilityIsWhatTheAppLastWroteAndItsSettingsOpen() throws {
+        let dir = tempFolder("ax")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        var trusted = false
+        let file = AccessibilityStateFile(directory: dir.path, pid: 7, trusted: { [trusted] in trusted })
+        var opened: [String] = []
+        let s = try TestServer(openURL: { opened.append($0) }, accessibilityState: file.path)
+        defer { s.stop() }
+        #expect(s.get("/api/accessibility").json == .object([("state", .string("unknown"))]))  // not written yet
+        file.write()
+        #expect(s.get("/api/accessibility").json == .object([("state", .string("denied"))]))
+        trusted = true
+        AccessibilityStateFile(directory: dir.path, pid: 7, trusted: { [trusted] in trusted }).write()
+        let r = s.post("/api/accessibility/open")
+        #expect(r.status == 200 && r.json == .object([("state", .string("allowed"))]))
+        #expect(opened == ["x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
+        file.stop()
+        #expect(s.get("/api/accessibility").json?["state"] == .string("unknown"))
+        let outside = try TestServer()  // no $PALAVER_AX_STATE: not in the app
+        defer { outside.stop() }
+        #expect(outside.get("/api/accessibility").json?["state"] == .string("unknown"))
+    }
+
     // MARK: - bodies as Python's handler reads them
 
     @Test func bodiesThatAreNoObjectAreAnsweredAsPythonDoes() throws {

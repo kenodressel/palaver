@@ -29,7 +29,7 @@ import Testing
         #expect(PythonJSON.dumps(SettingsValues().json) == #"{"realtime": true, "record_teams": true, "record_slack": true, "#
                 + #""search_meaning": true, "live_processing": true, "nudge_talk_share": true, "nudge_monologue": true, "#
                 + #""nudge_quiet_invitee": true, "nudge_pace": false, "nudge_fillers": false, "nudge_notify": true, "#
-                + #""check_updates": true}"#)
+                + #""check_updates": true, "respect_call_mute": true}"#)
     }
 
     @Test func test_a_missing_key_takes_the_default_and_wrong_types_are_ignored() throws {

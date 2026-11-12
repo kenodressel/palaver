@@ -146,6 +146,41 @@ private let HALLO = #"{"transcribe": {"*": [\#(seg(0.0, 1.0, "hallo"))]}}"#
         #expect(h.said.contains("System track holds no audio; transcribing the microphone only"))
     }
 
+    @Test func aMicSilencedAfterTheLiveWorkerReadItIsMadeAgain() async throws {
+        // The live worker transcribed the mic; then Teams' log said the user was muted then, and the raw mic was
+        // silenced: its mic.wav and segments are made again from the silenced raw mic.
+        let t = Temp(); defer { t.remove() }
+        let h = Harness(t)
+        let raw = track(10, loud: [])  // silenced: only the noise floor left
+        let paths = try h.meeting("2026-10-30T12-46-50", mic: raw, system: track(10, loud: [(7.0, 8.2)], seed: 2), raw: true,
+                                  start: "2026-10-30T12:46:50+01:00")
+        try Wav16.write(track(10, loud: [(0.5, 2.0)]), rate: 16_000, to: paths.micWav)  // what the live worker heard
+        try Data("[\(seg(0.5, 2.0, "said near the muted user"))]".utf8).write(to: paths.micSegments)
+        try MicMuted.write(.init(pending: false, late: [0.4...2.1]), folder: paths.folder)
+        let engine = fake(#"{"transcribe": {"mic.wav": [], "system.wav": [\#(seg(7.0, 8.2, "Agreed, ship it.", words: true))]}}"#)
+        #expect(try await Pipeline.process(paths.folder, h.setup(engine), notes: false) == 0)
+        #expect(h.said.contains("Redoing the mic track: 1 muted stretch(es) were silenced after the live worker read them"))
+        #expect(readJSON(paths.micSegments) == .array([]))
+        #expect(!(readJSON(paths.transcriptJson)?.arrayValue ?? []).contains { $0["text"] == .string("said near the muted user") })
+        #expect((try Wav16.read(paths.micWav).map { abs(Int($0)) }.max() ?? 0) < 200)
+    }
+
+    @Test func micMutedWaitsWhilePending() throws {
+        let t = Temp(); defer { t.remove() }
+        try MicMuted.write(.init(pending: true, late: []), folder: t.url)
+        var now = 0.0, sleeps = 0
+        let folder = t.url
+        let state = MicMuted.settled(folder, clock: { now }, sleep: { s in
+            now += s; sleeps += 1
+            if sleeps == 3 { try? MicMuted.write(.init(pending: false, late: [1...2]), folder: folder) }
+        })
+        #expect(state == MicMuted.State(pending: false, late: [1...2]) && sleeps == 3)
+        try MicMuted.write(.init(pending: true, late: []), folder: t.url)
+        now = 0
+        #expect(MicMuted.settled(folder, clock: { now }, sleep: { now += $0 })?.pending == true && now >= MicMuted.waitSeconds)
+        #expect(MicMuted.settled(t.file("none")) == nil)
+    }
+
     @Test func test_mic_language_follows_system_track_when_auto() async throws {
         // The engine's Parakeet detects no language; one the live worker found (language.txt) is the mic's.
         let t = Temp(); defer { t.remove() }

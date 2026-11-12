@@ -40,7 +40,9 @@ public struct Trigger: Sendable {
         app = nil; switchedSince = nil
     }
 
-    public mutating func update(now: Double, active: Bool, app: CallApp? = nil) -> [TriggerAction] {
+    /// `ended`: the recorded call's app says the user left it (Slack's huddle controls are gone): no
+    /// grace then, the grace being for a call app that lets go of its audio for a moment.
+    public mutating func update(now: Double, active: Bool, app: CallApp? = nil, ended: Bool = false) -> [TriggerAction] {
         switch state {
         case .blocked:
             if !active { state = .idle; activeSince = nil }
@@ -69,7 +71,7 @@ public struct Trigger: Sendable {
         }
         switchedSince = nil
         if releasedSince == nil { releasedSince = now }
-        if now - releasedSince! >= grace {
+        if ended || now - releasedSince! >= grace {
             state = .idle; activeSince = nil
             stoppedBecause = .callEnded
             return [.stop]

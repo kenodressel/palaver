@@ -101,6 +101,19 @@ public final class TrackWriter: @unchecked Sendable {
         }
     }
 
+    /// Overwrites frames `range` that are already written with silence (a mute told late); what lies
+    /// past the end is left to later writes. False when the write failed.
+    @discardableResult
+    public func silence(_ range: Range<Int>) -> Bool {
+        lock.withLock {
+            guard !closed else { return false }
+            let lo = max(0, range.lowerBound), hi = min(frames, range.upperBound)
+            guard lo < hi else { return true }
+            do { try writeZeros(frames: hi - lo, at: lo) } catch { return false }
+            return true
+        }
+    }
+
     /// Truncates to `total` frames, patches the header and renames to the final path.
     public func finalize(toFrames total: Int) throws {
         try lock.withLock {

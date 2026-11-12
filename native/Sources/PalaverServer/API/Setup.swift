@@ -73,7 +73,7 @@ public enum SetupAPI {
     /// `_feature_default`: a feature's choice when never made in Settings: config.toml's [notes].engine for the language
     /// models, local for transcription.
     static func featureDefault(_ app: ServerApp, _ feature: String, _ reg: SetupRegistry) -> String {
-        reg.features[feature].map { Py.same($0, LM) } == true ? ModelChoice.defaultChoice(feature: feature, config: app.config)
+        reg.features[feature].map { Py.same($0, LM) } == true ? ModelChoice.defaultChoice(feature: feature, config: app.config, stores: app.stores)
             : LOCAL
     }
 
@@ -209,7 +209,7 @@ public enum SetupAPI {
         let cloud: [JSONValue] = ModelChoice.features.map { f in
             // The coach's own choice too (#41): not the assistant's to set, but where its text goes.
             let choice = current.choices[f.id] ?? ModelChoice.choice(
-                feature: f.id, default: ModelChoice.defaultChoice(feature: f.id, config: app.config), stores: app.stores)
+                feature: f.id, default: ModelChoice.defaultChoice(feature: f.id, config: app.config, stores: app.stores), stores: app.stores)
             return .object([("feature", .string(f.id)), ("label", .string(f.label)), ("choice", .string(choice))])
         }
         let name = profile["name"]?.stringValue ?? ""

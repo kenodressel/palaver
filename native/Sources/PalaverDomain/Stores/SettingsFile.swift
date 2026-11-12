@@ -17,6 +17,8 @@ public struct SettingsValues: Equatable, Sendable {
     /// Each nudge also as a notification, without sound (#19).
     public var nudgeNotify = true
     public var checkUpdates = true
+    /// The microphone is not kept while muted in the recorded call.
+    public var respectCallMute = true
 
     public init() {}
 
@@ -26,6 +28,7 @@ public struct SettingsValues: Equatable, Sendable {
         ("nudge_talk_share", \.nudgeTalkShare), ("nudge_monologue", \.nudgeMonologue),
         ("nudge_quiet_invitee", \.nudgeQuietInvitee), ("nudge_pace", \.nudgePace),
         ("nudge_fillers", \.nudgeFillers), ("nudge_notify", \.nudgeNotify), ("check_updates", \.checkUpdates),
+        ("respect_call_mute", \.respectCallMute),
     ]
 
     /// `settings.load`: a key that is missing or not a bool takes `defaults`' value.

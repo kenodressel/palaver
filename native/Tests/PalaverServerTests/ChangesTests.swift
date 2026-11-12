@@ -152,6 +152,56 @@ private func withEvents(_ f: Fixture) throws -> (CalendarEvent, CalendarEvent, C
         #expect(throws: NotFound.self) { try ChangesAPI.setMeetingEvent(f.app, id: MEETING, key: "nope|2026-10-27") }
     }
 
+    /// #28: a 1:1 held hours before its slot, linked by time to the event it overlapped. Picked by hand, the far
+    /// event counts as any choice of the user's: stored as theirs, its invitees offered for the voices, what was
+    /// prepared for it brought along; processing leaves it. The event it replaced is said no to once, which makes no
+    /// rule, and the pick teaches no time: a recording in the 1:1's slot is linked to it, sure, and one at this
+    /// recording's time is not.
+    @Test func aFarEventPickedByHandIsLinkedLikeAnyChoice() throws {
+        let start = try PyDateTime.parse("2026-10-27T16:03:07+01:00")
+        let weekly = CalendarEvent(title: "Contoso weekly", start: try! start.adding(seconds: -180), end: try! start.adding(seconds: 3420),
+                                   attendees: [Attendee(name: "Jana Berger", email: "jana@contoso.com")], uid: "weekly", series: true)
+        let slot = try PyDateTime.parse("2026-10-27T19:00:00+01:00")
+        let oneOnOne = CalendarEvent(title: "1:1 Lena Vogt", start: slot, end: try! slot.adding(seconds: 1800),
+                                     attendees: [Attendee(name: "Timo Strauß", email: "timo@contoso.com", isSelf: true),
+                                                 Attendee(name: "Lena Vogt", email: "lena@contoso.com")],
+                                     uid: "one-on-one", series: true)
+        let calendar: CalendarProvider = { s, e in [weekly, oneOnOne].filter { $0.start.date < e && $0.end.date > s } }
+        let f = try Fixture(calendar: calendar)
+        try CalendarEvents.save(f.paths, weekly, Link("event", weekly.title, "calendar", 0.9, "time match"))
+        let store = ProjectStore(path: f.stores.projects)
+        let pid = try store.create("Contoso onboarding")
+        try store.save()
+        try Prep.choose(oneOnOne, pid, stores: f.stores)
+
+        let offered = try EventsAPI.meetingEvents(app: f.app, id: MEETING)
+        #expect(offered.map { $0["key"] } == [.string("weekly|2026-10-27"), .string("one-on-one|2026-10-27")])
+        try ChangesAPI.setMeetingEvent(f.app, id: MEETING, key: "one-on-one|2026-10-27")
+
+        #expect(CalendarEvents.load(f.paths).map { EventsAPI.same($0, oneOnOne) } == true)
+        #expect(CalendarEvents.loadLink(f.paths)?.byYou == true)
+        let page = try f.page()
+        #expect(page["calendar"]?["title"] == .string("1:1 Lena Vogt"))
+        #expect(page["calendar"]?["invited"] == .strings(["Lena Vogt"]))
+        #expect(ProjectStore(path: f.stores.projects).ofMeeting(MEETING)[pid] != nil)
+        #expect(try EventsAPI.meetingEvents(app: f.app, id: MEETING).first { $0["current"] == .bool(true) }?["key"]
+                == .string("one-on-one|2026-10-27"))
+        // Processing again keeps the user's choice.
+        let (s, e) = try CalendarEvents.recordingSpan(f.paths)
+        _ = try CalendarEvents.attach(f.paths, provider: calendar, start: s, end: e, stores: f.stores)
+        #expect(CalendarEvents.load(f.paths).map { EventsAPI.same($0, oneOnOne) } == true)
+
+        let evidence = Evidence(path: f.stores.attributions, outputDir: f.out)
+        #expect(evidence.rules().isEmpty && !evidence.neverByTime(weekly) && !evidence.neverByTime(oneOnOne))
+        #expect(evidence.eventRejections(weekly) == 1 && evidence.eventRejections(oneOnOne) == 0)
+        let inTheSlot = CalendarEvents.decide([weekly, oneOnOne], try! slot.adding(seconds: 60), try! slot.adding(seconds: 1500),
+                                              evidence: evidence)
+        #expect(inTheSlot.event.map { EventsAPI.same($0, oneOnOne) } == true && inTheSlot.link?.confidence == CalendarEvents.TIME_MATCH)
+        let atThisTime = CalendarEvents.decide([oneOnOne], try! start.adding(seconds: 86_400), try! start.adding(seconds: 86_400 + 1200),
+                                               evidence: evidence)
+        #expect(atThisTime.event == nil)
+    }
+
     @Test func test_http_event_change_to_none_can_be_undone_exactly() throws {
         var stored = ""
         let s = try TestServer(meetings: { out in
@@ -269,6 +319,28 @@ private func withEvents(_ f: Fixture) throws -> (CalendarEvent, CalendarEvent, C
         #expect(CalendarEvents.loadQuestion(f.paths) != nil && CalendarEvents.load(f.paths) == nil)
         try ChangesAPI.setMeetingEvent(f.app, id: MEETING, key: nil)  // none of these: the same
         #expect(CalendarEvents.dismissed(f.paths))
+    }
+
+    /// #31: the answer does not wait for every meeting. The meeting's voices are recognized with the new invitees
+    /// before it; every other meeting's follow (`Background.followUp`), and an undo waits for them.
+    @Test func theAnswerRecognizesTheMeetingAndEveryOtherOneFollows() throws {
+        let oneOnOne = CalendarEvent(title: "1:1 Lena Vogt", start: C0, end: try! C0.adding(seconds: 1800),
+                                     attendees: [Attendee(name: "Lena Vogt", email: "lena@contoso.com")], uid: "one-on-one")
+        let f = try Fixture(calendar: { s, e in [oneOnOne].filter { $0.start.date < e && $0.end.date > s } }, meeting: false)
+        try VoiceBank(directory: f.stores.voices).add("Lena Vogt", [1, 0, 0], source: "earlier:SPEAKER_00")
+        // Her voice in a poor room: like enough only to an invitee.
+        let held = try recording(f.out, C0, 60, [("SPEAKER_00", 1, 50, [0.7, 0.714, 0])])
+        let later = try recording(f.out, try! C0.adding(seconds: 86_400), 60, [("SPEAKER_00", 1, 50, [1, 0.05, 0])])
+        #expect(!exists(held.speakersAuto) && !exists(later.speakersAuto))
+
+        let key = try #require(try EventsAPI.meetingEvents(app: f.app, id: held.id).first?["key"]?.stringValue)
+        let token = try ChangesAPI.setMeetingEvent(f.app, id: held.id, key: key)
+        #expect(read(held.speakersAuto)?["SPEAKER_00"]?["name"] == .string("Lena Vogt"))  // in the answer
+        #expect(f.app.background.settle(30))
+        #expect(read(later.speakersAuto)?["SPEAKER_00"]?["name"] == .string("Lena Vogt"))  // after it
+
+        _ = try f.undo(token)
+        #expect(f.app.background.settle(0) && CalendarEvents.load(held) == nil)
     }
 
     @Test func test_a_user_chosen_event_wins_over_a_question_when_joining() throws {

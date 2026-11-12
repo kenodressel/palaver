@@ -110,7 +110,8 @@ final class PalaverApp: NSObject, NSApplicationDelegate {
             log: { level, message in log.line(level, message, logger: "palaver.daemon") },
             testRecorder: testRecorder, helpers: helpers,
             restartWeb: { later.web?.restart() },
-            refresh: { later.refresh?() })
+            refresh: { later.refresh?() },
+            askAccessibility: { AXTeamsMuteButton.askForPermission() })
         pids.daemon = core.daemon
         let daemon = core.daemon
 

@@ -82,3 +82,13 @@ private func runApps(_ t: inout Trigger, _ timeline: [(Double, CallApp?)]) -> [S
     t.reset()
     #expect(t.state == .idle && t.app == nil)
 }
+
+@Test func aCallTheAppSaysWasLeftStopsWithoutTheGrace() {
+    var t = Trigger(startAfter: 4, grace: 5, maxSession: 3600)
+    _ = run(&t, [(0, true), (4, true)])
+    #expect(t.update(now: 10, active: false, ended: false).isEmpty)
+    #expect(t.update(now: 11, active: false, ended: true) == [.stop] && t.stoppedBecause == .callEnded)
+    var u = Trigger(startAfter: 4, grace: 5, maxSession: 3600)
+    _ = run(&u, [(0, true), (4, true)])
+    #expect(u.update(now: 10, active: true, ended: true).isEmpty)  // still in the call: no stop
+}

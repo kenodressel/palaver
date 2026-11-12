@@ -281,8 +281,8 @@ func fakeLiveWorker(_ folder: URL) throws -> Foundation.Process {
         let f = try Fixture()
         try pageMeeting(f.out)
         guard case .object(let fields) = try f.page() else { Issue.record("no object"); return }
-        #expect(fields.map(\.0) == ["id", "title", "title_from", "calendar", "event_question", "start", "duration", "status",
-                                    "finishing", "untranscribed", "notes", "notes_stale", "notes_stale_reason",
+        #expect(fields.map(\.0) == ["id", "title", "title_from", "calendar", "event_question", "calendar_on", "start", "duration",
+                                    "status", "finishing", "untranscribed", "notes", "notes_stale", "notes_stale_reason",
                                     "notes_from_my_notes", "my_notes_revision", "speakers", "transcript", "has_audio",
                                     "audio_deleted", "reviewed", "local_only", "imported", "transcribed_by", "failure",
                                     "neighbours", "cut_suggestion", "silence", "shared", "shared_suggestion", "removed",

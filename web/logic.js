@@ -100,15 +100,6 @@ export function retitledText(m, shown) {
 // Two titles that say the same, whatever their case and the spaces around them.
 export const sameTitle = (a, b) => String(a ?? "").trim().toLocaleLowerCase() === String(b ?? "").trim().toLocaleLowerCase();
 
-// The quiet line under the title when the calendar calls the meeting otherwise
-// (a title of one's own, the sender's, the notes'). None while the event chip
-// asks about the event: it names it already.
-export function calendarHint(m) {
-  const event = m.calendar?.title;
-  if (!event || sameTitle(event, m.title) || eventLinkView(m)) return null;
-  return `Calendar: ${event}`;
-}
-
 // The meeting to show once ``id`` is gone from ``list``: the one below it,
 // or the one above when it was the last; null when none is left.
 export function nextAfter(list, id) {
@@ -914,17 +905,32 @@ export function yourLink(kind, target) {
     label: `${KIND_TEXT[kind] || kind}: ${target} (you)` };
 }
 
-// What the event chip of a meeting shows: an event Palaver is unsure of and
-// why, with ✓ and Change…, or the question which event it was, when several
-// overlapped; null when neither. A sure event is no chip: the title or the
-// quiet "Calendar:" line names it, and About this recording says how it was linked.
+// What the event line under the date shows (#30): the event the recording is
+// linked to, with Change…, also when Palaver is sure of it; an unsure one is
+// dotted, says why and has ✓ too. The question which event it was, when several
+// overlapped. "No event" with Pick…, while the calendar is on; null without a
+// calendar and without an event.
 export function eventLinkView(m) {
   if (m.event_question?.choices?.length) {
     return { kind: "question", why: m.event_question.reason, choices: m.event_question.choices };
   }
-  const link = m.calendar?.link;
-  if (!link?.unsure) return null;
-  return { kind: "link", title: m.calendar.title, why: linkWhy(link), unsure: true, canConfirm: true };
+  if (m.calendar?.title) {
+    const unsure = !!m.calendar.link?.unsure;
+    return { kind: "link", title: m.calendar.title, why: unsure ? linkWhy(m.calendar.link) : null, unsure, canConfirm: unsure };
+  }
+  return m.calendar_on ? { kind: "none" } : null;
+}
+
+// The event picker offers the events of the recording's day and the days
+// around it (#28), overlapping ones first: past this many, a title filter.
+export const EVENT_FILTER_AFTER = 8;
+
+// The picker's events whose title has ``query`` in it, in their order;
+// case and accents don't count ("zurich" finds "Zürich").
+export function eventPickerChoices(events, query = "") {
+  const fold = (s) => String(s || "").normalize("NFD").replace(/\p{M}/gu, "").toLocaleLowerCase();
+  const q = fold(query).trim();
+  return q ? events.filter((e) => fold(e.title).includes(q)) : events;
 }
 
 // The toast after the event was chosen: ``key`` null is "none of these",

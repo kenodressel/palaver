@@ -157,7 +157,8 @@ public enum ServeMain {
                             staticDir: o.staticDir.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? ServerApp.defaultStaticDir,
                             freeMemoryGB: ServerApp.freeMemory(env: env), recording: recording, calendar: calendar, probe: probe,
                             helpers: helpers, nextQuestion: nextQuestion, provider: provider, report: report,
-                            openURL: ServerApp.opener(env: env), notifyState: env["PALAVER_NOTIFY_STATE"])
+                            openURL: ServerApp.opener(env: env), notifyState: env["PALAVER_NOTIFY_STATE"],
+                            accessibilityState: env["PALAVER_AX_STATE"])
         // Claude's MCP entries start `bin/palaver` with these options; `claude` is looked up in this environment.
         app.mcpSetup = McpSetup(stores: stores, executable: McpSetup.executable(), options: forwarded(o), env: env)
         #if DEBUG

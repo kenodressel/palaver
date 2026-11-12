@@ -17,6 +17,11 @@ public final class GrowingTrack {
         part = URL(fileURLWithPath: final.path + ".part")
     }
 
+    /// Whether the track is there at all (being written, or finished).
+    public var exists: Bool {
+        [part, final].contains { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
     /// Samples written so far: the `.part` file's while it exists, else the final file's; 0 when neither does.
     public func available() -> Int {
         for url in [part, final] {  // a .part renamed to the final name in between: the final one

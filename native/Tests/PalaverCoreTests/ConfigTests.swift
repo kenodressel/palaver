@@ -9,7 +9,7 @@ private let home = ProcessInfo.processInfo.environment["PALAVER_HOME"] ?? "<PALA
     let c = Config.load(URL(fileURLWithPath: "/nonexistent/config.toml"), environment: [:])
     #expect(c.outputDir.path == home + "/Meetings/Recordings")
     #expect(c.retentionDays == 14 && c.maxSessionHours == 4 && c.gracePeriodSeconds == 5)
-    #expect(c.recordSlack && c.processingLive && c.notesEnabled && c.calendarEnabled)
+    #expect(c.recordSlack && c.processingLive && c.notesEnabled && c.calendarEnabled && c.respectCallMute)
     #expect(c.notesEngine == "local" && c.notionMode == "page" && c.userName == "User" && c.notesModel == "sonnet")
     #expect(!c.notionAutoSync)  // no token: nothing to upload to
     #expect(c.memory.isEmpty)
@@ -34,6 +34,7 @@ private let home = ProcessInfo.processInfo.environment["PALAVER_HOME"] ?? "<PALA
         max_session_hours = 6
         grace_period_seconds = 20
         slack = false
+        respect_call_mute = false
 
         [processing]
         live = false
@@ -56,7 +57,7 @@ private let home = ProcessInfo.processInfo.environment["PALAVER_HOME"] ?? "<PALA
     #expect(c.notionParentPageId == "abc-123" && c.notionDatabaseId == "db-1")
     #expect(c.outputDir.path == home + "/Meetings/Rec")
     #expect(c.retentionDays == 7 && c.maxSessionHours == 6 && c.gracePeriodSeconds == 20)
-    #expect(!c.recordSlack && !c.processingLive && !c.notesEnabled && !c.calendarEnabled)
+    #expect(!c.recordSlack && !c.processingLive && !c.notesEnabled && !c.calendarEnabled && !c.respectCallMute)
     #expect(c.notesEngine == "claude" && c.notesLocalModel == "org/some-model" && c.notesModel == "opus")
     #expect(c.memory == ["live_gb": 5, "notes_gb": 9.5])
 }
@@ -158,6 +159,14 @@ private func settingsFile(_ json: String?) throws -> URL {
     #expect(s.audioDays == 30 && s.userName == "Anna Huber")
     #expect(Settings(url: try settingsFile(#"{"audio_days": 5, "user_name": " "}"#)).audioDays == 0)
     #expect(Settings(url: try settingsFile(#"{"audio_days": true}"#)).audioDays == 0)
+}
+
+@Test func callMuteFollowsConfigUntilSettingsSaysOtherwise() throws {
+    #expect(Settings(url: try settingsFile(nil)).respectCallMute)
+    var c = Config(); c.respectCallMute = false
+    #expect(!Settings(url: try settingsFile(nil), defaults: c).respectCallMute)
+    #expect(Settings(url: try settingsFile(#"{"respect_call_mute": true}"#), defaults: c).respectCallMute)
+    #expect(!Settings(url: try settingsFile(#"{"respect_call_mute": false}"#)).respectCallMute)
 }
 
 @Test func liveProcessingFollowsConfigUntilSettingsSaysOtherwise() throws {

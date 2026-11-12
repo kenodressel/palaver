@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { personHue, personColor, laneColors, meetingPeople, attendeeTokens, ownerTokens, nameMarks, lineMarks,
-  fixableWord, projectView, aboutLines, calendarHint, eventLinkView, sameTitle }
+  fixableWord, projectView, aboutLines, eventLinkView, sameTitle }
   from "../../web/logic.js";
 
 // --- the colour of a person ------------------------------------------------------
@@ -192,7 +192,7 @@ test("no suggestions: the picker lists the projects not yet on the meeting", () 
   assert.deepEqual(v.picker.map((p) => p.name), ["Data Platform", "Internal", "Northwind Terminal", "Litware"]);
 });
 
-// --- the event: a chip when it asks, a quiet line when it differs -----------------------------
+// --- the event: always on its line under the date (#30) -----------------------------
 
 const event = (title, link = { source: "calendar", reason: "time match", unsure: false, label: `Event: ${title} (time match)` }) =>
   ({ title, attendees: [], link });
@@ -202,28 +202,15 @@ test("titles are the same when they differ only in case and spaces", () => {
   assert.ok(!sameTitle("Foundry Pitch", "Pitch"));
 });
 
-test("the event the title already says is not shown again", () => {
-  const m = { title: "foundry pitch", title_from: "notes", calendar: event("Foundry Pitch") };
-  assert.equal(eventLinkView(m), null);
-  assert.equal(calendarHint(m), null);
-});
-
-test("an event called otherwise shows as a quiet line, whatever made the title", () => {
-  for (const from of ["you", "imported", "notes"]) {
-    const m = { title: "Budget with Anna", title_from: from, calendar: event("Weekly sync") };
-    assert.equal(calendarHint(m), "Calendar: Weekly sync");
-    assert.equal(eventLinkView(m), null);
+test("the event shows on its line whatever the title says, sure or not", () => {
+  for (const title of ["foundry pitch", "Budget with Anna"]) {
+    const v = eventLinkView({ title, title_from: "you", calendar: event("Foundry Pitch") });
+    assert.deepEqual([v.kind, v.title, v.unsure], ["link", "Foundry Pitch", false]);
   }
-});
-
-test("an event Palaver is unsure of stays a chip that asks, with no quiet line beside it", () => {
   const link = { source: "calendar", reason: "time match, 2 events overlapped", unsure: true, confidence: 0.6, label: "x" };
-  const m = { title: "Budget", title_from: "you", calendar: event("Weekly sync", link) };
-  assert.equal(eventLinkView(m).kind, "link");
-  assert.equal(calendarHint(m), null);
+  assert.equal(eventLinkView({ title: "Budget", calendar: event("Weekly sync", link) }).unsure, true);
   const asking = { title: "Budget", calendar: null, event_question: { reason: "2 events", choices: [{ key: "k", title: "A" }] } };
   assert.equal(eventLinkView(asking).kind, "question");
-  assert.equal(calendarHint(asking), null);
 });
 
 // --- About this recording -----------------------------------------------------------------

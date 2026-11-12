@@ -51,13 +51,26 @@ public enum Inference {
         let embeddings: PyDict<[Double]>
         let talk: PyDict<Double>
         /// Invitees as named elsewhere; nil: no event, or a room on it.
-        let candidates: [String]?
+        var candidates: [String]?
+        /// The invitees as the event names them (what `candidates` resolves).
+        var invitees: [String]?
         /// label → (name, "you" | "voice" | "imported")
         let fixed: PyDict<(String, String)>
         /// Labels whose recognized or inferred name the user rejected.
         let blocked: Set<ScalarKey>
         /// label → casefolded names it is not (each once).
         let rejected: PyDict<[String]>
+
+        /// The same meeting with its invitees resolved to `known` (#31: the files are read once, not again for the
+        /// names the first look found).
+        func knowing(_ known: [String]) -> Meeting {
+            var m = self
+            m.candidates = invitees.map { $0.map { name in
+                if let resolved = CalendarEvents.resolve(name, known), !resolved.isEmpty { return resolved }
+                return name
+            } }
+            return m
+        }
 
         func isRejected(_ label: String, _ name: String) -> Bool {
             let key = Py.casefold(name)
@@ -120,14 +133,11 @@ public enum Inference {
             }
             for (label, given) in manual where !Py.same(given, label) && merges[label] == nil { fixed[label] = (given, "you") }
             let event = CalendarEvents.load(paths)
-            var candidates: [String]?
+            var invitees: [String]?
             // Several people on one voice (#56): any invitee may have been among them, so who is left by elimination is
             // not known.
             if let event, !event.attendees.contains(where: \.isRoom), !SharedMic.marked(paths) {
-                candidates = CalendarEvents.candidates(event, userName: userName).map { a in
-                    if let resolved = CalendarEvents.resolve(a.name, known), !resolved.isEmpty { return resolved }
-                    return a.name
-                }
+                invitees = CalendarEvents.candidates(event, userName: userName).map(\.name)
             }
             // Noise: as if nobody spoke. Several people on one voice (#56): no one to infer.
             let ignored = Set(Speakers.loadIgnored(paths).map(ScalarKey.init)).union(SharedMic.sharedLabels(paths))
@@ -143,7 +153,8 @@ public enum Inference {
             fixed = PyDict(fixed.filter { !ignored.contains(ScalarKey($0.key)) }.map { ($0.key, $0.value) })
             let title = Titles.resolve(paths, event: .known(event), stores: stores).title
             out.append(Meeting(id: name, title: (title?.isEmpty ?? true) ? name : title!, embeddings: embeddings, talk: talk,
-                               candidates: candidates, fixed: fixed, blocked: blocked, rejected: notNames))
+                               candidates: nil, invitees: invitees, fixed: fixed, blocked: blocked, rejected: notNames)
+                .knowing(known))
         }
         return out
     }
@@ -340,7 +351,8 @@ public enum Inference {
         for name in meetings.flatMap({ $0.fixed.values.map(\.0) }) + (try bank.names().keys) where seen.insert(ScalarKey(name)).inserted {
             names.append(name)
         }
-        meetings = try loadMeetings(outputDir, userName: userName, known: Py.stableSorted(names, by: Py.less), stores: stores)
+        let known = Py.stableSorted(names, by: Py.less)
+        meetings = meetings.map { $0.knowing(known) }
         let result = try infer(meetings)
         var changed = 0
         for m in meetings {

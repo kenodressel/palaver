@@ -14,7 +14,7 @@ public final class ServerApp: @unchecked Sendable {
     public let cliOptions: [String]
     public let staticDir: URL
     public let stores: StorePaths
-    /// The defaults for what settings.json leaves out (`record_slack`, `live_processing` from config.toml).
+    /// The defaults for what settings.json leaves out (`record_slack`, `live_processing`, `respect_call_mute` from config.toml).
     public let settingsDefaults: SettingsValues
     /// The language model's jobs on disk (#57), `<outputDir>/.jobs`: a restarted server finds them.
     public let jobs: URL
@@ -38,6 +38,8 @@ public final class ServerApp: @unchecked Sendable {
     public let openURL: (String) -> Void
     /// `$PALAVER_NOTIFY_STATE`: the file the app's launcher writes whether macOS lets Palaver notify into.
     public let notifyState: String?
+    /// `$PALAVER_AX_STATE`: the file the app writes whether it may use Accessibility into (AccessibilityStateFile).
+    public let accessibilityState: String?
     /// (start, end) -> events, for meetings still to come; nil when the calendar is turned off.
     public let calendar: CalendarProvider?
     /// The setup assistant's look at this Mac, its downloads (onboarding.Probe): `MacProbe` unless one is given.
@@ -92,7 +94,8 @@ public final class ServerApp: @unchecked Sendable {
                 probe: SetupProbe? = nil, helpers: HelperRunner? = nil,
                 nextQuestion: NextQuestionAsker? = nil, provider: ProviderHelper? = nil,
                 report: ReportMaker? = nil, speechHere: (() -> Bool)? = nil, openURL: @escaping (String) -> Void = ServerApp.open,
-                notifyState: String? = ProcessInfo.processInfo.environment["PALAVER_NOTIFY_STATE"]) {
+                notifyState: String? = ProcessInfo.processInfo.environment["PALAVER_NOTIFY_STATE"],
+                accessibilityState: String? = ProcessInfo.processInfo.environment["PALAVER_AX_STATE"]) {
         self.outputDir = outputDir
         name = userName
         self.config = config
@@ -105,6 +108,7 @@ public final class ServerApp: @unchecked Sendable {
         } else {
             var s = SettingsValues()
             s.recordSlack = config.recordSlack
+            s.respectCallMute = config.respectCallMute
             s.liveProcessing = config.processingLive
             self.settingsDefaults = s
         }
@@ -123,6 +127,7 @@ public final class ServerApp: @unchecked Sendable {
         self.speechHere = speechHere ?? { probe.speechHere() }
         self.openURL = openURL
         self.notifyState = notifyState
+        self.accessibilityState = accessibilityState
         jobs = ModelJobs.root(outputDir)
         mcpSetup = McpSetup(stores: stores, executable: McpSetup.executable(), options: cliOptions)
         background.app = self

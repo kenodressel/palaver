@@ -84,7 +84,7 @@ def test_about_this_recording_holds_what_the_recording_says(page, app_server):
     open_meeting(page, app_server, A)
     head = page.locator("#main .head")
     expect(head).not_to_contain_text("Teams call detected")
-    expect(head.locator(".mcp-read, .event-link")).to_have_count(0)
+    expect(head.locator(".mcp-read")).to_have_count(0)
 
     section = about(page)
     expect(section).not_to_have_attribute("open", "")  # folded away
@@ -118,8 +118,7 @@ def test_a_title_other_than_the_event_shows_the_event_quietly(page, app_server):
     _invite(app_server, title="Foundry Pitch")
     (app_server.root / A / "title.json").write_text(json.dumps({"title": "Factory pitch with Anna"}))
     open_meeting_titled(page, app_server, "Factory pitch with Anna")
-    expect(page.locator("#main .title-hint")).to_have_text("Calendar: Foundry Pitch")
-    expect(page.locator("#main .event-link")).to_have_count(0)
+    expect(page.locator("#main .event-link .link-title")).to_have_text("Foundry Pitch")
 
 
 def open_meeting_titled(page, served, title: str) -> None:

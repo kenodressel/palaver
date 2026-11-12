@@ -211,7 +211,8 @@ private func samples(_ n: Int, _ f: (Int) -> Int16) -> [Int16] { (0..<n).map(f) 
     }
 
     /// The read half of test_choosing_the_calendar_event_of_a_meeting and test_a_rule_shows_in_the_picker_…: the
-    /// calendar's events around the recording, the stored one marked current, by start and title.
+    /// calendar's events of the recording's day and the days around it, the stored one marked current, the
+    /// overlapping ones first by start and title, then the others.
     @Test func theChoicesAreTheCalendarsAroundTheRecordingAndTheStoredOne() throws {
         let start = try PyDateTime.parse("2026-10-27T16:03:07+01:00")
         func event(_ title: String, _ minutes: Double, _ uid: String, from: Double = 0, allDay: Bool = false) -> CalendarEvent {
@@ -227,11 +228,15 @@ private func samples(_ n: Int, _ f: (Int) -> Int16) -> [Int16] { (0..<n).map(f) 
         try CalendarEvents.save(f.paths, planned)
         let found = try f.events()
         #expect(found.map { [$0["title"]!, $0["current"]!] } == [[.string("Ad hoc"), .bool(false)],
-                                                                 [.string("Northwind Zwischenstand"), .bool(true)]])
-        #expect(window.map { [$0.0, $0.1] } == [try! start.adding(seconds: -45 * 60).date, try! start.adding(seconds: 20 + 45 * 60).date])
+                                                                 [.string("Northwind Zwischenstand"), .bool(true)],
+                                                                 [.string("Later"), .bool(false)]])
+        #expect(window.map { [$0.0, $0.1] } == [try! PyDateTime.parse("2026-10-26T00:00:00+01:00").date,
+                                                try! PyDateTime.parse("2026-10-29T00:00:00+01:00").date])
         #expect(found[0] == .object([("key", .string("u2|2026-10-27")), ("title", .string("Ad hoc")),
                                      ("start", .string("2026-10-27T16:03:07+01:00")), ("end", .string("2026-10-27T16:13:07+01:00")),
-                                     ("invited", .int(1)), ("current", .bool(false)), ("rejected", .int(0)), ("rule", .null)]))
+                                     ("invited", .int(1)), ("current", .bool(false)), ("rejected", .int(0)), ("rule", .null),
+                                     ("overlaps", .bool(true))]))
+        #expect(found[2]["overlaps"] == .bool(false))
 
         let evidence = Evidence(path: f.app.stores.attributions, outputDir: f.out)
         evidence.rejectEvent(planned, "x1")
@@ -241,6 +246,35 @@ private func samples(_ n: Int, _ f: (Int) -> Int16) -> [Int16] { (0..<n).map(f) 
         #expect(ruled["rejected"] == .int(2))
         #expect(ruled["rule"] == .object([("series", .string("u1")),
                                           ("text", .string("Not linked by time any more: Northwind Zwischenstand — rejected 2×"))]))
+    }
+
+    /// A call held hours before its slot (#28): the events of the recording's day, the day before and the day after
+    /// are offered, the overlapping ones first, then the others by their distance from the recording, whichever side
+    /// they are on; all-day events and those further away are not.
+    @Test func eventsOfTheDayAndTheDaysAroundItNearestFirst() throws {
+        func event(_ title: String, _ at: String, _ minutes: Double, allDay: Bool = false) -> CalendarEvent {
+            let start = try! PyDateTime.parse(at)
+            return CalendarEvent(title: title, start: start, end: try! start.adding(seconds: minutes * 60),
+                                 attendees: [Attendee(name: "Timo Strauß", email: "timo@contoso.com")], allDay: allDay,
+                                 uid: Py.casefold(title).replacingOccurrences(of: " ", with: "-"))
+        }
+        let calendar = [
+            event("Yesterday review", "2026-10-26T15:00:00+01:00", 60),
+            event("Contoso standup", "2026-10-27T09:00:00+01:00", 15),
+            event("Overlapping", "2026-10-27T16:00:00+01:00", 30),
+            event("1:1 Timo Strauß", "2026-10-27T19:00:00+01:00", 30),  // the slot; the call was held at 16:03
+            event("Holiday", "2026-10-27T00:00:00+01:00", 1440, allDay: true),
+            event("Tomorrow kickoff", "2026-10-28T10:00:00+01:00", 60),
+            event("Too far", "2026-10-29T10:00:00+01:00", 60),
+            event("Last week", "2026-10-20T16:00:00+01:00", 60),
+        ]
+        // As EventKit answers: the events overlapping the window asked for.
+        let f = try Fixture(calendar: { s, e in calendar.filter { $0.start.date < e && $0.end.date > s } })
+        let found = try f.events()
+        #expect(found.compactMap { $0["title"]?.stringValue }
+                == ["Overlapping", "1:1 Timo Strauß", "Contoso standup", "Tomorrow kickoff", "Yesterday review"])
+        #expect(found.map { $0["overlaps"] } == [.bool(true), .bool(false), .bool(false), .bool(false), .bool(false)])
+        #expect(found[1]["key"] == .string("1:1-timo-strauss|2026-10-27"))  // the uid casefolded
     }
 
     /// Without a calendar (or one that fails), the stored event, or the ones asked about (calendar.json holds one or

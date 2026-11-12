@@ -110,9 +110,13 @@ public enum ReviewAPI {
         if lanes.isEmpty { return [] }
         let notes = Notes.load(paths).flatMap { $0.truthy ? $0 : nil } ?? .object([])
         guard notes.isObject else { throw PageError("'\(PyBody.typeName(notes))' object has no attribute 'get'") }
-        let guesses = Notes.backedNameGuesses(try MeetingsAPI.iterate(notes["speaker_names"] ?? .array([])),
-                                              try Speakers.withoutIgnored(paths, try MeetingsAPI.utterances(paths)),
-                                              glossary: Glossary.current(stores: app.stores))
+        // Only the guesses for these voices are shown: checking the others against the transcript is wasted (#29).
+        let asked = try MeetingsAPI.iterate(notes["speaker_names"] ?? .array([])).filter { guess in
+            guard case .object = guess, let label = guess["label"]?.stringValue else { return false }
+            return lanes.contains { Py.same($0, label) }
+        }
+        let guesses = asked.isEmpty ? [] : Notes.backedNameGuesses(asked, try Speakers.withoutIgnored(paths, try MeetingsAPI.utterances(paths)),
+                                                                   glossary: Glossary.current(stores: app.stores))
         return lanes.map { label in
             var longest: SpeakerTurn?
             for t in turns where Py.same(t.speaker, label) {

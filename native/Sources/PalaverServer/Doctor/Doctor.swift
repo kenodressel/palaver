@@ -62,7 +62,7 @@ public enum Doctor {
                                           databaseId: config.notionDatabaseId, probe: probe))
             }
             checks.append(checkSpeechModels(probe))
-            let notes = ModelChoice.memoryGB(feature: "notes", config: config, stores: stores)
+            let notes = ModelChoice.notesRunMemoryGB(config: config, stores: stores)
             checks.append(checkMemory(MemoryBudgets(config: config.memory, notes: notes), ramGB: probe.ramGB(),
                                       running: probe.runningMemory()))
         }

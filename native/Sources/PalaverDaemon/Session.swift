@@ -7,6 +7,7 @@ import Darwin
 import Foundation
 import PalaverCapture
 import PalaverCore
+import PalaverDomain
 
 /// An audio incident of the running recording (issue #50), as `audio_health` keeps it.
 public struct RecordingProblem: Equatable, Sendable {
@@ -38,9 +39,12 @@ public protocol RecordingSessionLike: AnyObject {
     var systemRate: Double? { get }
     var problems: [RecordingProblem] { get }
     var hints: [(kind: String, track: String)] { get }
+    /// The call app the user is muted in right now ("teams"), while the mic is not kept (CallMute).
+    var mutedIn: String? { get }
 }
 
 public extension RecordingSessionLike {
+    var mutedIn: String? { nil }
     var missing: [String] { [] }
     var systemSource: String? { nil }
     var micSource: String? { nil }
@@ -65,6 +69,11 @@ public protocol SessionCapture: AnyObject {
     var systemRate: Double? { get }
     var problems: [RecordingProblem] { get }
     var hints: [(kind: String, track: String)] { get }
+    var mutedIn: String? { get }
+}
+
+public extension SessionCapture {
+    var mutedIn: String? { nil }
 }
 
 /// The real capture: the recorder writing `mic_raw.wav(.part)` and `system.wav(.part)`, with its
@@ -72,18 +81,84 @@ public protocol SessionCapture: AnyObject {
 public final class LiveCapture: SessionCapture {
     public let recorder: CaptureRecorder
     public let monitor: AudioHealthMonitor
+    /// A call's mute (CallMute): its timeline gates the mic, its source sets it.
+    private let mute: (timeline: MuteTimeline, source: CallMuteSource)?
+    private let folder: URL
+    private let gatesMic: Bool
+    /// How often, after the stop, Teams' log is read while its late changes are waited for, and how long (nil:
+    /// the timeline's hold).
+    var afterStopPoll = 0.5
+    var afterStopWait: Double?
 
-    public init(folder: URL, log: SessionLog, sources: CaptureSources) {
+    /// `mute`: made with the session log's line writer (`CallMute.logger`), for a call recorded with
+    /// `respect_call_mute` on.
+    /// `gatesMic` false: the source is followed for what else it tells (a Slack huddle's end), the mic kept whole.
+    public init(folder: URL, log: SessionLog, sources: CaptureSources,
+                mute: ((@escaping @Sendable (String) -> Void) -> (MuteTimeline, CallMuteSource))? = nil,
+                gatesMic: Bool = true) {
         let logger = "palaver.capture_recorder"
+        self.folder = folder
         monitor = AudioHealthMonitor(problemsURL: folder.appendingPathComponent("audio_problems.json"),
                                      events: { level, event, fields in log.event(event, level: level, logger: logger, fields) })
+        let made = mute?({ text in
+            // Not gating, the timeline's mute stretches are no news: only the source's own lines.
+            if !gatesMic, text.hasPrefix("muted in ") { return }
+            log.message(text, level: text.hasPrefix("⚠") ? "WARNING" : "INFO", logger: "palaver.call_mute")
+        })
+        self.mute = made.map { (timeline: $0.0, source: $0.1) }
+        self.gatesMic = gatesMic
         recorder = CaptureRecorder(micURL: folder.appendingPathComponent("mic_raw.wav"),
                                    systemURL: folder.appendingPathComponent("system.wav"), sources: sources, monitor: monitor,
-                                   log: { log.message($0, level: $0.hasPrefix("⚠") ? "WARNING" : "INFO", logger: logger) })
+                                   log: { log.message($0, level: $0.hasPrefix("⚠") ? "WARNING" : "INFO", logger: logger) },
+                                   mute: gatesMic ? made?.0 : nil)
     }
 
-    public func start() throws { try recorder.start() }
-    public func stop() throws { try recorder.stop() }
+    public func start() throws {
+        mute?.source.start()
+        do { try recorder.start() } catch {
+            mute?.source.stop()
+            throw error
+        }
+    }
+
+    /// The source reads what is new first, so the last held audio is cut by it too. A source whose changes come
+    /// late (Teams' log) is followed on for its hold after the stop, on a thread of its own: what it tells then
+    /// silences the finished mic track, and `mic_muted.json` says `pending` until it is done (`process` waits).
+    public func stop() throws {
+        guard let mute else { try recorder.stop(); return }
+        mute.source.refresh()
+        do { try recorder.stop() } catch {
+            mute.source.stop()
+            mute.timeline.close()
+            throw error
+        }
+        let wait = mute.source.tellsLate ? afterStopWait ?? mute.timeline.delay : 0
+        let (recorder, folder, poll) = (self.recorder, self.folder, afterStopPoll)
+        let finish: @Sendable () -> Void = {
+            recorder.silenceAfterStop()
+            let late = recorder.lateSilenced
+            if !late.isEmpty || wait > 0 { try? MicMuted.write(.init(pending: false, late: late), folder: folder) }
+            mute.source.stop()
+            mute.timeline.close()
+        }
+        guard wait > 0 else { finish(); return }
+        try? MicMuted.write(.init(pending: true, late: recorder.lateSilenced), folder: folder)
+        let t = Thread {
+            let deadline = Date().addingTimeInterval(wait)
+            while Date() < deadline {
+                Thread.sleep(forTimeInterval: min(poll, max(0, deadline.timeIntervalSinceNow)))
+                mute.source.refresh()
+            }
+            finish()
+        }
+        t.name = "palaver.mute-after-stop"
+        t.start()
+    }
+
+    public var mutedIn: String? {
+        guard gatesMic else { return nil }
+        return mute.flatMap { $0.timeline.mutedNow ? $0.timeline.app.rawValue : nil }
+    }
     public var missing: [String] { recorder.missing }
     public var systemSource: String? { recorder.systemSource }
     public var micSource: String? { recorder.micSource }
@@ -160,6 +235,7 @@ public final class RecordingSession: RecordingSessionLike {
     public var systemRate: Double? { capture?.systemRate }
     public var problems: [RecordingProblem] { capture?.problems ?? [] }
     public var hints: [(kind: String, track: String)] { capture?.hints ?? [] }
+    public var mutedIn: String? { recording ? capture?.mutedIn : nil }
 
     public func start() throws -> URL {
         let folder = try RecordingFolders.new(in: outputDir, at: wall(), timeZone: timeZone)

@@ -4,6 +4,7 @@ import Foundation
 import Testing
 import PalaverCapture
 import PalaverCore
+import PalaverDomain
 @testable import PalaverDaemon
 
 final class FakeCapture: SessionCapture {
@@ -159,6 +160,80 @@ func rows(_ url: URL) -> [[String: Any]] {
         #expect(meta["trigger"] == .string("manual") && meta["stop_reason"] == .string("by_you"))
     }
 
+    @Test func aCallsMuteSourceRunsWithTheCaptureAndItsIntervalsGoToSessionLog() async throws {
+        let out = tempDir()
+        let sources = CaptureSources(systemTap: { _ in NullSource() }, mic: { _ in NullSource() },
+                                     screenCapture: { _, _ in NoScreenCapture() })
+        let source = FakeMuteSource()
+        var timeline: MuteTimeline?
+        let s = RecordingSession(outputDir: out, trigger: "teams", capture: { folder, log in
+            LiveCapture(folder: folder, log: log, sources: sources, mute: { log in
+                timeline = MuteTimeline(app: .teams, delay: 0.01, log: log)
+                return (timeline!, source)
+            })
+        })
+        let folder = try s.start()
+        #expect(source.calls == ["start"] && s.mutedIn == nil)
+        timeline!.set(true, at: hostNanos() - 2_000_000_000)
+        #expect(s.mutedIn == "teams")
+        _ = try s.stop(reason: "call_ended")
+        #expect(source.calls == ["start", "refresh", "stop"] && s.mutedIn == nil)
+        let log = rows(folder.appendingPathComponent("session.log"))
+        let muted = log.filter { ($0["message"] as? String)?.hasPrefix("muted in Teams ") == true }
+        #expect(muted.count == 1 && muted[0]["logger"] as? String == "palaver.call_mute")
+        #expect((muted[0]["message"] as? String)?.hasSuffix(" to the end: microphone not kept") == true)
+    }
+
+    @Test func aHuddleFollowedOnlyForItsEndKeepsTheMic() async throws {
+        // respect_call_mute off: a Slack huddle's follower still runs (its end), the mic is not gated.
+        let out = tempDir()
+        let sources = CaptureSources(systemTap: { _ in NullSource() }, mic: { _ in NullSource() },
+                                     screenCapture: { _, _ in NoScreenCapture() })
+        let source = FakeMuteSource()
+        var timeline: MuteTimeline?
+        let s = RecordingSession(outputDir: out, trigger: "slack", capture: { folder, log in
+            LiveCapture(folder: folder, log: log, sources: sources, mute: { log in
+                timeline = MuteTimeline(app: .slack, delay: 1, log: log)
+                return (timeline!, source)
+            }, gatesMic: false)
+        })
+        let folder = try s.start()
+        timeline!.set(true, at: hostNanos() - 3_000_000_000)
+        timeline!.set(false, at: hostNanos() - 1_000_000_000)
+        #expect(s.mutedIn == nil && source.calls == ["start"])
+        _ = try s.stop(reason: "call_ended")
+        #expect(source.calls == ["start", "refresh", "stop"])
+        let log = rows(folder.appendingPathComponent("session.log"))
+        #expect(!log.contains { ($0["message"] as? String)?.hasPrefix("muted in") == true })
+        #expect(MicMuted.read(folder) == nil)
+    }
+
+    @Test func aSourceThatTellsLateIsFollowedAfterTheStopAndProcessingWaits() async throws {
+        let out = tempDir()
+        let sources = CaptureSources(systemTap: { _ in NullSource() }, mic: { _ in NullSource() },
+                                     screenCapture: { _, _ in NoScreenCapture() })
+        let source = FakeMuteSource()
+        source.tellsLate = true
+        var capture: LiveCapture?
+        let s = RecordingSession(outputDir: out, trigger: "teams", capture: { folder, log in
+            let c = LiveCapture(folder: folder, log: log, sources: sources, mute: { log in
+                (MuteTimeline(app: .teams, delay: 30, log: log), source)
+            })
+            c.afterStopPoll = 0.02
+            c.afterStopWait = 0.3
+            capture = c
+            return c
+        })
+        let folder = try s.start()
+        _ = try s.stop(reason: "call_ended")
+        #expect(capture != nil)
+        #expect(MicMuted.read(folder)?.pending == true)  // processing waits for what Teams' log still tells
+        let settled = MicMuted.settled(folder)
+        #expect(settled == MicMuted.State(pending: false, late: []))
+        for _ in 0..<200 where source.calls.last != "stop" { Thread.sleep(forTimeInterval: 0.01) }
+        #expect(source.calls.filter { $0 == "refresh" }.count >= 3 && source.calls.last == "stop")
+    }
+
     @Test func theLevelsOfTheRunningRecordingFeedTheSilence() async throws {
         let folder = tempDir()
         let mic = folder.appendingPathComponent("mic_raw.wav.part"), system = folder.appendingPathComponent("system.wav.part")
@@ -199,4 +274,15 @@ func rows(_ url: URL) -> [[String: Any]] {
         #expect(levels.quietFor == 0)
         h.daemon.shutdown()
     }
+}
+
+final class FakeMuteSource: CallMuteSource, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _calls: [String] = []
+    var calls: [String] { lock.withLock { _calls } }
+    var tellsLate = false
+    var onRefresh: () -> Void = {}
+    func start() { lock.withLock { _calls.append("start") } }
+    func refresh() { lock.withLock { _calls.append("refresh") }; onRefresh() }
+    func stop() { lock.withLock { _calls.append("stop") } }
 }

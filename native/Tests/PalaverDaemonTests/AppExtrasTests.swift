@@ -147,9 +147,9 @@ final class Parts: @unchecked Sendable {
         Housekeeping.inProcess(config: { config }, stores: { stores },
                                extras: [Housekeeping.movingMcpEntries(bundle: app, stores: { stores }, log: { lines.all.append($0) })],
                                log: { lines.all.append($0) }, run: parts.run).atStart()
-        #expect(PythonJSON.read(claude)?["mcpServers"]?["meetings"]?["command"] == .string(bin.resolvingSymlinksInPath().path))
-        #expect(PythonJSON.read(claude)?["mcpServers"]?["meetings"]?["args"] == .strings(["mcp"]))
-        #expect(lines.all.contains("Claude's MCP entries now start the Swift server (code)"))
+        #expect(PythonJSON.read(claude)?["mcpServers"]?["palaver"]?["command"] == .string(bin.resolvingSymlinksInPath().path))
+        #expect(PythonJSON.read(claude)?["mcpServers"]?["palaver"]?["args"] == .strings(["mcp"]))
+        #expect(lines.all.contains("Claude's MCP entries were updated (code)"))
     }
 
     @Test func hourlyOnlyTheAudioOlderThanSettingsSayGoes() throws {

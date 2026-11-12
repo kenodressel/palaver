@@ -151,6 +151,27 @@ private func noSleep(_ s: Double) async throws {}
         #expect(TranscriptionMarker.wantsCloud(paths))  // the live text: a chosen service still replaces it
     }
 
+    @Test func aMicHeldBackIsEchoCancelledOnlyAsFarAsItIsWritten() async throws {
+        // A call's mute is followed: the raw mic trails the system track by its hold.
+        let t = Temp(); defer { t.remove() }
+        let paths = RecordingPaths(t.url)
+        let proc = try LiveProcessor(paths: paths, transcriber: FakeTranscriber(), diarizer: FakeDiarizer(), userName: "Timo",
+                                     aec: { IdentityAec() })
+        let mic = speech(100)
+        appendPart(partURL(paths.micRawWav), Array(mic[..<(90 * SR)]))
+        appendPart(partURL(paths.systemWav), speech(100))
+        while try await proc.step() {}
+        let soFar = try GrowingTrack(final: paths.micWav).readInt16(0, 90 * SR)
+        #expect(GrowingTrack(final: paths.micWav).available() <= 90 * SR && !soFar.isEmpty)
+        #expect(!soFar.prefix(GrowingTrack(final: paths.micWav).available()).contains(0))  // no silence for what comes later
+        appendPart(partURL(paths.micRawWav), Array(mic[(90 * SR)...]))
+        finalizePart(paths.micRawWav)
+        finalizePart(paths.systemWav)
+        t.write("meta.json", "{}")
+        #expect(try await Live.run(proc, paths: paths, sleep: noSleep))
+        #expect(try Wav16.read(paths.micWav) == mic)
+    }
+
     @Test func test_live_gives_up_when_the_recorder_dies() async throws {
         let t = Temp(); defer { t.remove() }
         let paths = RecordingPaths(t.url)

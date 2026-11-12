@@ -17,6 +17,9 @@ public struct Config: Equatable, Sendable {
     /// ended; meeting after meeting within 10 s ran on as one).
     public var gracePeriodSeconds = 5
     public var recordSlack = true
+    /// `[recording].respect_call_mute`: while muted in the recorded Teams call or Slack huddle, the
+    /// microphone is written as silence (CallMute).
+    public var respectCallMute = true
     public var processingLive = true
     public var notionMode = "page"
     public var notionParentPageId: String?
@@ -65,6 +68,7 @@ public struct Config: Equatable, Sendable {
         if let v = int("recording.max_session_hours"), v > 0 { maxSessionHours = v }
         if let v = int("recording.grace_period_seconds"), v >= 0 { gracePeriodSeconds = v }
         if let v = bool("recording.slack") { recordSlack = v }
+        if let v = bool("recording.respect_call_mute") { respectCallMute = v }
         if let v = bool("processing.live") { processingLive = v }
         if let v = str("notion.mode"), v == "page" || v == "database" { notionMode = v }
         notionParentPageId = str("notion.parent_page_id")

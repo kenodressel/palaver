@@ -219,6 +219,31 @@ public final class Glossary: @unchecked Sendable {
         return (String(out), marks)
     }
 
+    /// `texts.map(apply)`, with one search over them all: a meeting's lines mostly have no variant, and a search per
+    /// line costs more than the search (#29). Lines are joined with a line break, which no variant has and which is no
+    /// word letter, so each line matches as it does alone.
+    public func apply(lines texts: [String]) -> [String] {
+        let c = compile()
+        guard c.regex != nil else { return texts }
+        let breaks = { (s: String) in s.unicodeScalars.contains("\n") }
+        guard let regex = c.regex, !c.replacements.keys.contains(where: breaks), !texts.contains(where: breaks) else {
+            return texts.map(apply)
+        }
+        var ends: [Int] = []  // where each line ends in the joined text, in scalars
+        var at = 0
+        for t in texts {
+            at += t.unicodeScalars.count
+            ends.append(at)
+            at += 1
+        }
+        var respelled = Set<Int>(), line = 0
+        for m in regex.matches(in: texts.joined(separator: "\n")) {
+            while line < ends.count, ends[line] < m.range.lowerBound { line += 1 }
+            respelled.insert(line)
+        }
+        return texts.enumerated().map { respelled.contains($0.offset) ? apply($0.element) : $0.element }
+    }
+
     /// `apply` on every text in `value` (notes: objects and lists of texts).
     public func applyTo(_ value: JSONValue) -> JSONValue {
         switch value {

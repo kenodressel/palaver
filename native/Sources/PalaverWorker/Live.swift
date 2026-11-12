@@ -366,7 +366,9 @@ public final class LiveProcessor: LiveProcessing {
     /// Processes one slice of what is final so far; false when caught up.
     public func step() async throws -> Bool {
         let until = finalUntil()
-        var progressed = try runAec(until)
+        // The raw mic may trail the system track (held back while a call's mute is followed): echo-cancelled only
+        // as far as it is written, never its silence-to-come.
+        var progressed = try runAec(mic.exists ? min(until, mic.available()) : until)
         progressed = try await diarizer.advance(read: system.readInt16, available: until) > 0 || progressed
         progressed = try await systemText.advance(system.readInt16, finalUntil: until) || progressed
         progressed = try await micText.advance(aecTrack.readInt16, finalUntil: micOut.framesWritten, language: micLanguage) || progressed

@@ -47,6 +47,7 @@ final class FakeSession: RecordingSessionLike {
     var systemSource: String?
     var problems: [RecordingProblem] = []
     var hints: [(kind: String, track: String)] = []
+    var mutedIn: String?
 
     init(folder: URL, duration: Double) {
         self.folder = folder
@@ -279,10 +280,12 @@ final class HeldRig {
 
     init(_ dir: URL, slack: [(Double, Double)] = [], teams: [(Double, Double)] = [], slackSpeaker: [(Double, Double)] = [],
          heard: [(Double, Double)] = [], talking: Bool = false, sessions: Sessions = Sessions(), start: Double = 0,
-         grace: Double = 10, audio: @escaping @Sendable (Double) -> [AudioProcess] = { _ in [] }) throws {
+         grace: Double = 10, audio: @escaping @Sendable (Double) -> [AudioProcess] = { _ in [] },
+         huddleLeft: (@Sendable (Double) -> Bool)? = nil) throws {
         let (detector, dclock) = apps(slack: slack, teams: teams, slackSpeaker: slackSpeaker, audio: audio)
         dclock.now = start
         self.detector = detector
+        if let huddleLeft { detector.huddleLeft = { huddleLeft(dclock.now) } }
         var hh: Harness?
         func othersQuiet() -> Double {
             let h = hh!
@@ -298,6 +301,7 @@ final class HeldRig {
             deps.ignored = { detector.ignored.map(\.rawValue) }
             deps.othersSilence = { othersQuiet() }
             deps.silence = { talking ? 5 : othersQuiet() }
+            if let huddleLeft { deps.callLeft = { app in app == .slack && huddleLeft(dclock.now) } }
         }
         hh = h
         // The detector's clock follows the daemon's.

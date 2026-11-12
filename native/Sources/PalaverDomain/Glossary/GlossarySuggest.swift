@@ -30,8 +30,9 @@ public enum GlossarySuggest {
         public internal(set) var rare = true
         private var seen = Set<ScalarKey>()
 
-        mutating func add(_ meeting: String, _ start: Double, _ text: String) {
-            count += 1
+        /// `times` occurrences in `meeting`, the first at `start` in `text`.
+        mutating func add(_ meeting: String, _ start: Double, _ text: String, times: Int = 1) {
+            count += times
             if seen.insert(ScalarKey(meeting)).inserted { meetings.append(meeting) }
             if examples.count < GlossarySuggest.examples,
                !examples.contains(where: { Py.same($0["meeting"]?.stringValue ?? "", meeting) }) {
@@ -105,35 +106,82 @@ public enum GlossarySuggest {
     /// doubted at least half the times it was said: "Teil", said everywhere and doubted now and then, is no misheard
     /// "Theil".
     public static func occurrences(_ transcripts: PyDict<[(Double, String)]>, unsure: PyDict<Int>? = nil) -> PyDict<Occurrences> {
-        found(transcripts, unsure ?? PyDict()).dict
+        found(byMeeting(transcripts), unsure ?? PyDict()).dict
     }
 
-    private static func found(_ transcripts: PyDict<[(Double, String)]>, _ doubted: PyDict<Int>) -> Found {
-        var found = Found()
-        var rareCache: [ScalarKey: Bool] = [:]
-        for (meeting, lines) in transcripts {
+    /// What one meeting's lines give the suggestions, counted once per meeting: a meeting that did not change is not
+    /// counted again when another one did (#29). The words are as `found` and the two-word names as `suggest` meet
+    /// them, in the order of the lines.
+    public struct MeetingWords: Sendable {
+        /// A word of 3+ letters that is rare, or capitalized (an ordinary one counts when it was heard unsure).
+        struct Word: Sendable {
+            let word: String
+            let rare: Bool
+            var count: Int
+            let start: Double
+            let text: String
+        }
+        /// Two words in a row, the first capitalized: maybe a known name heard as two ("Data Bricks").
+        struct Pair: Sendable {
+            let joined: String  // casefolded, without the space
+            let pair: String
+            let start: Double
+            let text: String
+        }
+        var words: [Word] = []
+        /// Every word casefolded → how often it was said.
+        var said: [ScalarKey: Int] = [:]
+        var pairs: [Pair] = []
+
+        /// `lines`: the meeting's readable lines, (start, text).
+        public init(_ lines: [(Double, String)]) {
+            var at: [ScalarKey: Int] = [:]  // the word's place in `words`; -1: neither rare nor capitalized
             for (start, text) in lines {
-                for word in words(text) where length(word) >= 3 {
+                let ws = GlossarySuggest.words(text)
+                for word in ws {
+                    said[ScalarKey(Py.casefold(word)), default: 0] += 1
+                    guard GlossarySuggest.length(word) >= 3 else { continue }
                     let key = ScalarKey(word)
-                    let rare = rareCache[key] ?? Zipf.isRare(word)
-                    rareCache[key] = rare
-                    if !rare && (doubted[Py.casefold(word)] == nil || !capitalized(word)) { continue }
-                    found.update(word) { o in
-                        o.rare = rare
-                        o.add(meeting, start, text)
+                    if let i = at[key] {
+                        if i >= 0 { words[i].count += 1 }
+                        continue
                     }
+                    let rare = Zipf.isRare(word)
+                    if !rare && !GlossarySuggest.capitalized(word) {
+                        at[key] = -1
+                        continue
+                    }
+                    at[key] = words.count
+                    words.append(Word(word: word, rare: rare, count: 1, start: start, text: text))
+                }
+                for (first, second) in zip(ws, ws.dropFirst()) where GlossarySuggest.capitalized(first) {
+                    pairs.append(Pair(joined: Py.casefold(first + second), pair: first + " " + second, start: start, text: text))
+                }
+            }
+        }
+    }
+
+    /// The meetings' words, in the transcripts' order.
+    private static func byMeeting(_ transcripts: PyDict<[(Double, String)]>) -> [(String, MeetingWords)] {
+        transcripts.map { ($0.key, MeetingWords($0.value)) }
+    }
+
+    private static func found(_ meetings: [(String, MeetingWords)], _ doubted: PyDict<Int>) -> Found {
+        var found = Found()
+        for (meeting, m) in meetings {
+            for w in m.words {
+                if !w.rare && doubted[Py.casefold(w.word)] == nil { continue }
+                found.update(w.word) { o in
+                    o.rare = w.rare
+                    o.add(meeting, w.start, w.text, times: w.count)
                 }
             }
         }
         // All spellings of a word share its doubts ("Teil" and "teil" alike).
         var said: [ScalarKey: Int] = [:]
-        for (_, lines) in transcripts {
-            for (_, text) in lines {
-                for word in words(text) {
-                    let folded = Py.casefold(word)
-                    if doubted[folded] != nil { said[ScalarKey(folded), default: 0] += 1 }
-                }
-            }
+        for (folded, _) in doubted {
+            let key = ScalarKey(folded)
+            said[key] = meetings.reduce(0) { $0 + ($1.1.said[key] ?? 0) }
         }
         return Found(zip(found.words, found.items).filter { word, o in
             if o.rare { return true }
@@ -192,7 +240,13 @@ public enum GlossarySuggest {
     /// how often; an ordinary one ("Cloud") may then be a known name misheard ("KLOUD"), though never a new term.
     public static func suggest(_ transcripts: PyDict<[(Double, String)]>, known: [String], glossary: Glossary,
                                unsure: PyDict<Int>? = nil) -> [JSONValue] {
-        var found = found(transcripts, unsure ?? PyDict())
+        suggest(meetings: byMeeting(transcripts), known: known, glossary: glossary, unsure: unsure)
+    }
+
+    /// `suggest` over each meeting's words (`MeetingWords` of its readable lines), in meeting order.
+    public static func suggest(meetings: [(String, MeetingWords)], known: [String], glossary: Glossary,
+                               unsure: PyDict<Int>? = nil) -> [JSONValue] {
+        var found = found(meetings, unsure ?? PyDict())
         let entries = glossary.terms.values
         let termTexts = entries.compactMap { $0["term"]?.stringValue }
         let knownWords = knownWords(known + termTexts)
@@ -239,18 +293,14 @@ public enum GlossarySuggest {
         for (k, spelling) in knownWords {
             joinedKnown[String(String.UnicodeScalarView(k.unicodeScalars.filter { $0 != "-" }))] = spelling
         }
-        for (meeting, lines) in transcripts {
-            for (start, text) in lines {
-                let ws = words(text)
-                for (first, second) in zip(ws, ws.dropFirst()) {
-                    let pair = first + " " + second
-                    // Capitalized, as names are: "hand over" is a verb, not "Handover".
-                    guard let term = joinedKnown[Py.casefold(first + second)], length(term) >= 6, capitalized(first),
-                          !mapped.contains(ScalarKey(Py.casefold(pair))) else { continue }
-                    found.update(pair) { $0.add(meeting, start, text) }
-                    let listed = byTerm[term] ?? []
-                    if !listed.contains(where: { Py.same($0, pair) }) { byTerm[term] = listed + [pair] }
-                }
+        // Capitalized, as names are: "hand over" is a verb, not "Handover" (MeetingWords keeps only those).
+        for (meeting, m) in meetings {
+            for p in m.pairs {
+                guard let term = joinedKnown[p.joined], length(term) >= 6, !mapped.contains(ScalarKey(Py.casefold(p.pair)))
+                else { continue }
+                found.update(p.pair) { $0.add(meeting, p.start, p.text) }
+                let listed = byTerm[term] ?? []
+                if !listed.contains(where: { Py.same($0, p.pair) }) { byTerm[term] = listed + [p.pair] }
             }
         }
         for (term, words) in byTerm {
@@ -340,13 +390,20 @@ public enum GlossarySuggest {
     public static func unsureWords(outputDir: URL) -> PyDict<Int> {
         var out = PyDict<Int>()
         for folder in recordingFolders(outputDir) {
-            guard let lines = PythonJSON.read(RecordingPaths(folder).transcriptJson)?.arrayValue else { continue }
-            for line in lines {
-                guard case .object(let fields) = line, !fields.contains(where: { Py.same($0.0, "heard") }) else { continue }
-                for w in (line["unsure"]?.arrayValue ?? []).compactMap(\.stringValue) {
-                    let word = Py.casefold(stripPunctuation(w))
-                    out[word] = (out[word] ?? 0) + 1
-                }
+            for (word, n) in unsureWords(RecordingPaths(folder)) ?? PyDict() { out[word] = (out[word] ?? 0) + n }
+        }
+        return out
+    }
+
+    /// One meeting's share of `unsureWords`; nil: its transcript.json is missing or no JSON.
+    public static func unsureWords(_ paths: RecordingPaths) -> PyDict<Int>? {
+        guard let lines = PythonJSON.read(paths.transcriptJson)?.arrayValue else { return nil }
+        var out = PyDict<Int>()
+        for line in lines {
+            guard case .object(let fields) = line, !fields.contains(where: { Py.same($0.0, "heard") }) else { continue }
+            for w in (line["unsure"]?.arrayValue ?? []).compactMap(\.stringValue) {
+                let word = Py.casefold(stripPunctuation(w))
+                out[word] = (out[word] ?? 0) + 1
             }
         }
         return out
@@ -358,34 +415,59 @@ public enum GlossarySuggest {
         var out = PyDict<[(Double, String)]>()
         let glossary = Glossary.current(stores: stores)
         for folder in recordingFolders(outputDir) {
-            let paths = RecordingPaths(folder)
-            guard FileManager.default.fileExists(atPath: paths.transcriptJson.path),
-                  let items = PythonJSON.read(paths.transcriptJson)?.arrayValue,
-                  let utterances = try? items.map({ try Utterance(json: $0) }),
-                  let corrected = try? Speakers.withoutIgnored(paths, utterances) else { continue }
-            let shown = Readable.readable(corrected, glossary: glossary)
-            out[folder.lastPathComponent] = shown.map { (Py.round($0.start, 2), $0.text) }
+            guard let cleaned = cleanedLines(RecordingPaths(folder)) else { continue }
+            out[folder.lastPathComponent] = readableLines(cleaned, glossary: glossary)
         }
         return out
+    }
+
+    /// A meeting's lines as `Readable` cleans them (fillers out; removed voices left out), before the glossary:
+    /// (start, text). The slow part of `corpus`, and the same whatever the glossary says. nil: no transcript that
+    /// can be read.
+    public static func cleanedLines(_ paths: RecordingPaths) -> [(Double, String)]? {
+        guard FileManager.default.fileExists(atPath: paths.transcriptJson.path),
+              let items = PythonJSON.read(paths.transcriptJson)?.arrayValue,
+              let utterances = try? items.map({ try Utterance(json: $0) }),
+              let corrected = try? Speakers.withoutIgnored(paths, utterances) else { return nil }
+        return corrected.map { ($0.start, $0.heard != nil ? $0.text : Readable.cleanText($0.text)) }
+    }
+
+    /// `cleanedLines` as `corpus` has them (`Readable.readable`): the glossary applied, lines left without a word
+    /// dropped, starts rounded to 2 digits.
+    public static func readableLines(_ cleaned: [(Double, String)], glossary: Glossary) -> [(Double, String)] {
+        // `Readable.core(shown).isEmpty`, without making it: a line has a core when it has a word letter.
+        zip(cleaned, glossary.apply(lines: cleaned.map(\.1))).compactMap { line, shown in
+            shown.unicodeScalars.contains(where: Py.isWordScalar) ? (Py.round(line.0, 2), shown) : nil
+        }
     }
 
     /// Names spelled right: the user's, calendar titles and attendees (rooms too: their names are places people
     /// mention), people of the voice bank, projects, the speakers' names in effect. Each once by code points, in
     /// `knownOrder` (Python returns a set; its order, which decides ties in `suggest`, changes from run to run).
     public static func knownSpellings(outputDir: URL, userName: String, stores: StorePaths = .current()) throws -> [String] {
+        try knownSpellings(userName: userName, stores: stores,
+                           meetings: recordingFolders(outputDir).map { try knownSpellings(RecordingPaths($0)) })
+    }
+
+    /// `knownSpellings` with each meeting's share (`knownSpellings(paths)`) given, in folder name order.
+    public static func knownSpellings(userName: String, stores: StorePaths, meetings: [[String]]) throws -> [String] {
         var known: [String] = userName.isEmpty ? [] : [userName]
         known += try VoiceBank(directory: stores.voices).names().keys
         known += ProjectStore(path: stores.projects).projects.values.compactMap { $0["name"]?.stringValue }
-        for folder in recordingFolders(outputDir) {
-            let paths = RecordingPaths(folder)
-            if let event = CalendarEvents.load(paths) {
-                known.append(event.title)
-                known += event.attendees.map(\.name)
-            }
-            known += try Speakers.namesInEffect(paths).values
-        }
+        for names in meetings { known += names }
         var seen = Set<ScalarKey>()
         return Py.stableSorted(known.filter { !$0.isEmpty && seen.insert(ScalarKey($0)).inserted }, by: knownOrder)
+    }
+
+    /// One meeting's names spelled right: its calendar event's title and attendees, its speakers' names in effect.
+    public static func knownSpellings(_ paths: RecordingPaths) throws -> [String] {
+        var known: [String] = []
+        if let event = CalendarEvents.load(paths) {
+            known.append(event.title)
+            known += event.attendees.map(\.name)
+        }
+        known += try Speakers.namesInEffect(paths).values
+        return known
     }
 
     /// The order of the known spellings, which decides `suggest`'s ties (the spelling a casefolded word keeps, the

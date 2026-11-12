@@ -8,8 +8,8 @@ import pytest
 from playwright.sync_api import expect  # noqa: E402
 
 from .helpers import (  # noqa: E402
-    audio, cmd, expect_toast, line, line_tool, menu_item, open_meeting,
-    undo_in_toast, unfocus,
+    audio, cmd, expect_toast, goto, heading, line, line_tool, menu_item, open_meeting,
+    toast, undo_in_toast, unfocus,
 )
 from .recordings import A, B, C, LIVE  # noqa: E402
 
@@ -142,6 +142,11 @@ def test_copy(page, shared_server):
     assert page.evaluate("window.__copied") == ["Thanks Anna. The pelican deploy is still blocked."]
 
 
+def _respelled(said: str) -> re.Pattern:
+    """The toast after Fix everywhere: what was done and what changed in the meetings."""
+    return re.compile(rf"^{re.escape(said)}\. Respelled \d+ words?( \(\d+ of them in notes\))? in \d+ meetings?\.$")
+
+
 def test_fix_spelling_everywhere_and_undo(page, app_server):
     open_meeting(page, app_server, A, tab="Transcript")
     line_tool(page, 4, "fixSpelling").click()
@@ -150,15 +155,37 @@ def test_fix_spelling_everywhere_and_undo(page, app_server):
     expect(field).to_be_focused()
     field.fill("Attakring")
     form.get_by_role("button", name="Fix everywhere").click()
-    expect_toast(page, "“Atterkring” is now “Attakring” everywhere")
+    expect_toast(page, _respelled("“Atterkring” is now “Attakring” everywhere"))
     said = line(page, 4).locator(".said")
     expect(said.locator(".glossed")).to_have_text("Attakring")
-    expect(page.locator("#main .inline-notice")).to_contain_text("“Atterkring” is now “Attakring”.")
+    expect(page.locator("#main .inline-notice")).to_have_count(0)  # said once, in the toast (#27)
     assert [t["term"] for t in app_server.api("/api/glossary")["terms"]] == ["Attakring"]
     undo_in_toast(page)
     expect(said).to_contain_text("Atterkring")
     expect(said.locator(".glossed")).to_have_count(0)
     assert app_server.api("/api/glossary")["terms"] == []
+
+
+def test_fix_everywhere_in_the_review_is_said_once_in_a_toast(page, app_server):
+    # #27: no notice stays above the headline while the review goes on; the toast opens the glossary when asked.
+    goto(page, app_server)
+    page.locator("#main .needs").get_by_role("button", name="Review all in order").click()
+    for at in (2, 3):
+        page.get_by_role("button", name="Skip").click()
+        expect(page.locator("#main .review-bar")).to_contain_text(f"Review · {at} of 3")
+    line_tool(page, 4, "fixSpelling").click()
+    field = page.get_by_label("How “Atterkring” is spelled")
+    field.fill("Attakring")
+    field.press("Enter")
+    t = expect_toast(page, _respelled("“Atterkring” is now “Attakring” everywhere"))
+    expect(line(page, 4).locator(".glossed")).to_have_text("Attakring")
+    expect(page.locator("#main .review h1")).to_have_text("Team standup")
+    expect(page.locator("#main .inline-notice")).to_have_count(0)
+    expect(t.get_by_role("button", name="Undo")).to_be_visible()
+    t.get_by_role("button", name="Open the glossary").click()
+    expect(heading(page)).to_have_text("Glossary")
+    expect(toast(page)).to_have_count(0)
+    expect(page.get_by_label("Rename Attakring")).to_have_value("Attakring")
 
 
 def test_a_wrong_respelling_is_undone_where_it_shows(page, app_server):
@@ -171,7 +198,7 @@ def test_a_wrong_respelling_is_undone_where_it_shows(page, app_server):
     form = page.get_by_role("dialog", name="Fix the spelling")
     expect(form).to_contain_text("The glossary made “Attakring” of “Atterkring”.")
     form.get_by_role("button", name="Keep “Atterkring”").click()
-    expect_toast(page, "“Atterkring” is no longer “Attakring”")
+    expect_toast(page, _respelled("“Atterkring” is no longer “Attakring”"))
     expect(said).to_contain_text("Atterkring")
     expect(said.locator(".glossed")).to_have_count(0)
     assert [t["variants"] for t in app_server.api("/api/glossary")["terms"]] == [[]]  # the term stays
@@ -200,7 +227,7 @@ def test_a_selection_offers_fix_spelling(page, app_server):
     field = page.get_by_label("How “pelican” is spelled")
     field.fill("Pelikan")
     field.press("Enter")
-    expect_toast(page, "“pelican” is now “Pelikan” everywhere")
+    expect_toast(page, _respelled("“pelican” is now “Pelikan” everywhere"))
     expect(line(page, 15).locator(".glossed")).to_have_text("Pelikan")
     unfocus(page)
     cmd(page, "z")

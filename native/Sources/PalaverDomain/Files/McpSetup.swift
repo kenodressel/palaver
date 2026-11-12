@@ -2,10 +2,13 @@
 // (mcp_access.py `install`, `install_desktop`, `migrate`; mcp_server.py `server_args`, `install_command`; phase 4
 // batch 6). Claude starts the Swift server: `<Palaver.app>/Contents/Resources/bin/palaver [--config X] mcp`.
 //
-// Claude Code is added through its own command (`claude mcp add --scope user meetings -- …`), as Python did. Entries
+// Claude Code is added through its own command (`claude mcp add --scope user palaver -- …`), as Python did. Entries
 // that start Palaver's Python (the bundle's `bin/python`, `palaver-python`, a runtime's python3, the old installer's
-// venv) are rewritten in place at every start of the app (`migrate`), in `~/.claude.json` (user and project entries)
-// and in Claude Desktop's config, their options and other keys kept; nothing else in those files changes. A file
+// venv, any Python running `-m palaver`) are rewritten in place at every start of the app (`migrate`), in `~/.claude.json` (user and project entries)
+// and in Claude Desktop's config, their options and other keys kept; nothing else in those files changes. Palaver's
+// entry under its old name "meetings" is renamed "palaver" there too (Claude Desktop often missed a connector called
+// "meetings"), in its place; a project's allowed tools `mcp__meetings__…` follow it. Another server called "meetings"
+// is never touched. A file
 // changed by Claude while it is rewritten is read again (`rewrite`), so Claude's own change is never lost.
 import Darwin
 import Foundation
@@ -27,7 +30,9 @@ public struct McpSetup: @unchecked Sendable {
     }
 
     /// The server's name in Claude's configs.
-    public static let NAME = "meetings"
+    public static let NAME = "palaver"
+    /// Its name before 0.6.3; Palaver's entries under it are renamed `NAME` (`migrate`).
+    public static let OLD_NAME = "meetings"
     /// `_run`'s `timeout=60`: each `claude mcp …` call.
     public static let RUN_TIMEOUT = 60.0
     /// The `palaver` command as SwiftPM builds it (`.build/<configuration>/palaver-cli`); the bundle names it
@@ -114,8 +119,9 @@ public struct McpSetup: @unchecked Sendable {
         }
     }
 
-    /// `install_desktop`: adds the server to Claude Desktop as "meetings", merged into its config file: every other key
-    /// and server kept, and the entry's own other keys (env); written atomically, the previous file kept as `.bak`.
+    /// `install_desktop`: adds the server to Claude Desktop as "palaver", merged into its config file: every other key
+    /// and server kept, and the entry's own other keys (env), Palaver's entry under the old name renamed in its place;
+    /// written atomically, the previous file kept as `.bak`.
     /// Claude Desktop reads it when it starts. `Failed` when the file is there but no JSON object (left alone then).
     public func installDesktop() throws {
         let path = stores.claudeDesktopConfig.path
@@ -126,6 +132,7 @@ public struct McpSetup: @unchecked Sendable {
                 guard case .object(let given) = top[i].1 else { throw Failed("\(path) is not a Claude Desktop config; not changed") }
                 servers = given
             }
+            if case .object(let renamed)? = Self.renamedServers(.object(servers))?.servers { servers = renamed }
             var entry: [(String, JSONValue)] = []
             if let old = servers.first(where: { Py.same($0.0, Self.NAME) })?.1, case .object(let fields) = old { entry = fields }
             Self.set(&entry, "command", .string(executable))
@@ -139,9 +146,52 @@ public struct McpSetup: @unchecked Sendable {
 
     // MARK: - moving old entries
 
+    /// One `mcpServers` object with Palaver's entry under `OLD_NAME` renamed `NAME`, in its place, its options and other
+    /// keys kept; when Palaver has a `NAME` entry already, it stays and the old one goes (a `NAME` entry that is not
+    /// Palaver's leaves both as they are). An `OLD_NAME` entry that is not
+    /// Palaver's (`McpLog.isPalaver`) is never touched. nil when nothing changed.
+    static func renamedServers(_ servers: JSONValue?) -> (servers: JSONValue, renamed: Bool)? {
+        guard case .object(var fields)? = servers,
+              let i = fields.firstIndex(where: { Py.same($0.0, OLD_NAME) }), (try? McpLog.isPalaver(fields[i].1)) == true
+        else { return nil }
+        if let taken = fields.first(where: { Py.same($0.0, NAME) }) {
+            guard (try? McpLog.isPalaver(taken.1)) == true else { return nil }  // another "palaver": both stay
+            fields.remove(at: i)
+        } else {
+            fields[i].0 = NAME
+        }
+        return (.object(fields), true)
+    }
+
+    /// A project's `allowedTools` with Palaver's tools under the old name (`mcp__meetings`, `mcp__meetings__…`) under
+    /// `NAME`, each once; nil when none was.
+    static func renamedTools(_ tools: JSONValue?) -> JSONValue? {
+        guard case .array(let items)? = tools else { return nil }
+        let old = "mcp__\(OLD_NAME)", new = "mcp__\(NAME)"
+        var changed = false
+        var out: [JSONValue] = []
+        for item in items {
+            var item = item
+            if case .string(let s) = item, Py.same(s, old) || s.hasPrefix(old + "__") {
+                item = .string(new + s.dropFirst(old.count))
+                changed = true
+            }
+            if !out.contains(where: { PythonJSON.equal($0, item) }) { out.append(item) }
+        }
+        return changed ? .array(out) : nil
+    }
+
+    /// One `mcpServers` object renamed (`renamedServers`) and moved (`movedServers`); nil when nothing changed.
+    func fixedServers(_ servers: JSONValue?) -> (servers: JSONValue, renamed: Bool)? {
+        let renamed = Self.renamedServers(servers)
+        let current = renamed?.servers ?? servers
+        if let moved = movedServers(current) { return (moved, renamed != nil) }
+        return renamed
+    }
+
     /// Whether `command` is Palaver's Python: an app's `bin/python` (the one-release shim) or `palaver-python`, a
-    /// runtime's python3 in Application Support, or the old installer's venv. A checkout's venv is the developer's own
-    /// and stays.
+    /// runtime's python3 in Application Support, or the old installer's venv. Another Python counts when it runs
+    /// `-m palaver` (`startsPython`).
     public static func isPalaverPython(_ command: String) -> Bool {
         let c = command.unicodeScalars
         func ends(_ s: String) -> Bool { c.count >= s.unicodeScalars.count && c.suffix(s.unicodeScalars.count).elementsEqual(s.unicodeScalars) }
@@ -150,9 +200,12 @@ public struct McpSetup: @unchecked Sendable {
             || McpLog.OLD_VENVS.contains { McpLog.contains(command, $0) }
     }
 
-    /// An entry that starts Palaver's MCP server with Palaver's Python (`McpLog.isPalaver` and `isPalaverPython`).
+    /// An entry that starts Palaver's MCP server with Palaver's Python (`McpLog.isPalaver` and `isPalaverPython`), or
+    /// with any Python as `-m palaver`: a checkout's venv too, since there is no Python Palaver to start any more (#32).
     public static func startsPython(_ server: JSONValue) -> Bool {
         guard (try? McpLog.isPalaver(server)) == true, let command = server["command"]?.stringValue else { return false }
+        let args = server["args"]?.arrayValue ?? []
+        if args.count >= 2, args[0].stringValue == "-m", args[1].stringValue == "palaver" { return true }
         return isPalaverPython(command)
     }
 
@@ -189,8 +242,10 @@ public struct McpSetup: @unchecked Sendable {
     }
 
     /// Every entry that starts Palaver's Python (or an app's `bin/palaver` that is gone), in Claude Code's config (user
-    /// and project servers) and Claude Desktop's, rewritten to start `executable`; nothing else is touched, and an entry
-    /// already moved stays as it is. The two configs are moved independently: one that fails (`log` says why) never
+    /// and project servers) and Claude Desktop's, rewritten to start `executable`, and Palaver's entry under `OLD_NAME`
+    /// renamed `NAME` (`renamedServers`); a project's allowed tools under the old name follow when the old name meant
+    /// Palaver there (no other "meetings" server of its own). Nothing else is touched, and an entry already moved stays
+    /// as it is. The two configs are moved independently: one that fails (`log` says why) never
     /// keeps the other from moving. Which configs changed ("code", "desktop"). A config that is missing, no JSON object,
     /// or never names Palaver is left alone (not even parsed).
     @discardableResult
@@ -200,16 +255,31 @@ public struct McpSetup: @unchecked Sendable {
             if try rewrite(stores.claudeConfig.path, backup: false, onlyIfMentions: "palaver", change: { config in
                 guard case .object(var top) = config else { return false }
                 var changed = false
-                if let i = top.firstIndex(where: { Py.same($0.0, "mcpServers") }), let servers = movedServers(top[i].1) {
-                    top[i].1 = servers
+                var userRenamed = false
+                if let i = top.firstIndex(where: { Py.same($0.0, "mcpServers") }), let fixed = fixedServers(top[i].1) {
+                    top[i].1 = fixed.servers
+                    userRenamed = fixed.renamed
                     changed = true
                 }
                 if let i = top.firstIndex(where: { Py.same($0.0, "projects") }), case .object(var projects) = top[i].1 {
                     for j in projects.indices {
-                        guard case .object(var project) = projects[j].1,
-                              let k = project.firstIndex(where: { Py.same($0.0, "mcpServers") }),
-                              let servers = movedServers(project[k].1) else { continue }
-                        project[k].1 = servers
+                        guard case .object(var project) = projects[j].1 else { continue }
+                        var renamed = false, touched = false
+                        if let k = project.firstIndex(where: { Py.same($0.0, "mcpServers") }), let fixed = fixedServers(project[k].1) {
+                            project[k].1 = fixed.servers
+                            renamed = fixed.renamed
+                            touched = true
+                        }
+                        // The old name means Palaver's server here: its own was renamed, or the user's was and the
+                        // project has no "meetings" of its own.
+                        let own = project.first(where: { Py.same($0.0, "mcpServers") })?.1[Self.OLD_NAME]
+                        if renamed || (userRenamed && own == nil),
+                           let k = project.firstIndex(where: { Py.same($0.0, "allowedTools") }),
+                           let tools = Self.renamedTools(project[k].1) {
+                            project[k].1 = tools
+                            touched = true
+                        }
+                        guard touched else { continue }
                         projects[j].1 = .object(project)
                         changed = true
                     }
@@ -224,8 +294,8 @@ public struct McpSetup: @unchecked Sendable {
         do {
             if try rewrite(stores.claudeDesktopConfig.path, backup: true, onlyIfMentions: "palaver", change: { config in
                 guard case .object(var top) = config, let i = top.firstIndex(where: { Py.same($0.0, "mcpServers") }),
-                      let servers = movedServers(top[i].1) else { return false }
-                top[i].1 = servers
+                      let fixed = fixedServers(top[i].1) else { return false }
+                top[i].1 = fixed.servers
                 config = .object(top)
                 return true
             }) { moved.append("desktop") }
@@ -257,7 +327,7 @@ public struct McpSetup: @unchecked Sendable {
         let installed = bundle.resolvingSymlinksInPath().standardizedFileURL
         let moved = McpSetup(stores: stores, executable: installed.appendingPathComponent(CLI_IN_BUNDLE).path).migrate(log: log)
         if !moved.isEmpty {
-            log("Claude's MCP entries now start the Swift server (\(moved.joined(separator: ", ")))")
+            log("Claude's MCP entries were updated (\(moved.joined(separator: ", ")))")
         }
         return moved
     }

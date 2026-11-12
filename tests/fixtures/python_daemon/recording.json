@@ -18,6 +18,7 @@
   "system_source": "process-tap",
   "mic_source": "avcapture",
   "missing": [],
+  "muted": null,
   "teams_active": true,
   "stop_question": null,
   "ignored": [

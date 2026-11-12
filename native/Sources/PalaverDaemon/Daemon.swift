@@ -59,6 +59,8 @@ public struct DaemonDeps {
     public var ignored: () -> [String] = { [] }
     /// A recording session for a trigger ("teams", "slack", "manual").
     public var newSession: (String) -> RecordingSessionLike
+    /// The recorded call's app says the user left it (Slack's huddle UI, #25): stopped without the grace.
+    public var callLeft: (CallApp) -> Bool = { _ in false }
     public var launchProcessing: (URL) throws -> WorkerProcess
     public var launchNotes: ((URL) throws -> WorkerProcess)?
     /// Whether a processed recording's notes are written apart (`launchNotes`), asked as its processing
@@ -247,7 +249,8 @@ public final class Daemon {
             watchManual()
         } else if auto {
             let active = detectSafely()
-            for action in trigger.update(now: now(), active: active, app: lastCall) {
+            let left = session != nil && !active && CallApp(rawValue: callApp).map(deps.callLeft) == true
+            for action in trigger.update(now: now(), active: active, app: lastCall, ended: left) {
                 if action == .start {
                     callApp = trigger.app?.rawValue ?? callApp
                     start()
@@ -419,7 +422,8 @@ public final class Daemon {
     private func whyText(_ why: JSONValue) -> JSONValue {
         guard !why.isNull else { return .null }
         let cost = deps.watchdog?.costText()
-        return .string([Lifecycle.recordingText(why, timeZone: deps.timeZone), cost].compactMap { $0 }.filter { !$0.isEmpty }
+        let muted = session?.mutedIn.map { "Muted in \($0 == "teams" ? "Teams" : "Slack")" }  // the mic is not kept (CallMute)
+        return .string([Lifecycle.recordingText(why, timeZone: deps.timeZone), muted, cost].compactMap { $0 }.filter { !$0.isEmpty }
             .joined(separator: " · "))
     }
 
@@ -467,6 +471,7 @@ public final class Daemon {
             ("system_source", .str(session?.systemSource)),
             ("mic_source", .str(session?.micSource)),
             ("missing", .strings(session?.missing ?? [])),
+            ("muted", .str(session?.mutedIn)),  // "teams" / "slack" while the mic is not kept (CallMute)
             ("teams_active", .bool(lastActive)),
             ("stop_question", stopQuestion()),
             ("ignored", .strings(deps.ignored().sorted())),  // kept across a restart (#7)
@@ -695,11 +700,16 @@ public final class Daemon {
 
     // MARK: - start and stop
 
+    /// For the session made last: when the call it may continue began (a restart cut it), else nil.
+    public private(set) var continuingSince: Date?
+
     private func start() {
         let trig = manual ? "manual" : callApp
         // The session starts at once; whether it continues the cut one is decided after (the
         // calendar answers later), so nothing of the call is lost waiting for it.
         let candidate = continuable(trig) ? cut : nil
+        // A call that may go on from before a restart began then: its mute changes since then count (CallMute).
+        continuingSince = candidate.flatMap { WallTime.parse($0.since, deps.timeZone) }
         let session = deps.newSession(trig)
         let started: URL
         do {

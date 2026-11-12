@@ -52,6 +52,29 @@ import Testing
         #expect(try bank.match(unit(1, 0.1, 0))?.0 == "Anna")
     }
 
+    /// #31: what a bank read is kept for every bank of the folder, until a file changes, also by another process.
+    @Test func theBanksReadIsKeptUntilAFileChanges() throws {
+        let t = folder(); defer { t.remove() }
+        let bank = bank(t), other = self.bank(t)
+        try bank.add("Anna", unit(1, 0, 0), source: "a")
+        #expect(try other.match(unit(1, 0.1, 0))?.0 == "Anna")
+        try other.add("Ben", unit(0, 1, 0), source: "b")  // the other bank's write: this one sees it
+        #expect(try bank.names() == PyDict([("Anna", 1), ("Ben", 1)]))
+        // Another process rewrites Anna's file (Ben's voice now) and adds Carla's: both seen.
+        let dir = t.url.appendingPathComponent("palaver/voices")
+        let anna = try #require(try FileManager.default.contentsOfDirectory(atPath: dir.path).first { $0.hasPrefix("anna") })
+        let sample = { (v: [Double], source: String) in
+            JSONValue.object([("embedding", .array(v.map(JSONValue.double))), ("source", .string(source)), ("added", .string("2026-11-12T08:00:00+01:00"))])
+        }
+        try Data(PythonJSON.dumps(.object([("name", .string("Anna")), ("samples", .array([sample(unit(0, 0, 1), "x")]))])).utf8)
+            .write(to: dir.appendingPathComponent(anna))
+        try Data(PythonJSON.dumps(.object([("name", .string("Carla")), ("samples", .array([sample(unit(1, 0, 0), "c")]))])).utf8)
+            .write(to: dir.appendingPathComponent("carla.json"))
+        #expect(try bank.match(unit(1, 0.1, 0))?.0 == "Carla")
+        #expect(try bank.match(unit(0, 0.1, 1))?.0 == "Anna")
+        #expect(try bank.forget("Carla") && (try other.names().keys) == ["Anna", "Ben"])
+    }
+
     @Test func test_forget_removes_person() throws {
         let t = folder(); defer { t.remove() }
         let bank = bank(t)

@@ -162,6 +162,28 @@ extension DaemonTicks {
             #expect(r.h.sessions.count == 1 && r.h.sessions[0].stopped && r.h.sessions[0].stopReason == "call_ended")
         }
 
+        @Test func leavingASlackHuddleStopsAtOnceWhenItsControlsAreGone() async throws {
+            // #25: leaving at 300, Slack keeps its speaker until 311. Its huddle controls went at once; the follower
+            // confirmed it a second later.
+            let r = try HeldRig(tempDir(), slack: [(10, 300)], slackSpeaker: [(300, 311)], heard: [(10, 311)], grace: Self.grace,
+                                huddleLeft: { $0 >= 301.5 })
+            await r.h.run { $0 > 303 }
+            #expect(r.h.sessions.count == 1 && r.h.sessions[0].stopped && r.h.sessions[0].stopReason == "call_ended")
+            // Without the huddle's UI: Slack's speaker, then the grace.
+            let audioOnly = try HeldRig(tempDir(), slack: [(10, 300)], slackSpeaker: [(300, 311)], heard: [(10, 311)], grace: Self.grace)
+            await audioOnly.h.run { $0 > 315 }
+            #expect(!audioOnly.h.sessions[0].stopped)
+            await audioOnly.h.run { $0 > 319 }  // 2 s ticks: released at 312, stopped at 318
+            #expect(audioOnly.h.sessions[0].stopped)
+        }
+
+        @Test func aMutedHuddleWhoseControlsAreThereRecordsOn() async throws {
+            let r = try HeldRig(tempDir(), slack: [(10, 100), (200, 600)], slackSpeaker: [(100, 200)], heard: [(10, 600)],
+                                grace: Self.grace, huddleLeft: { _ in false })
+            await r.h.run { $0 > 400 }
+            #expect(r.h.sessions.count == 1 && !r.h.sessions[0].stopped)
+        }
+
         @Test func aDeviceSwitchReleasingTheMicBrieflySplitsNothing() async throws {
             let r = try HeldRig(tempDir(), teams: [(10, 300), (303, 600)], heard: [(10, 600)], grace: Self.grace)
             await r.h.run { $0 > 500 }
@@ -350,6 +372,23 @@ extension DaemonTicks {
             #expect(h.state()["why_text"] == h.status()["why_text"])
             h.daemon.shutdown()
             #expect(h.status()["why"] == .null)
+        }
+
+        @Test func theStatusSaysWhenTheMicIsMutedInTheCall() async throws {
+            let h = try Harness(tempDir(), activity: teams { $0 >= 10 })
+            var made: FakeSession?
+            h.newSession = { [unowned h] trigger in
+                h.newSession = nil
+                made = h.makeSession(trigger)
+                return made!
+            }
+            await h.run { $0 > 30 }
+            #expect(h.status()["muted"] == .null)
+            #expect(h.status()["why_text"]?.stringValue?.contains("Muted") == false)
+            made?.mutedIn = "teams"
+            #expect(h.status()["muted"] == .string("teams"))
+            #expect(h.status()["why_text"] == .string("Recording · Teams call since 12:06 · Muted in Teams"))
+            h.daemon.shutdown()
         }
 
         @Test func anAudioProblemShowsInTheStatusAndNotifiesOnce() async throws {

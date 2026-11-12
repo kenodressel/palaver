@@ -196,13 +196,15 @@ export function toast(text, opts = {}) {
 }
 
 // A change the user can take back: into the ⌘Z history, and a toast with Undo.
+// ``text``: the toast says more than the history's ``label``; ``action``: a
+// button besides Undo (as for ``toast``).
 // Returns the history entry: ``history.has(entry)`` is false once it was undone,
 // e.g. by ⌘Z while the change was still animating.
-export function remember(label, undo) {
+export function remember(label, undo, { text, action } = {}) {
   const entry = { label, undo };
   history.push(entry);
   // Already taken by ⌘Z (done or running): nothing left for the toast to undo.
-  toast(label, { undo: async () => { if (history.remove(entry)) await undo(); } });
+  toast(text || label, { action, undo: async () => { if (history.remove(entry)) await undo(); } });
   return entry;
 }
 

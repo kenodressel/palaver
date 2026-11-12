@@ -49,6 +49,8 @@ public enum ChangesAPI {
     public static func undoable(_ app: ServerApp, label: String, meetings: [String] = [], audio: Bool = false,
                                 speakerFilesOfAll: Bool = false, stores: [URL] = [], projectsLock: Bool = false,
                                 _ body: (String) throws -> JSONValue) throws -> JSONValue {
+        // What the last change started after its answer is done first (#31); before the projects' lock, which it takes.
+        app.background.settle(FOLLOW_UP_WAIT)
         func change() throws -> (String, JSONValue) {
             let token = try Undo.take(app.outputDir, label, meetings: meetings, audio: audio,
                                       speakerFilesOfAll: speakerFilesOfAll, stores: stores)
@@ -77,6 +79,9 @@ public enum ChangesAPI {
                              logger: "palaver.webapp.api")
         }
     }
+
+    /// How long a change waits for the follow-ups of the one before (`Background.settle`).
+    public static let FOLLOW_UP_WAIT = 30.0
 
     /// `undoable` for a change whose answer is only its token.
     @discardableResult
@@ -151,12 +156,11 @@ public enum ChangesAPI {
         for (i, e) in (CalendarEvents.loadQuestion(paths) ?? []).enumerated() where Py.same(key, e.key.isEmpty ? "question|\(i)" : e.key) {
             return e
         }
-        let entries = try EventsAPI.meetingEvents(app: app, id: paths.id)
-        let events = try EventsAPI.candidateEvents(app, paths)
-        guard let found = zip(entries, events).first(where: { $0.0["key"]?.stringValue.map { Py.same($0, key) } ?? false }) else {
-            throw NotFound(key)
+        // The picker's keys (`EventsAPI.meetingEvents`), from one look at the calendar (#31).
+        for (i, e) in try EventsAPI.candidateEvents(app, paths).enumerated() where Py.same(e.key.isEmpty ? "stored|\(i)" : e.key, key) {
+            return e
         }
-        return found.1
+        throw NotFound(key)
     }
 
     /// `set_meeting_event`: which calendar event the recording was (nil: none of them). The user's choice is final;
@@ -180,8 +184,26 @@ public enum ChangesAPI {
             }
             try evidence.save()
             if [paths.systemTurns, paths.transcriptJson, paths.meta].allSatisfy(MeetingsAPI.exists) {
-                try afterCut(app, changed: [paths], gone: [])
+                try afterEvent(app, paths)
             }
+        }
+    }
+
+    /// What follows a change of event (#31). At once, for the answer: the meeting's names written again, its voices
+    /// recognized with the new invitees, its project by the rules. After the answer: every meeting's voices and the
+    /// names inferred across meetings (seconds on a large library), then the meeting's project by the rules again,
+    /// with the names inference found.
+    static func afterEvent(_ app: ServerApp, _ paths: RecordingPaths) throws {
+        try Speakers.saveSpeakerNames(paths, try Speakers.loadSpeakerNames(paths), stores: app.stores)
+        try People.recognize(paths, stores: app.stores)
+        try ProjectRules.assignByRules(outputDir: app.outputDir, userName: app.userName, meetings: [paths.id], stores: app.stores)
+        let id = paths.id
+        app.background.followUp("recognition") { app in
+            try People.refreshRecognition(outputDir: app.outputDir, userName: app.userName, stores: app.stores)
+            let paths = RecordingPaths(app.outputDir.appendingPathComponent(id, isDirectory: true))
+            guard MeetingsAPI.exists(paths.transcriptJson) else { return }  // gone meanwhile
+            // Not under the projects' lock: a change holding it may wait for this (the store's own lock is enough).
+            try ProjectRules.assignByRules(outputDir: app.outputDir, userName: app.userName, meetings: [id], stores: app.stores)
         }
     }
 
@@ -567,6 +589,8 @@ extension Router {
             let token = try ChangesAPI.trashMeeting(app, id: m.group(1)!)
             return .json(.object([("trashed", .string(m.group(1)!)), ("undo", .string(token))]))
         }
+        // After a change: once what it started after its answer is done (#31), at most 10 s.
+        r.get("/api/settled") { _, _ in .json(.object([("settled", .bool(app.background.settle(10)))])) }
         post("/api/undo") { req, _ in
             let ids = try UndoRoute.undoChange(app, token: Py.str(try PyBody.required(req.json, "token")))
             return .json(.object([("restored", .strings(ids))]))

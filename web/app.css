@@ -332,7 +332,6 @@ h1 {
 .title-input:focus { outline: none; }
 .title-input::placeholder { color: var(--ink-3); }
 /* Under a title the calendar does not use: what the calendar calls the meeting. */
-.title-hint { margin-top: 4px; color: var(--ink-2); font-size: 13px; }
 
 /* "Wed, Oct 28 · 12:00 · 52 min · ✓ Reviewed" */
 .when { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 6px; color: var(--ink-2);
@@ -764,6 +763,12 @@ button.mn-time:hover, button.mn-time:focus-visible { background: var(--selected)
 .link-chip.unsure { background: none; outline: 1.5px dotted var(--v2); outline-offset: -1.5px; text-decoration: none;
   cursor: default; }
 .link-kind { color: var(--ink-3); font-size: 12px; font-weight: 500; }
+/* #31: an event being changed: the clicked button spins, the rest waits. */
+.event-picker[aria-busy="true"], .event-link[aria-busy="true"] { cursor: progress; }
+/* #30: a sure event, or none, is a quiet line under the date with Change… or Pick…: no fill, in line with the date. */
+.link-chip.quiet { padding-left: 0; background: none; color: var(--ink-2); font-weight: 500; }
+.link-kind:has(+ .link-title)::after { content: "·"; margin-left: 6px; color: var(--ink-3); }
+.link-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .link-why { min-width: 0; overflow: hidden; color: var(--ink-2); font-size: 12px; font-weight: 500;
   text-overflow: ellipsis; white-space: nowrap; }
 .event-choice { font-weight: 600; }
@@ -779,6 +784,12 @@ button.mn-time:hover, button.mn-time:focus-visible { background: var(--selected)
 .event-option:hover { background: var(--selected); }
 .event-option.current { box-shadow: inset 0 0 0 2px var(--you); }
 .event-time { min-width: 96px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.event-day { display: block; font-size: 12px; }
+.event-options { display: flex; flex-direction: column; gap: 8px; }
+.event-group { margin-top: 4px; }
+.event-filter { padding: 8px 16px; border: 1px solid var(--rule); border-radius: 999px; background: var(--surface);
+  color: var(--ink); font: inherit; font-size: 13px; }
+.event-filter:focus-visible { border-color: var(--focus); outline: none; }
 .event-title { flex: 1; font-weight: 650; }
 .event-actions { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
 .event-picker .meta { margin: 0; }

@@ -54,7 +54,10 @@ public struct CoreAudioProcessLister: ProcessLister {
         return ref.takeRetainedValue() as String
     }
 
-    public func processes() throws -> [AudioProcess] {
+    public func processes() throws -> [AudioProcess] { try objects().map(\.process) }
+
+    /// The processes with their Core Audio objects (CallMute listens on them).
+    func objects() throws -> [(id: AudioObjectID, process: AudioProcess)] {
         var addr = address(0x70727323)  // 'prs#'
         var size: UInt32 = 0
         var status = AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size)
@@ -65,10 +68,10 @@ public struct CoreAudioProcessLister: ProcessLister {
         }
         guard status == 0 else { throw ListError(status: status) }
         return ids.map { obj in
-            AudioProcess(bundleId: string(obj, 0x70626964),  // 'pbid'
+            (obj, AudioProcess(bundleId: string(obj, 0x70626964),  // 'pbid'
                          pid: Int32(truncatingIfNeeded: uint32(obj, 0x70706964) ?? 0),  // 'ppid'
                          runningInput: (uint32(obj, 0x70697269) ?? 0) != 0,  // 'piri'
-                         runningOutput: (uint32(obj, 0x7069726F) ?? 0) != 0)  // 'piro'
+                         runningOutput: (uint32(obj, 0x7069726F) ?? 0) != 0))  // 'piro'
         }
     }
 }
@@ -82,7 +85,7 @@ public let slackBundlePrefixes = ["com.tinyspeck.slackmacgap"]
 /// An ignored app's hold ends once it let go this long (#7).
 public let releasedSeconds: Double = 10
 
-private func isApp(_ p: AudioProcess, _ prefixes: [String]) -> Bool {
+func isApp(_ p: AudioProcess, _ prefixes: [String]) -> Bool {
     let id = p.bundleId.lowercased()
     return prefixes.contains { id.hasPrefix($0) }
 }
@@ -110,6 +113,8 @@ public final class CallDetector: @unchecked Sendable {
     /// modulehost: mic+speaker), until they let go of the mic.
     private var played: Set<CallApp> = []
     private var hungUp: Set<CallApp> = []
+    /// Slack's huddle UI says the user left (SlackHuddleFollower): its speaker alone is no huddle any more.
+    public var huddleLeft: @Sendable () -> Bool = { false }
 
     public init(lister: ProcessLister = CoreAudioProcessLister(),
                 teams: @escaping @Sendable () -> Bool = { true },
@@ -141,6 +146,12 @@ public final class CallDetector: @unchecked Sendable {
     }
 
     public func callAsFunction() -> CallApp? { detect() }
+
+    /// Since when (host ns) `app` has held the mic without a break, as the last detection saw it.
+    public func callSince(_ app: CallApp) -> Int64? {
+        lock.lock(); defer { lock.unlock() }
+        return micSince[app].map { Int64(($0 * 1e9).rounded()) }
+    }
 
     /// `recording`: the app whose call is recorded now (nil: none, or a manual recording).
     public func detect(recording: CallApp? = nil) -> CallApp? {
@@ -196,6 +207,7 @@ public final class CallDetector: @unchecked Sendable {
         holding.subtract(ignoredApps.keys)
         micSince = Dictionary(uniqueKeysWithValues: holding.map { ($0, micSince[$0] ?? now) })
         if holding.contains(.slack) { inHuddle = true }
+        if inHuddle, !holding.contains(.slack), huddleLeft() { inHuddle = false }  // left, not muted
         // Muted in a huddle: the others still play.
         let huddle = holding.contains(.slack)
             || (inHuddle && ignoredApps[.slack] == nil && slack.contains(where: { $0.runningOutput }))

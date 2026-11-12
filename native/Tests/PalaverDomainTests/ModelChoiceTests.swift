@@ -105,6 +105,27 @@ private let GEMMA = "mlx-community/gemma-4-12B-it-OptiQ-4bit"
         #expect(ModelChoice.memoryGB(feature: "notes", config: cfg(engine: "claude"), stores: place.stores) == 0.0)
     }
 
+    @Test func aNotesRunNeedsTheMostOfItsNotesAndProjectsModels() throws {
+        let place = Place(); defer { place.remove() }
+        let c = cfg(localModel: GEMMA)
+        #expect(ModelChoice.notesRunMemoryGB(config: c, stores: place.stores) == 14.0)  // both local
+        try place.choose("notes", .string("claude-cli"))
+        #expect(ModelChoice.memoryGB(feature: "notes", config: c, stores: place.stores) == 0.0)
+        // Projects never chosen follow the notes: the sort no longer loads Gemma for cloud notes (#26).
+        #expect(ModelChoice.choiceFor(feature: "projects", config: c, stores: place.stores) == "claude-cli")
+        #expect(ModelChoice.notesRunMemoryGB(config: c, stores: place.stores) == 0.0)
+        try place.choose("projects", .string("local"))  // chosen on purpose: kept
+        #expect(ModelChoice.notesRunMemoryGB(config: c, stores: place.stores) == 14.0)
+        try place.choose("projects", .string("anthropic"))
+        #expect(ModelChoice.notesRunMemoryGB(config: c, stores: place.stores) == 0.0)  // nothing to load here
+        let meeting = place.meeting("m")
+        try LocalOnly.set(meeting, on: true)
+        #expect(ModelChoice.notesRunMemoryGB(folder: meeting, config: c, stores: place.stores) == 14.0)  // kept here: local
+        // config.toml's claude is both features' default.
+        try SettingsFile.update([("engines", .object([]))], stores: place.stores)
+        #expect(ModelChoice.notesRunMemoryGB(config: cfg(engine: "claude"), stores: place.stores) == 0.0)
+    }
+
     @Test func test_notes_waiting_for_a_cloud_model_run_nothing() throws {
         let place = Place(); defer { place.remove() }
         try place.choose("notes", .string("pending"))

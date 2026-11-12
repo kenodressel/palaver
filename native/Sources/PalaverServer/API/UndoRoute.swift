@@ -12,6 +12,7 @@ public enum UndoRoute {
     /// `undo_change`: roll back the change `token` stands for; the meetings it touched. `UndoGone` (404) when there is
     /// no such snapshot, `UndoChanged` (409) when something changed since.
     public static func undoChange(_ app: ServerApp, token: String) throws -> [String] {
+        app.background.settle(ChangesAPI.FOLLOW_UP_WAIT)  // what the change started after its answer is done first (#31)
         let out = app.outputDir
         let label = try Undo.label(out, token)
         if label.hasPrefix("my-notes") {  // the user's own notes: nothing depends on them

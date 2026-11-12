@@ -2,8 +2,10 @@
 // message per line. A small hand-written loop rather than the SDK: the server needs `initialize`, `ping`, `tools/list`
 // and `tools/call` (plus empty `prompts/list` and `resources/list`), and the app links no extra package for them.
 //
-// The server is called "meetings" and gives Claude the same instructions and the seven read-only tools with the same
-// parameters, defaults and descriptions as the Python server. A tool's answer is its JSON (one text block per item of
+// The server is called "palaver" (McpSetup.NAME; "meetings" before 0.6.3) and gives Claude its instructions and seven
+// read-only tools, with the Python server's names, parameters and defaults. The instructions and descriptions say what
+// it serves in the words a user asks with (meetings, calls, Teams, transcripts, next steps, customers …), so Claude
+// picks it for such a question. A tool's answer is its JSON (one text block per item of
 // a list, as the Python SDK sent it) and the same value as `structuredContent`. Every call that runs leaves one line
 // in the access log (McpSession.record): the arguments given (without defaults, long text cut short), how much went
 // out and which meetings.
@@ -13,16 +15,18 @@ import PalaverCore
 import PalaverDomain
 
 public final class McpServer {
-    public static let NAME = "meetings"
+    public static let NAME = McpSetup.NAME
 
-    /// `INSTRUCTIONS`.
+    /// What the server serves and how to read it, sent at `initialize`.
     public static let INSTRUCTIONS = """
-        The user's recorded meetings (mostly Microsoft Teams calls, in German and English): notes (summary, sections, \
-        next steps, decisions), transcripts with speaker names, projects (customers, initiatives, topics) and people. \
-        Start with search_meetings or list_meetings; read a meeting with get_meeting (notes first; ask for the transcript \
-        only when the notes are not enough, preferably a time range). get_project and open_next_steps gather across \
-        meetings. Meeting ids look like 2026-10-21T16-29-29 (the start, local time). Meetings the user keeps on this Mac \
-        are not shared here.
+        Palaver: the user's recorded meetings and calls (Microsoft Teams, Slack huddles, in person), in German and \
+        English: transcripts with speaker names, meeting notes (summary, next steps, decisions), projects (customers, \
+        initiatives, topics) and people. Use it whenever the user asks about a meeting, call, 1:1 or conversation: what \
+        was said or decided, who said what, next steps or action items, a customer, project or person. Start with \
+        search_meetings or list_meetings; read a meeting with get_meeting (notes first; ask for the transcript only when \
+        the notes are not enough, preferably a time range). get_project and open_next_steps gather across meetings. \
+        Meeting ids look like 2026-10-21T16-29-29 (the start, local time). Meetings the user keeps on this Mac are not \
+        shared here.
         """
 
     /// The protocol versions this server speaks, newest first: a client's own is answered with itself, any other with
@@ -117,9 +121,10 @@ public final class McpServer {
         let t = tools
         return [
             Tool(name: "list_meetings", description: """
-                Meetings, newest first, with title, people, projects and summary.
-                Filter by project (name or id), person (spoke or was invited; part of
-                a name is enough), and dates (YYYY-MM-DD).
+                The user's recorded meetings and calls (Teams, Slack huddles, in person),
+                newest first, with title, people, projects and summary. Filter by
+                project or customer (name or id), person (spoke or was invited; part
+                of a name is enough), and dates (YYYY-MM-DD).
                 """,
                  params: [Self.optional("project"), Self.optional("person"), Self.optional("since"), Self.optional("until"),
                           Param(name: "limit", kind: .integer, fallback: .int(30))],
@@ -128,7 +133,8 @@ public final class McpServer {
                                    until: a.string("until"), limit: a.int("limit"))
             },
             Tool(name: "search_meetings", description: """
-                Search the meetings as the Meetings window does. The query may name
+                Search the user's recorded meetings and calls: transcripts (who said
+                what), notes, decisions, next steps. The query may name
                 people ("Anna and Tom": both took part, as named speakers or invitees;
                 "Anna or Tom"), projects, organizations ("ACB people"), dates ("last
                 month", "since 2026-10-01", "oktober"), decisions or next steps ("what
@@ -149,9 +155,10 @@ public final class McpServer {
                                      limit: a.int("limit"))
             },
             Tool(name: "get_meeting", description: """
-                One meeting: who was invited and spoke, projects, its notes and the user's own notes.
-                The transcript only with include_transcript, or from_minute/to_minute
-                for a part of it (minutes from the start).
+                One recorded meeting or call: who was invited and spoke, projects, its
+                notes (summary, next steps, decisions) and the user's own notes. The
+                transcript with speaker names only with include_transcript, or
+                from_minute/to_minute for a part of it (minutes from the start).
                 """,
                  params: [Param(name: "meeting_id", kind: .string, fallback: nil),
                           Param(name: "include_transcript", kind: .boolean, fallback: .bool(false)),
@@ -161,25 +168,27 @@ public final class McpServer {
                                  fromMinute: a.double("from_minute"), toMinute: a.double("to_minute"))
             },
             Tool(name: "list_projects", description: """
-                Projects (customers, initiatives, topics) with their description,
-                how many meetings, the people involved and the latest meeting.
+                Projects the user's meetings are sorted into (customers, initiatives,
+                topics) with their description, how many meetings, the people
+                involved and the latest meeting.
                 """,
                  params: [], items: "projects") { _ in try t.listProjects() },
             Tool(name: "get_project", description: """
-                A project (name or id): description, its meetings with summaries,
-                people, and the next steps agreed in its meetings.
+                A project or customer (name or id): description, its meetings and calls
+                with summaries, people, and the next steps agreed in its meetings.
                 """,
                  params: [Param(name: "project", kind: .string, fallback: nil)], items: nil) { a in
                 try t.getProject(project: a.string("project") ?? "")
             },
             Tool(name: "list_people", description: """
-                People named in the meetings, with how many meetings and when the
-                last one was.
+                People in the user's meetings and calls (named speakers and invitees),
+                with how many meetings and when the last one was.
                 """,
                  params: [], items: "people") { _ in try t.listPeople() },
             Tool(name: "open_next_steps", description: """
-                Next steps agreed in meetings, newest first: filter by project,
-                person in the meeting, owner of the step, and since (YYYY-MM-DD).
+                Next steps and action items agreed in the user's meetings and calls,
+                newest first: filter by project, person in the meeting, owner of the
+                step, and since (YYYY-MM-DD).
                 """,
                  params: [Self.optional("project"), Self.optional("person"), Self.optional("owner"), Self.optional("since")],
                  items: "next_steps") { a in

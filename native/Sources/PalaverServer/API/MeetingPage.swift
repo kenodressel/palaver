@@ -78,6 +78,8 @@ extension MeetingsAPI {
             ("title_from", .str(titleFrom)),
             ("calendar", try calendar(app, event, used: used, link: CalendarEvents.loadLink(paths))),
             ("event_question", eventQuestion(paths)),
+            // The calendar is on: a meeting without an event offers to pick one (#30).
+            ("calendar_on", .bool(app.calendar != nil)),
             ("start", try start(paths, meta)),
             ("duration", meta["duration_seconds"] ?? .null),
             ("status", .string(status)),

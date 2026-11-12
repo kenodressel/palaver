@@ -173,7 +173,7 @@ public enum TempSweep {
             let digits = rest.prefix(while: \.isNumber)
             let suffix = rest.dropFirst(digits.count)
             guard !digits.isEmpty, let pid = Int32(digits),
-                  [".sock", ".notifications", ".notifications.tmp"].contains(String(suffix)) else { continue }
+                  [".sock", ".notifications", ".notifications.tmp", ".accessibility", ".accessibility.tmp"].contains(String(suffix)) else { continue }
             if pid == myPid || alive(pid) { continue }
             let path = dir.appendingPathComponent(name).path
             guard let attrs = try? fm.attributesOfItem(atPath: path),

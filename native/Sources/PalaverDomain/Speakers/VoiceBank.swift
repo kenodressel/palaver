@@ -178,14 +178,51 @@ public final class VoiceBank: VoiceScoring {
         let samples: [JSONValue]
     }
 
+    /// The files as last read (#31): one change of the event recognizes the voices of every meeting, every page
+    /// looks at the bank, and each look read and parsed every file again. Kept per folder, for every bank of this
+    /// process, while each file's size and modification time stay the same (another process's writes change them
+    /// too); a bank's own writes drop it. `units`: each person's samples as unit vectors, for `scores`, once asked for.
+    private struct Read {
+        let stamp: [String]
+        let people: PyDict<Person>
+        var units: PyDict<[[Double]]>?
+    }
+    nonisolated(unsafe) private static var reads: [String: Read] = [:]
+    private static let readLock = NSLock()
+    private var read: Read? {
+        get { Self.readLock.withLock { Self.reads[directory.path] } }
+        set { Self.readLock.withLock { Self.reads[directory.path] = newValue } }
+    }
+
+    /// What the folder's voice files are now: each name with its size and modification time.
+    private func stamp(_ names: [String]) -> [String] {
+        names.map { name in
+            var info = Darwin.stat()
+            guard stat(directory.appendingPathComponent(name).path, &info) == 0 else { return name }
+            return "\(name)|\(info.st_size)|\(info.st_mtimespec.tv_sec).\(info.st_mtimespec.tv_nsec)"
+        }
+    }
+
+    private func forgetRead() { read = nil }
+
     /// `_people`: name → (file, data), the files `*.json` in sorted order (a later file of the same name wins, in
     /// the first one's place). A file that is not a person (not JSON, no name or samples) is an error, as in Python.
     private func people() throws -> PyDict<Person> {
-        var people = PyDict<Person>()
+        try current().people
+    }
+
+    /// The files as they are now: the last read while none changed.
+    private func current() throws -> Read {
         var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDir), isDir.boolValue else { return people }
-        let names = try FileManager.default.contentsOfDirectory(atPath: directory.path).filter { $0.hasSuffixScalars(".json") }
-        for name in Py.stableSorted(names, by: Py.less) {
+        guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDir), isDir.boolValue else {
+            return Read(stamp: [], people: PyDict(), units: PyDict())
+        }
+        let names = Py.stableSorted(try FileManager.default.contentsOfDirectory(atPath: directory.path)
+            .filter { $0.hasSuffixScalars(".json") }, by: Py.less)
+        let now = stamp(names)
+        if let last = read, last.stamp == now { return last }
+        var people = PyDict<Person>()
+        for name in names {
             let file = directory.appendingPathComponent(name)
             let parsed: JSONValue
             do { parsed = try PythonJSON.parse(Data(contentsOf: file)) } catch {
@@ -197,7 +234,9 @@ public final class VoiceBank: VoiceScoring {
             }
             people[person] = Person(file: file, data: data, samples: samples)
         }
-        return people
+        let fresh = Read(stamp: now, people: people, units: nil)
+        read = fresh
+        return fresh
     }
 
     private func find(_ name: String) throws -> Person? {
@@ -216,7 +255,15 @@ public final class VoiceBank: VoiceScoring {
     }
 
     private func write(_ data: PyDict<JSONValue>, _ file: URL) throws {
+        forgetRead()
+        defer { forgetRead() }
         try PythonJSON.write(data.json, to: file, indent: nil, ensureAscii: false)
+    }
+
+    private func remove(_ file: URL) throws {
+        forgetRead()
+        defer { forgetRead() }
+        try FileManager.default.removeItem(at: file)
     }
 
     /// Enrolled people and their number of voice samples.
@@ -266,7 +313,7 @@ public final class VoiceBank: VoiceScoring {
             if kept.count == person.samples.count { continue }
             removed += person.samples.count - kept.count
             if kept.isEmpty {
-                try FileManager.default.removeItem(at: person.file)
+                try remove(person.file)
             } else {
                 var data = person.data
                 data["samples"] = .array(kept)
@@ -305,7 +352,7 @@ public final class VoiceBank: VoiceScoring {
     public func forget(_ name: String) throws -> Bool {
         try StoreLock.with(directory) {
             guard let found = try find(name) else { return false }
-            try FileManager.default.removeItem(at: found.file)
+            try remove(found.file)
             return true
         }
     }
@@ -325,7 +372,7 @@ public final class VoiceBank: VoiceScoring {
                 guard case .string(let source) = try Self.source(sample) else { throw VoiceError(description: "a sample's source is not text") }
                 try add(new, try VoiceMath.vector(sample["embedding"], "a sample's embedding"), source: source)
             }
-            try FileManager.default.removeItem(at: found.file)
+            try remove(found.file)
             return true
         }
     }
@@ -334,16 +381,29 @@ public final class VoiceBank: VoiceScoring {
     public func scores(_ embedding: [Double]) throws -> [(Double, String)] {
         let query = VoiceMath.unit(embedding)
         var out: [(Double, String)] = []
-        for (name, person) in try people() where !person.samples.isEmpty {
+        for (name, samples) in try units() where !samples.isEmpty {
             var best = -Double.infinity
-            for (i, sample) in person.samples.enumerated() {
-                let sim = try VoiceMath.dot(VoiceMath.unit(VoiceMath.vector(sample["embedding"], "a sample's embedding")), query)
+            for (i, sample) in samples.enumerated() {
+                let sim = try VoiceMath.dot(sample, query)
                 if i == 0 || sim > best { best = sim }
             }
             out.append((best, name))
         }
         // sorted(reverse=True) on (similarity, name) tuples.
         return Py.stableSorted(out) { a, b in a.0 > b.0 || (a.0 == b.0 && Py.less(b.1, a.1)) }
+    }
+
+    /// Each person's samples as unit vectors, in `people()`'s order; made once per read of the files.
+    private func units() throws -> PyDict<[[Double]]> {
+        var now = try current()
+        if let units = now.units { return units }
+        let units = PyDict(try now.people.map { name, person in
+            (name, try person.samples.map { try VoiceMath.unit(VoiceMath.vector($0["embedding"], "a sample's embedding")) })
+        })
+        now.units = units
+        let key = directory.path
+        Self.readLock.withLock { if Self.reads[key]?.stamp == now.stamp { Self.reads[key] = now } }
+        return units
     }
 
     /// The best-matching person, if clearly above the threshold and the runner-up.

@@ -3,6 +3,7 @@
 // fallbacks :318-532, the writer thread :536-647, the stall watchdog).
 import Darwin
 import Foundation
+import PalaverCore
 
 /// A capture source the recorder starts and stops: the process tap or the microphone.
 public protocol CaptureSource: AnyObject {
@@ -116,6 +117,14 @@ public final class CaptureRecorder: @unchecked Sendable {
     private let sleep: (Double) -> Void
     private let ringCapacity: Int
     private let runsWriterThread: Bool
+    /// While muted in the recorded call, the mic is written as silence (MicMuteGate).
+    private let mute: MuteTimeline?
+    private var gate: MicMuteGate?
+    /// Mic stretches (host ns) silenced after they were written: a mute told late.
+    private let lateLock = NSLock()
+    private var _late: [Range<Int64>] = []
+    /// After the stop: where the mic track began and ended (host ns), for `silenceAfterStop`.
+    private var finished: (start: Int64, end: Int64)?
     var makeWriter: (URL) throws -> TrackWriter = { try TrackWriter(finalURL: $0) }
     /// How long stop waits for the writer thread before it gives the files up as `.part`.
     var writerStopTimeout: Double = 60
@@ -160,16 +169,17 @@ public final class CaptureRecorder: @unchecked Sendable {
                 clock: @escaping () -> Double = monotonicSeconds,
                 log: @escaping (String) -> Void = { _ in }, debug: @escaping (String) -> Void = { _ in },
                 sleep: @escaping (Double) -> Void = { Thread.sleep(forTimeInterval: $0) },
-                ringCapacity: Int = CaptureRing.defaultCapacity) {
+                ringCapacity: Int = CaptureRing.defaultCapacity, mute: MuteTimeline? = nil) {
         self.init(micURL: micURL, systemURL: systemURL, sources: sources, monitor: monitor, clock: clock, log: log,
-                  debug: debug, sleep: sleep, ringCapacity: ringCapacity, runsWriterThread: true)
+                  debug: debug, sleep: sleep, ringCapacity: ringCapacity, runsWriterThread: true, mute: mute)
     }
 
     /// `runsWriterThread: false`: the test pumps `drainOnce` and `checkHealth` itself, in simulated time.
     init(micURL: URL, systemURL: URL, sources: CaptureSources, monitor: CaptureMonitor?, clock: @escaping () -> Double,
          log: @escaping (String) -> Void, debug: @escaping (String) -> Void, sleep: @escaping (Double) -> Void,
-         ringCapacity: Int, runsWriterThread: Bool) {
+         ringCapacity: Int, runsWriterThread: Bool, mute: MuteTimeline? = nil) {
         self.micURL = micURL
+        self.mute = mute
         self.systemURL = systemURL
         self.sources = sources
         self.monitor = monitor
@@ -224,6 +234,7 @@ public final class CaptureRecorder: @unchecked Sendable {
         let micWriter = try makeWriter(micURL)
         let systemWriter: TrackWriter
         do { systemWriter = try makeWriter(systemURL) } catch { micWriter.abort(); throw error }
+        gate = mute.map(MicMuteGate.init)
         aligner = TrackAligner(mic: micWriter, system: systemWriter,
                                onReanchor: { [unowned self] track, drift in self.onReanchor(track, drift) },
                                log: log)
@@ -261,7 +272,9 @@ public final class CaptureRecorder: @unchecked Sendable {
             throw CaptureError("the capture writer did not finish within \(Int(writerStopTimeout)) s; "
                                + "the .part files are left for `process` to recover")
         }
-        return try finalize()
+        let lengths = try finalize()
+        if let start = aligner?.startPts { self.finished = (start, start + Int64(lengths.mic) * nanosPerFrame) }
+        return lengths
     }
 
     /// Stops without finalizing: both `.part` files stay, their headers stating what was written.
@@ -420,7 +433,38 @@ public final class CaptureRecorder: @unchecked Sendable {
             let dropped = ring.takeDropped()
             if dropped > 0 || droppedSinceLog[track, default: 0] > 0 { noteDropped(dropped, track) }
         }
-        return progress
+        return releaseMic() || progress
+    }
+
+    /// The held mic chunks that are due (all: the recording stops) to the aligner; true when there were any.
+    @discardableResult
+    private func releaseMic(all: Bool = false) -> Bool {
+        guard let gate else { return false }
+        var due: [TimedChunk] = []
+        if !gate.isEmpty {
+            due = gate.release(now: Int64((clock() * 1e9).rounded()), all: all)
+            for chunk in due { place(chunk, .mic) }
+        }
+        silenceLate(gate)
+        return !due.isEmpty
+    }
+
+    /// A mute told later than the hold: what the mic track already has of it is overwritten with
+    /// silence (the live workers may have read it meanwhile).
+    private func silenceLate(_ gate: MicMuteGate) {
+        guard let from = gate.timeline.takeChangedFrom(), let until = gate.releasedUntil, from < until,
+              let aligner, let start = aligner.startPts else { return }
+        var seconds = 0.0
+        for r in gate.timeline.mutedRanges(from: from, to: until) {
+            let frames = TrackAligner.frameOffset(r.lowerBound - start)..<TrackAligner.frameOffset(r.upperBound - start)
+            guard aligner.mic.silence(frames) else { writeFailed(.mic, CaptureError("cannot silence a late mute")); continue }
+            seconds += Double(r.upperBound - r.lowerBound) / 1e9
+            lateLock.withLock { _late.append(r) }
+        }
+        if seconds > 0 {
+            log("silenced \(String(format: "%.1f", seconds)) s of microphone already written: "
+                + "\(gate.timeline.appName) told the mute late")
+        }
     }
 
     /// A full ring (the writer fell behind by seconds): logged at most once a minute per track.
@@ -436,6 +480,7 @@ public final class CaptureRecorder: @unchecked Sendable {
 
     private func drainAll() {
         while drainOnce() {}
+        releaseMic(all: true)
     }
 
     private func handle(pts: Int64, format: PCMFormat, track: CaptureTrack) {
@@ -455,10 +500,21 @@ public final class CaptureRecorder: @unchecked Sendable {
             lastSystemArrival = now
             stateLock.withLock { _systemRate = rate }
         }
+        let chunk = TimedChunk(pts: pts, samples: samples, rate: rate)
+        guard track == .mic, let gate else { place(chunk, track); return }
+        // Held back: the aligner learns where the mic starts now, so system audio is written meanwhile.
+        if aligner.micFirstPts == nil {
+            do { try aligner.announce(.mic, firstPts: pts) } catch { writeFailed(.system, error) }
+        }
+        gate.push(chunk)
+    }
+
+    private func place(_ chunk: TimedChunk, _ track: CaptureTrack) {
+        guard let aligner, !aligner.finished else { return }
         let writer = aligner.writer(track)
         let before = writer.framesWritten
         do {
-            try aligner.handle(TimedChunk(pts: pts, samples: samples, rate: rate), track: track)
+            try aligner.handle(chunk, track: track)
             if writer.framesWritten > before { writeSucceeded(track) }
         } catch {
             writeFailed(track, error)
@@ -514,7 +570,8 @@ public final class CaptureRecorder: @unchecked Sendable {
         }
         var written: [CaptureTrack: Double] = [:]
         if let aligner {
-            written[.mic] = Double(aligner.mic.framesWritten) / Double(captureSampleRate)
+            // What the mute gate holds is on its way to disk (its delay is longer than the length check allows).
+            written[.mic] = Double(aligner.mic.framesWritten) / Double(captureSampleRate) + (gate?.heldSeconds ?? 0)
             written[.system] = Double(aligner.system.framesWritten) / Double(captureSampleRate)
         }
         var access: [CaptureTrack: String] = [:]
@@ -561,6 +618,38 @@ public final class CaptureRecorder: @unchecked Sendable {
                 log("Audio health checks failed; warnings are off for this recording")
             }
             return fallback
+        }
+    }
+
+    /// The mic stretches silenced after they were written, in seconds from the track's start.
+    public var lateSilenced: [ClosedRange<Double>] {
+        let start = finished?.start ?? aligner?.startPts ?? 0
+        return lateLock.withLock { _late }.map { Double($0.lowerBound - start) / 1e9...Double($0.upperBound - start) / 1e9 }
+    }
+
+    /// After the stop: mute changes told since then (Teams' log comes late) silence the finished mic track.
+    /// The caller waits for them first; nothing runs on the writer thread any more.
+    public func silenceAfterStop() {
+        guard let mute, let (start, end) = finished, let from = mute.takeChangedFrom(), from < end else { return }
+        let fd = open(micURL.path, O_WRONLY | O_CLOEXEC)
+        guard fd >= 0 else { return }
+        defer { close(fd) }
+        var seconds = 0.0
+        let zeros = [UInt8](repeating: 0, count: 64 * 1024)
+        for r in mute.mutedRanges(from: max(from, start), to: end) {
+            var frame = TrackAligner.frameOffset(r.lowerBound - start)
+            let stop = TrackAligner.frameOffset(r.upperBound - start)
+            while frame < stop {
+                let n = min(stop - frame, zeros.count / 2)
+                guard zeros.withUnsafeBytes({ pwrite(fd, $0.baseAddress, n * 2, off_t(TrackWriter.headerSize + frame * 2)) }) == n * 2
+                else { log("⚠ cannot silence the microphone track after the stop"); return }
+                frame += n
+            }
+            seconds += Double(r.upperBound - r.lowerBound) / 1e9
+            lateLock.withLock { _late.append(r) }
+        }
+        if seconds > 0 {
+            log("silenced \(String(format: "%.1f", seconds)) s of microphone after the stop: \(mute.appName) told the mute late")
         }
     }
 

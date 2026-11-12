@@ -140,7 +140,8 @@ private func openai(_ content: String, finish: String = "stop") -> StubServer.An
         #!/bin/sh
         printf '%s\\n' "$*" > \(calls.path).args
         pwd > \(calls.path).cwd
-        cat > \(calls.path).stdin
+        # The notes' prompt is the first call's; the projects sort (following the notes' model) comes after.
+        if [ -e \(calls.path).stdin ]; then cat >> \(calls.path).later; else cat > \(calls.path).stdin; fi
         echo '{"is_error": false, "structured_output": \(PythonJSON.dumps(NOTES_ANSWER).replacingOccurrences(of: "'", with: ""))}'
         """.write(to: script, atomically: true, encoding: .utf8)
         chmod(script.path, 0o755)

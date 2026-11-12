@@ -9,22 +9,60 @@ import PalaverDomain
 /// api.py `_SUGGESTIONS`: the suggestions of one recordings folder while the files they are made of are unchanged.
 public final class GlossarySuggestions: @unchecked Sendable {
     private let lock = NSLock()
+    /// Held while the suggestions are made: a request that comes meanwhile (the warm-up after a start, Review and
+    /// Needs you at once) waits for them instead of making them a second time.
+    private let making = NSLock()
     private var kept: (signature: [Int], value: [JSONValue])?
     private var made = 0
+
+    /// Each meeting's share, kept per meeting while its files stay as they were (#29): when a meeting, the glossary or
+    /// the projects change, only what changed is read again, not every transcript. `shares`: its lines without fillers
+    /// (the slow part), its unsure words, its names spelled right; `counted`: those lines with the glossary applied,
+    /// and their words.
+    let shares = SignatureCache<MeetingShare>()
+    private var counted: [ScalarKey: (signature: [Int], lines: [(Double, String)], words: GlossarySuggest.MeetingWords)] = [:]
+
+    struct MeetingShare {
+        let lines: [(Double, String)]?
+        let unsure: PyDict<Int>?
+        let known: [String]
+    }
 
     public init() {}
 
     /// How many times the suggestions were computed.
     public var computed: Int { lock.withLock { made } }
+    /// How many times a meeting's transcript was read for them (once per meeting, again when its files change).
+    public var meetingsRead: Int { shares.misses }
 
     func get(_ signature: [Int]?, make: () throws -> [JSONValue]) rethrows -> [JSONValue] {
-        if let signature, let kept = lock.withLock({ kept }), kept.signature == signature { return kept.value }
-        let value = try make()
-        lock.withLock {
-            made += 1
-            kept = signature.map { ($0, value) }
+        func current() -> [JSONValue]? {
+            guard let signature, let kept = lock.withLock({ kept }), kept.signature == signature else { return nil }
+            return kept.value
         }
-        return value
+        if let value = current() { return value }
+        return try making.withLock {
+            if let value = current() { return value }  // made while this request waited
+            let value = try make()
+            lock.withLock {
+                made += 1
+                kept = signature.map { ($0, value) }
+            }
+            return value
+        }
+    }
+
+    /// Meeting `key`'s readable lines counted, kept while `signature` (its share's files and the glossary) stays as it
+    /// was. When it changed but the lines read as before (a glossary change elsewhere), the words counted before.
+    func words(_ key: String, signature: [Int]?, lines: () -> [(Double, String)]) -> GlossarySuggest.MeetingWords {
+        let k = ScalarKey(key)
+        let before = lock.withLock { counted[k] }
+        if let signature, let before, before.signature == signature { return before.words }
+        let shown = lines()
+        let same = before.map { $0.lines.count == shown.count && zip($0.lines, shown).allSatisfy { $0.0 == $1.0 && Py.same($0.1, $1.1) } }
+        let words = same == true ? before!.words : GlossarySuggest.MeetingWords(shown)
+        lock.withLock { counted[k] = signature.map { ($0, shown, words) } }
+        return words
     }
 }
 
@@ -44,16 +82,39 @@ public enum GlossaryAPI {
     static func suggestions(_ app: ServerApp, userName: String) throws -> [JSONValue] {
         var files = [app.stores.glossary, app.stores.projects]
         for name in recordingNames(app.outputDir) {
-            let folder = app.outputDir.appendingPathComponent(name, isDirectory: true)
-            files += ["transcript.json", "calendar.json", "speakers.json"].map { folder.appendingPathComponent($0) }
+            files += shareFiles(RecordingPaths(app.outputDir.appendingPathComponent(name, isDirectory: true)))
         }
         return try app.glossarySuggestions.get(SignatureCache<Int>.signature(files)) {
-            try GlossarySuggest.suggest(GlossarySuggest.corpus(outputDir: app.outputDir, stores: app.stores),
-                                        known: GlossarySuggest.knownSpellings(outputDir: app.outputDir, userName: userName,
-                                                                              stores: app.stores),
-                                        glossary: Glossary(path: app.stores.glossary),
-                                        unsure: GlossarySuggest.unsureWords(outputDir: app.outputDir))
+            // GlossarySuggest.corpus, knownSpellings and unsureWords, from each meeting's share.
+            let glossarySignature = SignatureCache<Int>.signature([app.stores.glossary])  // before it is read
+            let cache = app.glossarySuggestions, glossary = Glossary.current(stores: app.stores)
+            var meetings: [(String, GlossarySuggest.MeetingWords)] = [], known: [[String]] = [], unsure = PyDict<Int>()
+            for name in recordingNames(app.outputDir) {
+                let paths = RecordingPaths(app.outputDir.appendingPathComponent(name, isDirectory: true))
+                let read = SignatureCache<Int>.signature(shareFiles(paths))
+                let share = try cache.shares.get(key: paths.folder.path, signature: read) {
+                    GlossarySuggestions.MeetingShare(lines: GlossarySuggest.cleanedLines(paths), unsure: GlossarySuggest.unsureWords(paths),
+                                                     known: try GlossarySuggest.knownSpellings(paths))
+                }
+                known.append(share.known)
+                for (word, n) in share.unsure ?? PyDict() { unsure[word] = (unsure[word] ?? 0) + n }
+                guard let lines = share.lines else { continue }
+                let made = read.flatMap { r in glossarySignature.map { r + $0 } }  // the share and the glossary
+                meetings.append((name, cache.words(paths.folder.path, signature: made) {
+                    GlossarySuggest.readableLines(lines, glossary: glossary)
+                }))
+            }
+            return GlossarySuggest.suggest(meetings: meetings,
+                                           known: try GlossarySuggest.knownSpellings(userName: userName, stores: app.stores, meetings: known),
+                                           glossary: Glossary(path: app.stores.glossary), unsure: unsure)
         }
+    }
+
+    /// The files of a meeting its share of the suggestions is made of: the transcript, the calendar event, the speakers.
+    static func shareFiles(_ paths: RecordingPaths) -> [URL] {
+        [paths.transcriptJson, paths.calendar, paths.speakers, paths.speakersAuto, paths.speakersMerged, paths.speakersIgnored,
+         paths.speakersInferred, paths.speakersRejected, paths.speakersShared, paths.speakersUnknown, paths.speakersLines,
+         paths.systemTurns]
     }
 
     /// `_with_titles`: each example with its meeting's title.

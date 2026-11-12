@@ -22,6 +22,20 @@ import Testing
                 == "Im Attakring-Raum? Nein, Attakring. Merger von Unit 214, Unit.")
     }
 
+    /// A meeting's lines respelled at once (#29) read as each line respelled alone: at a line's start and end, in two
+    /// words, in none, and a line with a break in it.
+    @Test func manyLinesAtOnceAreRespelledAsEachAlone() throws {
+        let t = folder(); defer { t.remove() }
+        let g = glossary(t)
+        try g.add(term: "Attakring", variants: ["Atterkring"])
+        try g.add(term: "Databricks", variants: ["Data Bricks"])
+        let lines = ["Atterkring", "nothing here", "", "in Data Bricks", "data bricks and ATTERKRING.", "Atterkringer",
+                     "Raum Atterkring", "two\nAtterkring lines", "Zoë in Atterkring-Raum"]
+        #expect(g.apply(lines: lines) == lines.map(g.apply))
+        #expect(g.apply(lines: lines)[0] == "Attakring" && g.apply(lines: lines)[5] == "Atterkringer")
+        #expect(glossary(t, "empty.json").apply(lines: lines) == lines)
+    }
+
     @Test func test_a_variant_belongs_to_one_term() throws {
         let t = folder(); defer { t.remove() }
         let g = glossary(t)

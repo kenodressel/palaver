@@ -117,9 +117,15 @@ public enum ModelChoice {
 
     // MARK: - Choices
 
-    /// config.toml's choice, for a feature never chosen in Settings; local for a feature chosen on its own.
-    public static func defaultChoice(feature: String?, config: Config) -> String {
+    /// config.toml's choice, for a feature never chosen in Settings; local for a feature chosen on its own. Projects
+    /// never chosen follow the notes' model: the sort runs right after the notes, and with cloud notes it would
+    /// otherwise load the local model (~10 GB) only to sort the meeting into a project.
+    public static func defaultChoice(feature: String?, config: Config, stores: StorePaths = .current()) -> String {
         if let feature, self.feature(feature)?.own == true { return LOCAL }
+        if let feature, Py.same(feature, "projects") {
+            return choice(feature: "notes", default: defaultChoice(feature: "notes", config: config, stores: stores),
+                          stores: stores)
+        }
         return config.notesEngine == "claude" ? "claude-cli" : LOCAL
     }
 
@@ -137,7 +143,8 @@ public enum ModelChoice {
     /// cloud choice local.
     public static func choiceFor(feature: String, folders: [URL] = [], config: Config,
                                  stores: StorePaths = .current()) -> String {
-        let chosen = choice(feature: feature, default: defaultChoice(feature: feature, config: config), stores: stores)
+        let chosen = choice(feature: feature, default: defaultChoice(feature: feature, config: config, stores: stores),
+                            stores: stores)
         if Py.same(chosen, PENDING) { return chosen }
         if !Py.same(chosen, LOCAL) && folders.contains(where: LocalOnly.isLocalOnly) { return LOCAL }
         return chosen
@@ -166,6 +173,16 @@ public enum ModelChoice {
         guard Py.same(choiceFor(feature: feature, folders: folder.map { [$0] } ?? [], config: config, stores: stores), LOCAL)
         else { return 0.0 }
         return notesMemoryGB(localModel(config: config, stores: stores))
+    }
+
+    /// What a notes run uses a model for, in order: the notes, then sorting the meeting into its projects
+    /// (palaver-lm `notes`). Each is chosen on its own.
+    public static let NOTES_RUN_FEATURES = ["notes", "projects"]
+
+    /// Free memory a notes run of `folder` needs: the largest need of the models it runs. Cloud notes followed by a local
+    /// projects sort still load the local model (#26); none when every one of them is a cloud model.
+    public static func notesRunMemoryGB(folder: URL? = nil, config: Config, stores: StorePaths = .current()) -> Double {
+        NOTES_RUN_FEATURES.map { memoryGB(feature: $0, folder: folder, config: config, stores: stores) }.max() ?? 0.0
     }
 
     // MARK: - A provider's settings

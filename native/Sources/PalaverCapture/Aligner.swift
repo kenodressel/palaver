@@ -79,6 +79,17 @@ public final class TrackAligner {
         if startPts == nil, phaseADone(latestPts: chunk.pts) { try enterPhaseB() }
     }
 
+    /// A track's first PTS before its chunk comes (the mic, held back by the mute gate): Phase A
+    /// ends once both are known, as if the chunk had come.
+    public func announce(_ track: CaptureTrack, firstPts pts: Int64) throws {
+        guard !finished else { return }
+        switch track {
+        case .mic: if micFirstPts == nil { micFirstPts = pts }
+        case .system: if systemFirstPts == nil { systemFirstPts = pts }
+        }
+        if startPts == nil, phaseADone(latestPts: pts) { try enterPhaseB() }
+    }
+
     /// Flushes the resamplers and Phase A, then finalizes each track to its own length.
     @discardableResult
     public func finish() throws -> (mic: Int, system: Int) {

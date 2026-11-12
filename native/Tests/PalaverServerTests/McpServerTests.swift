@@ -154,13 +154,13 @@ private func refused(_ text: String, _ body: () throws -> Any) -> Bool {
         #expect(tool("list_people")["outputSchema"]?["required"] == .strings(["result"]))
         #expect(tool("get_meeting")["outputSchema"]?["title"] == .string("get_meetingDictOutput"))
         #expect(tool("search_meetings")["outputSchema"]?["title"] == .string("search_meetingsDictOutput"))
-        #expect(tool("get_meeting")["description"]?.stringValue?.hasPrefix("One meeting: who was invited and spoke") == true)
+        #expect(tool("get_meeting")["description"]?.stringValue?.hasPrefix("One recorded meeting or call: who was invited and spoke") == true)
     }
 
     @Test func test_install_adds_the_server_to_claude_code() throws {
         let f = try Fixture()
         let setup = McpSetup(stores: f.stores, executable: "/Applications/Palaver.app/Contents/Resources/bin/palaver")
-        #expect(setup.installCommand() == ["claude", "mcp", "add", "--scope", "user", "meetings", "--",
+        #expect(setup.installCommand() == ["claude", "mcp", "add", "--scope", "user", "palaver", "--",
                                            "/Applications/Palaver.app/Contents/Resources/bin/palaver", "mcp"])
         let withConfig = McpSetup(stores: f.stores, executable: "/A/bin/palaver", options: ["--config", "/c/config.toml"])
         #expect(withConfig.installCommand(claude: "/x/claude").suffix(4) == ["/A/bin/palaver", "--config", "/c/config.toml", "mcp"])
@@ -365,8 +365,12 @@ private func refused(_ text: String, _ body: () throws -> Any) -> Bool {
             ("protocolVersion", .string("2025-06-18")), ("capabilities", .object([])),
             ("clientInfo", .object([("name", .string("claude-code")), ("version", .string("2.1.3"))]))]))?["result"])
         #expect(r["protocolVersion"] == .string("2025-06-18"))
-        #expect(r["serverInfo"] == .object([("name", .string("meetings")), ("version", .string("0.6.0"))]))
-        #expect(r["instructions"]?.stringValue?.hasPrefix("The user's recorded meetings (mostly Microsoft Teams calls") == true)
+        #expect(r["serverInfo"] == .object([("name", .string("palaver")), ("version", .string("0.6.0"))]))
+        let instructions = try #require(r["instructions"]?.stringValue)
+        #expect(instructions.hasPrefix("Palaver: the user's recorded meetings and calls (Microsoft Teams, Slack huddles, in person)"))
+        for word in ["transcripts with speaker names", "next steps", "decisions", "1:1", "customer", "search_meetings"] {
+            #expect(instructions.contains(word), "\(word)")
+        }
         #expect(r["instructions"]?.stringValue?.hasSuffix("Meetings the user keeps on this Mac are not shared here.") == true)
         #expect(r["capabilities"]?["tools"] == .object([("listChanged", .bool(false))]))
         // The window sees the client in the heartbeat file.

@@ -274,7 +274,9 @@ public struct ProviderSettings {
     // MARK: - Choices
 
     /// config.toml's choice for a feature never chosen in Settings (`llm.default_choice`).
-    public func defaultChoice(_ feature: String) -> String { ModelChoice.defaultChoice(feature: feature, config: config) }
+    public func defaultChoice(_ feature: String) -> String {
+        ModelChoice.defaultChoice(feature: feature, config: config, stores: stores)
+    }
 
     /// `choice`: "local", "pending" or the provider the user chose for `feature`; `fallback` when never chosen.
     public func choice(_ feature: String, default fallback: String) -> String {

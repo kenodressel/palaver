@@ -14,17 +14,19 @@ import PalaverCore
 // `MemoryRules` and `MemoryBudgets` are in PalaverCore (MemoryBudgets.swift): `palaver doctor` and the problem report
 // read them too.
 
-/// The budgets that depend on the meeting (`budget_hook`): the notes' follows the model chosen for
-/// it (unless `notes_gb` is set); with the Notion upload on, `run` writes the notes too, so its
-/// budget is at least their need. `need`: free memory the meeting's notes need (0: a cloud model;
-/// nil: not known yet, the default budget stands).
+/// The budgets that depend on the meeting (`budget_hook`): the notes' follows the models their run
+/// loads for it (the notes', then the projects sort's: `notes-memory`); `notes_gb` raises it, never
+/// below that need, as palaver-lm's own watchdog does (LocalModel.limits). With the Notion upload
+/// on, `run` writes the notes too, so its budget is at least their need. `need`: free memory the
+/// meeting's notes run needs (0: cloud models only; nil: not known yet, the default budget stands).
 public func memoryBudgetHook(config: [String: Double], notesInRun: @escaping () -> Bool,
                              need: @escaping (String) -> Double?) -> (String, String) -> Double? {
     let process = config["process_gb"].flatMap { $0 > 0 ? $0 : nil } ?? MemoryRules.defaultProcessGB
-    let explicitNotes = config["notes_gb"].map { $0 > 0 } ?? false
+    let notesGB = config["notes_gb"].flatMap { $0 > 0 ? $0 : nil }
     return { kind, folder in
-        if (kind == "notes" || kind == "question") && !explicitNotes {
+        if kind == "notes" || kind == "question" {
             guard let n = need(folder) else { return nil }
+            if let notesGB { return max(notesGB, n) }
             return n > 0 ? n : MemoryRules.cloudNotesGB
         }
         if kind == "process" && notesInRun() {

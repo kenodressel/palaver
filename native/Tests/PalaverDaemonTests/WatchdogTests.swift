@@ -4,6 +4,7 @@
 import Darwin
 import Foundation
 import PalaverCore
+import PalaverDomain
 import Testing
 @testable import PalaverDaemon
 
@@ -171,8 +172,11 @@ private func fakeTaskpolicy() throws -> String {
         #expect(hook("live", "/r/a") == nil)
         #expect(hook("process", "/r/a") == nil)
         #expect(hook("notes", "/r/unknown") == nil)  // not known yet: the default stands
-        // An explicit notes_gb wins over the model's need.
-        #expect(memoryBudgetHook(config: ["notes_gb": 9], notesInRun: { false }, need: { _ in 14 })("notes", "/r/a") == nil)
+        // An explicit notes_gb raises the budget, never below the local model's need (palaver-lm's LocalModel.limits).
+        #expect(memoryBudgetHook(config: ["notes_gb": 9], notesInRun: { false }, need: { _ in 14 })("notes", "/r/a") == 14.0)
+        #expect(memoryBudgetHook(config: ["notes_gb": 18], notesInRun: { false }, need: { _ in 14 })("notes", "/r/a") == 18.0)
+        #expect(memoryBudgetHook(config: ["notes_gb": 9], notesInRun: { false }, need: { _ in 0 })("notes", "/r/a") == 9.0)
+        #expect(memoryBudgetHook(config: ["notes_gb": 9], notesInRun: { false }, need: { _ in nil })("notes", "/r/a") == nil)
     }
 
     @Test func runWithNotesGetsTheNotesModelsNeed() {
@@ -352,6 +356,39 @@ private func fakeTaskpolicy() throws -> String {
         w.used[80] = 16.0
         #expect(w.sustain(worker("notes", "/r/m1", 80)) == [])
         #expect(w.dog.status()!["workers"]?.arrayValue?[0]["budget"] == .double(20.0))
+    }
+
+    /// #26: notes by the Claude Code CLI, then the projects sort on Gemma in the same worker (10-11 GB), budgeted as
+    /// the daemon does it (`notes-memory` of the meeting, and of the Recordings folder for the default): no warning,
+    /// no notification. Settings in a temporary folder.
+    @Test(arguments: [[("notes", "claude-cli"), ("projects", "local")], []])
+    func aNotesRunOnTheLocalModelIsNotOverBudget(engines: [(String, String)]) throws {
+        let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let stores = StorePaths(configDir: dir.appendingPathComponent("config"), home: dir.appendingPathComponent("home"))
+        try SettingsFile.update([("engines", .object(engines.map { ($0.0, .string($0.1)) }))], stores: stores)
+        var config = Config()
+        config.outputDir = dir.appendingPathComponent("Recordings", isDirectory: true)
+        let meeting = config.outputDir.appendingPathComponent("2026-11-10T15-00-41", isDirectory: true)
+        mkdir(meeting)
+        let need: (URL) -> Double? = { Queries.notesMemory(folder: $0, config: config, stores: stores)["gb"]?.doubleValue }
+        var logs: [String] = []
+        var used = 10.0
+        let dog = Watchdog(MemoryBudgets(config: config.memory),
+                           budgetsNow: { MemoryBudgets(config: config.memory, notes: need(config.outputDir)) },
+                           sample: { _ in Int(used * GB) }, own: { 0 }, others: { _ in 0 }, freeGB: { 20 },
+                           budgetFor: memoryBudgetHook(config: config.memory, notesInRun: { false },
+                                                       need: { need(URL(fileURLWithPath: $0, isDirectory: true)) }),
+                           log: { logs.append($1) })
+        let notes = worker("notes", meeting.path, 60)
+        var actions: [MemoryAction] = []
+        for (n, gb) in [10.0, 10.5, 11.0, 11.0, 10.0].enumerated() {
+            used = gb
+            actions += dog.check([notes], now: Double(n) * MemoryRules.overSeconds)
+        }
+        #expect(actions.isEmpty)
+        #expect(logs.isEmpty)
+        #expect(dog.status()!["workers"]?.arrayValue?[0]["budget"] == .double(14.0))
+        #expect(dog.budgets.notes == 14.0)
     }
 
     @Test func aWorkerGoneIsSkipped() {

@@ -87,6 +87,9 @@ public struct PyDateTime: Hashable, Comparable, Sendable {
         return String(format: "%04d-%02d-%02d", y, m, d)
     }
 
+    /// Midnight of the day in the datetime's own offset.
+    public var startOfDay: PyDateTime { PyDateTime(micros: micros - local.rest, offset: offset) }
+
     /// `datetime.isoformat()`.
     public var iso: String {
         let (days, rest) = local

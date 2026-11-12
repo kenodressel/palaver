@@ -324,12 +324,12 @@ private final class Home {
         var made: [[String]] = []
         s.app.mcpSetup = McpSetup(stores: stores, executable: "/A/Contents/Resources/bin/palaver", findClaude: { "/fake/claude" }) { argv in
             calls.withLock { made.append(argv) }
-            try write(stores.claudeConfig, #"{"mcpServers": {"meetings": {"command": "/A/Contents/Resources/bin/palaver", "args": ["mcp"]}}}"#)
+            try write(stores.claudeConfig, #"{"mcpServers": {"palaver": {"command": "/A/Contents/Resources/bin/palaver", "args": ["mcp"]}}}"#)
             return McpSetup.Ran(status: 0)
         }
         r = s.post("/api/mcp/install")
-        #expect(r.status == 200 && dumps(r.json?["registered"]) == #"{"registered": true, "name": "meetings", "scope": "user"}"#)
-        #expect(calls.withLock { made } == [["/fake/claude", "mcp", "add", "--scope", "user", "meetings", "--",
+        #expect(r.status == 200 && dumps(r.json?["registered"]) == #"{"registered": true, "name": "palaver", "scope": "user"}"#)
+        #expect(calls.withLock { made } == [["/fake/claude", "mcp", "add", "--scope", "user", "palaver", "--",
                                              "/A/Contents/Resources/bin/palaver", "mcp"]])
     }
 
@@ -342,7 +342,7 @@ private final class Home {
                                   findClaude: { nil })
         let r = s.post("/api/mcp/install", .object([("target", .string("desktop"))]))
         #expect(r.status == 200 && r.json?["desktop"]?["registered"] == .bool(true))
-        #expect(dumps(PythonJSON.read(s.app.stores.claudeDesktopConfig)?["mcpServers"]?["meetings"])
+        #expect(dumps(PythonJSON.read(s.app.stores.claudeDesktopConfig)?["mcpServers"]?["palaver"])
                 == #"{"command": "/A/bin/palaver", "args": ["--config", "/c/config.toml", "mcp"]}"#)
         // The server's own setup gets the options it was started with.
         let config = s.dir.appendingPathComponent("config.toml")

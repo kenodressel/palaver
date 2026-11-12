@@ -111,7 +111,7 @@ private final class McpProcess {
         let hello = try p.request(1, "initialize", .object([
             ("protocolVersion", .string("2025-06-18")), ("capabilities", .object([])),
             ("clientInfo", .object([("name", .string("claude-code")), ("version", .string("2.1.3"))]))]))
-        #expect(hello["serverInfo"]?["name"] == .string("meetings") && hello["instructions"]?.truthy == true)
+        #expect(hello["serverInfo"]?["name"] == .string("palaver") && hello["instructions"]?.truthy == true)
         p.send(.object([("jsonrpc", .string("2.0")), ("method", .string("notifications/initialized"))]))
         let tools = try p.request(2, "tools/list")["tools"]?.arrayValue ?? []
         #expect(tools.count == 7)
@@ -148,7 +148,7 @@ private final class McpProcess {
         // A library that prints to stdout while the server runs: the line goes to stderr, the answers stay JSON-RPC.
         let p = try McpProcess(more: [McpMain.TEST_STRAY_PRINT: "a stray line from some library"])
         let hello = try p.request(1, "initialize", .object([("protocolVersion", .string("2025-06-18"))]))
-        #expect(hello["serverInfo"]?["name"] == .string("meetings"))
+        #expect(hello["serverInfo"]?["name"] == .string("palaver"))
         #expect(try p.request(2, "ping") == .object([]))
         p.closeInput()
         #expect(p.exitStatus() == 0)
