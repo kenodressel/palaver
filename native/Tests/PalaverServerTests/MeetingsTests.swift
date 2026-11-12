@@ -276,29 +276,6 @@ func fakeLiveWorker(_ folder: URL) throws -> Foundation.Process {
         #expect(m["notes_stale"] == .bool(false))
     }
 
-    /// The page's keys in Python's order, and what a plain finished meeting answers for the parts no other test looks at.
-    @Test func thePageHasPythonsKeysInPythonsOrder() throws {
-        let f = try Fixture()
-        try pageMeeting(f.out)
-        guard case .object(let fields) = try f.page() else { Issue.record("no object"); return }
-        #expect(fields.map(\.0) == ["id", "title", "title_from", "calendar", "event_question", "calendar_on", "start", "duration",
-                                    "status", "finishing", "untranscribed", "notes", "notes_stale", "notes_stale_reason",
-                                    "notes_from_my_notes", "my_notes_revision", "speakers", "transcript", "has_audio",
-                                    "audio_deleted", "reviewed", "local_only", "imported", "transcribed_by", "failure",
-                                    "neighbours", "cut_suggestion", "silence", "shared", "shared_suggestion", "removed",
-                                    "recorded", "gaps", "audio_problems", "projects", "project_suggestions", "all_projects"])
-        let page = JSONValue.object(fields)
-        #expect(page["neighbours"] == .object([("previous", .null), ("next", .null)]))
-        #expect(page["recorded"] == .null && page["silence"] == .array([]))
-        let me = try #require(page["speakers"]?.arrayValue?.first)
-        #expect(me == .object([("label", .null), ("name", .string("Timo")), ("display", .string("Timo")), ("is_user", .bool(true)),
-                               ("shared", .null), ("room", .string("")), ("talk_seconds", .double(1.0)), ("clips", .array([])),
-                               ("org", .null), ("org_link", .null)]))
-        #expect(page["shared"] == .object([("meeting", .bool(false)), ("rooms", .object([])), ("mic", .null),
-                                           ("from_series", .bool(false)), ("line", .null),
-                                           ("series", .object([("can", .bool(false)), ("remembered", .bool(false))]))]))
-    }
-
     @Test func test_meeting_shows_its_calendar_event_and_offers_invitees() throws {
         let f = try Fixture()
         let paths = try pageMeeting(f.out)

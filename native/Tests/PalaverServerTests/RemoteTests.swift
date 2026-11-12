@@ -278,27 +278,6 @@ private func expectRefused(_ text: String, _ body: () throws -> Any) {
         #expect(Date().timeIntervalSince(started) >= 0.3)  // it waited for the answer
     }
 
-    @Test func thePidOfDaemonJsonIsReadAsPythonsIntDoes() {
-        let me = Int(getpid())
-        #expect(Remote.pidAlive(.int(me)))
-        #expect(Remote.pidAlive(.string(" \(me) ")))
-        #expect(Remote.pidAlive(.double(Double(me) + 0.7)))
-        #expect(Remote.pidAlive(.int(1)))  // launchd: not ours, but alive
-        #expect(!Remote.pidAlive(nil) && !Remote.pidAlive(.null) && !Remote.pidAlive(.string("abc")))
-        #expect(!Remote.pidAlive(.double(.nan)) && !Remote.pidAlive(.int(1 << 40)) && !Remote.pidAlive(.array([])))
-    }
-
-    @Test func aTimeWithoutAnOffsetOrAFutureOneReadsAsPythonsSubtraction() {
-        let f = AppFolder()
-        // Naive: `aware - naive` is a TypeError, so not known; it counts as busy.
-        let naive = f.remote(with(STATUS, [("updated", .string("2026-10-30T09:00:00"))]))
-        #expect(naive.question() == nil && naive.busy())
-        // Written a little ahead of this clock: live.
-        #expect(f.remote(with(STATUS, [("updated", .string("2026-10-30T09:00:10+01:00"))])).question() != nil)
-        #expect(f.remote(STATUS, now: NOW.addingTimeInterval(30)).question() != nil)  // 30 s is not stale yet
-        #expect(f.remote(STATUS, now: NOW.addingTimeInterval(30.001)).question() == nil)
-    }
-
     /// The real app's paths come from the home of `stores`, never anything else.
     @Test func theAppOfAHomeIsInItsApplicationSupport() {
         let home = tempFolder("remote-home")

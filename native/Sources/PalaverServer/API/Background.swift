@@ -107,14 +107,15 @@ public final class Background: @unchecked Sendable {
     /// `start_warming`: `warmSearchCache` on a thread of its own at background QoS (the efficiency cores, behind
     /// everything else). `clock`: how it waits (seconds).
     @discardableResult
-    public func startWarming(clock sleep: @escaping (Double) -> Void = { Thread.sleep(forTimeInterval: $0) }) -> Thread {
+    public func startWarming(clock sleep: @escaping (Double) -> Void = { Thread.sleep(forTimeInterval: $0) },
+                             qos: QualityOfService = .background) -> Thread {
         let t = Thread { [weak self] in
             guard let app = self?.app else { return }
             // A failure ends the warming quietly (Python logs it at DEBUG, which daemon.log leaves out).
             try? Background.warmSearchCache(app, busy: { Background.busyRecording(app) }, sleep: sleep)
         }
         t.name = "search-warm"
-        t.qualityOfService = .background
+        t.qualityOfService = qos
         lock.withLock { warmingThread = t }
         t.start()
         return t

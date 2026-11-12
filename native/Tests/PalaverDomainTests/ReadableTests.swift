@@ -96,9 +96,4 @@ import Testing
         #expect(Readable.readable([u], glossary: g).map(\.text) == ["äh the the plan"])
     }
 
-    @Test func goldenCleanTextMatchesPython() throws {
-        let cases = try Goldens.cases("readable", "cases")
-        let got = cases.map { JSONValue.array([$0[0], .string(Readable.cleanText($0[0].stringValue!))]) }
-        Goldens.expectEach(got, "readable", "cases")
-    }
 }

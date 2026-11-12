@@ -12,6 +12,16 @@ os.environ["TZ"] = "Europe/Berlin"
 time.tzset()
 
 
+def pytest_collection_modifyitems(config, items):
+    """The long tests (@pytest.mark.long) run only with PALAVER_LONG_TESTS=1, as the Swift ones: make test-long, CI."""
+    if os.environ.get("PALAVER_LONG_TESTS") == "1":
+        return
+    skip = pytest.mark.skip(reason="long: PALAVER_LONG_TESTS=1 runs it (make test-long)")
+    for item in items:
+        if "long" in item.keywords:
+            item.add_marker(skip)
+
+
 @pytest.fixture(autouse=True)
 def isolated_config_home(monkeypatch, tmp_path_factory) -> Path:
     """Tests must never read or write the real ~/.config (voice bank!): the e2e server's

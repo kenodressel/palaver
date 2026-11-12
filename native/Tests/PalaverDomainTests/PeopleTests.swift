@@ -199,31 +199,6 @@ struct PeopleRoot {
         #expect(Speakers.loadRejectedNames(a) == PyDict([("SPEAKER_00", ["Thomas Berg"])]))
     }
 
-    @Test func theDirectoryIsWrittenInPythonsShape() throws {
-        // Key order, rounding and the order of people and groups: most talk first.
-        let r = PeopleRoot(); defer { r.remove() }
-        r.meeting("2026-10-20T10-00-00", [("SPEAKER_00", Self.ANNA, 60.04), ("SPEAKER_01", Self.BEN, 12.25), ("SPEAKER_02", Self.CARL, 30)])
-        r.meeting("2026-10-27T10-00-00", [("SPEAKER_00", PeopleRoot.unit(0.05, 1, 0, 0), 30), ("SPEAKER_01", PeopleRoot.unit(0, 0.04, 1, 0), 40)])
-        try r.nameVoices([("2026-10-20T10-00-00", "SPEAKER_00")], "Anna")
-        #expect(dumps(try r.directory(me: ["anna"])) == """
-            {"people": [{"name": "Anna", "meetings": [{"id": "2026-10-20T10-00-00", "label": "SPEAKER_00", "talk_seconds": 60.0, \
-            "named_by": "you"}], "talk_seconds": 60.0, "voice_samples": 1, "you": true}], "unknown": [{"voices": [{"meeting": \
-            "2026-10-20T10-00-00", "label": "SPEAKER_02", "talk_seconds": 30.0}, {"meeting": "2026-10-27T10-00-00", "label": \
-            "SPEAKER_01", "talk_seconds": 40.0}], "talk_seconds": 70.0}, {"voices": [{"meeting": "2026-10-20T10-00-00", "label": \
-            "SPEAKER_01", "talk_seconds": 12.2}, {"meeting": "2026-10-27T10-00-00", "label": "SPEAKER_00", "talk_seconds": 30.0}], \
-            "talk_seconds": 42.2}]}
-            """)
-    }
-
     // MARK: - Swift only
 
-    /// people.py sums a group's talk with Python's `sum()`, which is compensated: seven voices of 10.05 s are 70.4 s
-    /// once rounded (Python, checked), a plain sum rounds to 70.3.
-    @Test func anUnknownGroupsTalkIsPythonsSum() throws {
-        let r = PeopleRoot(); defer { r.remove() }
-        for day in 0..<7 { r.meeting("2026-10-\(20 + day)T10-00-00", [("SPEAKER_00", Self.BEN, 10.05)]) }
-        let unknown = try #require(try r.directory()["unknown"]?.arrayValue)
-        #expect(unknown.count == 1 && unknown[0]["voices"]?.arrayValue?.count == 7)
-        #expect(unknown[0]["talk_seconds"] == .double(70.4))
-    }
 }

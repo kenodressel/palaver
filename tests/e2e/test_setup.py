@@ -58,7 +58,8 @@ def test_the_first_start_takes_three_steps(page, fresh):
     page.goto(fresh.url)
     step_title(page, "You and your calendar")
     expect(page.locator(".setup-count")).to_have_text("Setup · step 1 of 3")
-    expect(page.locator("#setup-name")).to_have_value("Timo Strauss")  # from the macOS account
+    # The first look at this Mac takes a few seconds ("Looking at this Mac…"), more on a busy one.
+    expect(page.locator("#setup-name")).to_have_value("Timo Strauss", timeout=20_000)  # from the macOS account
     expect(page.locator("#setup-org")).to_have_value("KLOUD")  # from the calendar
     expect(page.locator(".setup-seed-term")).to_have_count(3)  # Stefan Dornbusch, Contoso, Northwind
     expect(page.locator(".setup-seed-term input:checked")).to_have_count(0)  # nothing ticked for the user

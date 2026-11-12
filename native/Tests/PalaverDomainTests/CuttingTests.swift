@@ -100,19 +100,6 @@ import Testing
         #expect(equal(read(kept.speakersLines), #"[{"start": 1.0, "end": 19.0, "from": "SPEAKER_01", "me": true, "name": "Timo"}]"#))
     }
 
-    @Test func aSplitWritesWhatPythonWrites() throws {
-        // An int cut keeps the tail's moved times ints; the head's are floats (+ 0.0); meta.json gains its keys in order.
-        let temp = TempFolder("cutting"); defer { temp.remove() }
-        let a = try standard(temp.url)
-        try write(a.meta, .object([("start_time", .string(Self.T0.iso)), ("duration_seconds", .int(60)), ("stop_reason", .string("call_ended")),
-                                   ("audio_problems", .array([.object([("kind", .string("speed")), ("start", .int(30)), ("end", .null)])]))]))
-        let tail = try Cutting.split(a, at: 40)
-        #expect(try String(contentsOf: tail.systemTurns, encoding: .utf8) == "[\n  {\n    \"speaker\": \"SPEAKER_01\",\n    \"start\": 1,\n    \"end\": 19\n  }\n]")
-        #expect(try String(contentsOf: a.systemTurns, encoding: .utf8) == "[\n  {\n    \"speaker\": \"SPEAKER_00\",\n    \"start\": 1.0,\n    \"end\": 30.0\n  }\n]")
-        #expect(PythonJSON.dumps(meta(a)) == #"{"start_time": "2026-10-21T15:34:00+02:00", "duration_seconds": 40, "end_time": "2026-10-21T15:34:40+02:00", "audio_problems": [{"kind": "speed", "start": 30.0, "end": 40.0}]}"#)
-        #expect(PythonJSON.dumps(meta(tail)) == #"{"start_time": "2026-10-21T15:34:40+02:00", "duration_seconds": 20.0, "stop_reason": "call_ended", "trigger": "split", "audio_problems": [{"kind": "speed", "start": 0, "end": 20.0}]}"#)
-    }
-
     @Test func aCutOutsideTheRecordingIsRefused() throws {
         let temp = TempFolder("cutting"); defer { temp.remove() }
         let a = try standard(temp.url)

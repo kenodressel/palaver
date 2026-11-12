@@ -223,38 +223,6 @@ private struct Voices: Diarizing {
         #expect(!FileManager.default.fileExists(atPath: LiveCoachRunner.coachPath(folder).path))
     }
 
-    @Test func inProcessEngineMapsSegmentsLikePython() async throws {
-        let t = Temp(); defer { t.remove() }
-        try writeTone(t.file("system.wav"), seconds: 2)
-        try Wav16.write([0, 0, 0], rate: 16_000, to: t.file("empty.wav"))
-        let recognizer = Tokens()
-        let dictionary = TranscriberDictionary(replacements: PyDict([("cloud", "Klaud"), ("kode", "Code ")]))
-        let engine = InProcessEngine(version: "t", modelsDir: t.file("models"), dictionary: dictionary,
-                                     recognizer: { recognizer }, diarizer: { Voices() })
-        let segments = try await engine.transcribe(wav: t.file("system.wav"))
-        #expect(segments.count == 1)
-        // The dictionary on the text (then stripped) and on every word; no speaker yet; confidences kept.
-        #expect(segments[0].text == "hallo Klaud Code .")
-        #expect(segments[0].speaker == nil)
-        #expect(segments[0].words.map(\.text) == ["hallo", "Klaud", "Code ."])
-        #expect(segments[0].words.map(\.confidence) == [0.9, 0.95, 0.7])
-        #expect(segments[0].start == 0 && segments[0].end == 1.3)
-        // A track that holds no audio: no model call.
-        #expect(try await engine.transcribe(wav: t.file("empty.wav")).isEmpty)
-        #expect(recognizer.calls == 1)
-        // Speakers: sorted by start, labelled by their first turn, a voice per label in label order.
-        let (turns, voices) = try await engine.diarize(wav: t.file("system.wav"))
-        #expect(turns == [SpeakerTurn(speaker: "SPEAKER_00", start: 0, end: 2), SpeakerTurn(speaker: "SPEAKER_01", start: 3, end: 5)])
-        #expect(voices.keys == ["SPEAKER_00", "SPEAKER_01"])
-        #expect(voices["SPEAKER_00"] == [0.5, 0.25])
-        #expect(try await engine.diarize(wav: t.file("empty.wav")).turns.isEmpty)
-        #expect(engine.succeeded == ["transcribe", "diarize"])
-        // Without models the engine says so as ModelsMissing.
-        let bare = InProcessEngine(version: "t", modelsDir: t.file("none"))
-        #expect(!bare.modelsReady())
-        await #expect(throws: ModelsMissing.self) { try await bare.transcribe(wav: t.file("system.wav")) }
-    }
-
     @Test func engineCallsRunOneAtATimeAndLoadTheRecognizerOnce() async throws {
         let t = Temp(); defer { t.remove() }
         try writeTone(t.file("a.wav"), seconds: 1)

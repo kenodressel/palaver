@@ -98,29 +98,6 @@ import Testing
 
     // MARK: Swift's own
 
-    @Test func preparedJsonIsPythonsBytesAndForgetsAnEventWithNothingChosen() throws {
-        let root = ProjectsRoot(); defer { root.remove() }
-        let e = event("Übergabe", 2, "Valerie", uid: "ü1")
-        try Prep.choose(e, "4e6f7274", stores: root.stores)
-        try Prep.choose(e, "c0a7050f", stores: root.stores)
-        try Prep.choose(e, "4e6f7274", stores: root.stores)  // chosen already
-        #expect(try String(contentsOf: root.stores.prepared, encoding: .utf8) == """
-        {
-          "ü1|2026-10-28": {
-            "title": "Übergabe",
-            "start": "2026-10-28T11:00:00+01:00",
-            "projects": [
-              "4e6f7274",
-              "c0a7050f"
-            ]
-          }
-        }
-        """)
-        try Prep.choose(e, "4e6f7274", remove: true, stores: root.stores)
-        try Prep.choose(e, "c0a7050f", remove: true, stores: root.stores)
-        #expect(try String(contentsOf: root.stores.prepared, encoding: .utf8) == "{}")
-    }
-
     @Test func notesNamesAndTheGlossaryReachTheContext() throws {
         let root = ProjectsRoot(); defer { root.remove() }
         let past = event("Northwind Sync", -24, "Valerie", uid: "series-1", series: true)

@@ -9,9 +9,8 @@ import PalaverCore
 import PalaverDomain
 @testable import PalaverServer
 
-/// native/.build/debug/palaver-server (built with the tests; `make debug-programs` builds it too).
-private let serverBinary = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-    .deletingLastPathComponent().appendingPathComponent(".build/debug/palaver-server").path
+/// palaver-server, built with the tests.
+private let serverBinary = builtProgram("palaver-server")
 
 /// A server process with its own folders; stdout and stderr into a pipe.
 private final class ServerProcess {
@@ -265,8 +264,8 @@ private func readAll(_ fd: Int32) -> String {
         let app = URL(fileURLWithPath: "/Applications/Palaver.app/Contents/MacOS/palaver-server")
         #expect(ServerApp.staticDir(executable: app).path
                 == "/Applications/Palaver.app/Contents/Resources/web")
-        let checkout = URL(fileURLWithPath: serverBinary).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
+        let checkout = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()  // native/Tests/PalaverServerTests/ServeTests.swift
         #expect(ServerApp.staticDir(executable: URL(fileURLWithPath: serverBinary)).standardizedFileURL.path
                 == checkout.appendingPathComponent("web").standardizedFileURL.path)
         #expect(FileManager.default.fileExists(atPath: ServerApp.defaultStaticDir.appendingPathComponent("index.html").path))

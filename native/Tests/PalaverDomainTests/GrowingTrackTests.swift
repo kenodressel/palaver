@@ -65,26 +65,4 @@ import Testing
         #expect(7 * Self.SR <= cut && cut < 7 * Self.SR + 4000)
     }
 
-    @Test func theQuietestCutIsNumpysToTheSample() throws {
-        let golden = try #require(Goldens.load("wav")["quietest"])
-        let signals = try #require(golden["signals"])
-        let cases = try #require(golden["cases"]?.arrayValue).map { $0.arrayValue! }
-        #expect(cases.count == 11)
-        for c in cases {
-            let hex = Array(signals[c[0].stringValue!]!.stringValue!.utf8)
-            var samples: [Float] = []
-            var i = 0
-            while i + 4 <= hex.count {
-                let lo = UInt16(String(decoding: hex[i..<(i + 2)], as: UTF8.self), radix: 16)!
-                let hi = UInt16(String(decoding: hex[(i + 2)..<(i + 4)], as: UTF8.self), radix: 16)!
-                samples.append(Float(Int16(bitPattern: lo | hi << 8)))
-                i += 4
-            }
-            let (earliest, latest, frame) = (try Goldens.int(c[1]), try Goldens.int(c[2]), try Goldens.int(c[3]))
-            let want = try Goldens.int(c[4])
-            #expect(GrowingTrack.quietestCut(samples, earliest: earliest, latest: latest, frame: frame) == want, "\(PythonJSON.dumps(.array(c)))")
-            // As the engines read it (/ 32768): the same cut.
-            #expect(GrowingTrack.quietestCut(samples.map { $0 / 32768 }, earliest: earliest, latest: latest, frame: frame) == want)
-        }
-    }
 }

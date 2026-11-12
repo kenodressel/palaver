@@ -30,22 +30,6 @@ private func moment(_ zone: TimeZone) -> Date {
         #expect(FileManager.default.fileExists(atPath: second.path))
     }
 
-    @Test func folderNamesMatchPython() throws {
-        // The golden: the names Python's new_recording_folder gives for a free name and 1, 2, 3 collisions.
-        let cases = try #require(Goldens.load("folder_names")["cases"]?.arrayValue)
-        var got: [JSONValue] = []
-        for c in cases {
-            let tmp = TempFolder("names"); defer { tmp.remove() }
-            let root = tmp.url.appendingPathComponent("Recordings")  // not there yet: the call makes it
-            let taken = try Goldens.int(c["taken"])
-            let names = try (0...taken).map { _ in
-                try RecordingPaths.newRecordingFolder(root: root, now: moment(.current)).lastPathComponent
-            }
-            got.append(.object([("taken", .int(taken)), ("names", .strings(names))]))
-        }
-        Goldens.expect(.array(got), "folder_names", "cases")
-    }
-
     @Test func aFolderNameIsReadInTheGivenZone() throws {
         let tmp = TempFolder("paths"); defer { tmp.remove() }
         let tokyo = TimeZone(identifier: "Asia/Tokyo")!

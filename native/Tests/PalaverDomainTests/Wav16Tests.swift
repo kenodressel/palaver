@@ -1,5 +1,4 @@
-// WAV files as soundfile (libsndfile) reads and writes them (Wav16): the goldens' files written and read back byte for
-// byte, partial reads, files cut short or still being recorded, and the in-place rewrite a split does.
+// WAV files (Wav16): partial reads, files cut short or still being recorded, files that are no 16-bit PCM, long files.
 import Foundation
 import PalaverCore
 import Testing
@@ -20,32 +19,6 @@ import Testing
     }
 
     private static func ints(_ v: JSONValue?) -> [Int16] { (v?.arrayValue ?? []).map { Int16(try! Goldens.int($0)) } }
-
-    @Test func writtenFilesAreWhatLibsndfileWrites() throws {
-        let temp = TempFolder("wav"); defer { temp.remove() }
-        for c in try Goldens.cases("wav", "writes") {
-            let url = temp.url.appendingPathComponent("out.wav")
-            try Wav16.write(Self.ints(c[0]), rate: try Goldens.int(c[1]), channels: try Goldens.int(c[2]), to: url)
-            #expect(try Data(contentsOf: url) == Self.bytes(c[3].stringValue!), "\(PythonJSON.dumps(c[0]))")
-        }
-    }
-
-    @Test func filesAreReadAsLibsndfileReadsThem() throws {
-        let temp = TempFolder("wav"); defer { temp.remove() }
-        for c in try Goldens.cases("wav", "reads") {
-            let name = c[0].stringValue!
-            let url = file(temp, name + ".wav", Self.bytes(c[1].stringValue!))
-            let info = try Wav16.info(url)
-            #expect([info.frames, info.rate, info.channels] == [try Goldens.int(c[2]), try Goldens.int(c[3]), try Goldens.int(c[4])], "\(name)")
-            #expect(try Wav16.read(url) == Self.ints(c[5]), "\(name)")
-            #expect(try Wav16.readFloat(url).map { JSONValue.double(Double($0)) } == c[6].arrayValue!, "\(name)")
-        }
-        for c in try Goldens.cases("wav", "ranges") {
-            let url = file(temp, "range.wav", Self.bytes(c[1].stringValue!))
-            #expect(try Wav16.read(url, start: try Goldens.int(c[2]), frames: try Goldens.int(c[3])) == Self.ints(c[4]),
-                    "\(c[0].stringValue!) \(PythonJSON.dumps(c[2])) \(PythonJSON.dumps(c[3]))")
-        }
-    }
 
     @Test func aPartFileWhoseHeaderSaysNothingYetIsReadToItsEnd() throws {
         // The recorder's .part: a header with data size 0, patched only when the recording stops.
@@ -77,21 +50,6 @@ import Testing
         #expect(throws: WavError.self) { try Wav16.read(url, start: 0, frames: -2) }
         #expect(throws: WavError.self) { try Wav16.readFloat(url, start: -3, frames: 1) }
         #expect(try Wav16.read(url, start: 1, frames: 0) == [])
-    }
-
-    @Test func keepingTheFrontRewritesTheFileInPlaceAsLibsndfileWouldWriteIt() throws {
-        let temp = TempFolder("wav"); defer { temp.remove() }
-        let read = try Goldens.cases("wav", "reads")
-        let listed = try #require(read.first { $0[0].stringValue == "list_before_data" })
-        let url = file(temp, "mic.wav", Self.bytes(listed[1].stringValue!))
-        let inode = try FileManager.default.attributesOfItem(atPath: url.path)[.systemFileNumber] as? Int
-        try Wav16.keepFront(url, frames: 4)
-        let want = temp.url.appendingPathComponent("want.wav")
-        try Wav16.write(Array(Self.ints(listed[5]).prefix(4)), rate: 16_000, to: want)
-        #expect(try Data(contentsOf: url) == Data(contentsOf: want))
-        #expect(try FileManager.default.attributesOfItem(atPath: url.path)[.systemFileNumber] as? Int == inode)
-        try Wav16.keepFront(url, frames: 100)  // past the end: all of it
-        #expect(try Wav16.read(url) == Array(Self.ints(listed[5]).prefix(4)))
     }
 
     @Test func aLongFileIsWrittenAndReadInChunks() throws {

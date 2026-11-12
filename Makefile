@@ -3,7 +3,7 @@
 DIST = dist
 VERSION = $(shell cat VERSION)
 
-.PHONY: engine app-swift server worker lm cli engine-test swift-test debug-programs e2e-server eval-engine eval-engine-worker test test-changed icons compat-runtime models app manifest release smoke-install publish clean help
+.PHONY: engine app-swift server worker lm cli engine-test swift-test debug-programs e2e-server test-build test-build-args eval-engine eval-engine-worker test test-all test-long test-changed icons compat-runtime models app manifest release smoke-install publish clean help
 
 # The Swift engine (FluidAudio, CoreML). SwiftPM hangs fetching FluidAudio's
 # NemoTextProcessing binary here, so it is fetched by tools/fetch_nemo.sh and
@@ -80,47 +80,57 @@ lm: $(VENDOR)/.patched ## Build the language model's worker with MLX (native/.bu
 	@test -f $(LM_PRODUCTS)/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib || { echo "✗ MLX's shaders were not built"; exit 1; }
 	$(call no-build-paths,$(LM_BIN))
 
-# The tests run with a temporary XDG_CONFIG_HOME and PALAVER_HOME: debug builds stop a test that would reach the
-# user's real ~/.config, home or ~/Meetings (PalaverCore/TestIsolation.swift).
-SWIFT_TEST_HOME = tmp=$$(mktemp -d -t palaver-swift-test) && mkdir -p "$$tmp/config" "$$tmp/home" && \
-	export XDG_CONFIG_HOME="$$tmp/config" PALAVER_HOME="$$tmp/home"
+# The tests' build: debug (assertions, test hooks, TestIsolation's guard) and optimized, in its own folder so it never
+# trades places with a plain `swift build`. One build serves the Swift tests, the programs they start
+# (palaver-server, palaver-cli, palaver-lm, palaver-worker) and the e2e tests' palaver-server and palaver-lm.
+# Unoptimized, the tests' synthetic audio and the server's glossary and audio mix are 2 to 40 times slower.
+TEST_BUILD = $(ENGINE_DIR)/.build/test
+TEST_BUILD_ARGS = --scratch-path $(TEST_BUILD) -Xswiftc -O -Xswiftc -assert-config -Xswiftc Debug $(TESTING_FLAGS)
+# About half the cores for the build's jobs (tools/test.sh sizes the tests), so the Mac stays usable during a call.
+# A bundle runs as many tests at once as there are cores: most of them wait (on a process, a lock, a timeout).
+CORES := $(shell sysctl -n hw.ncpu)
+TEST_JOBS ?= $(shell n=$(CORES); echo $$(( n > 3 ? n / 2 : 1 )))
 
-engine-test: $(VENDOR)/.patched ## Run all Swift tests (engine and app)
-	@$(SWIFT_TEST_HOME) && swift test --package-path $(ENGINE_DIR) $(TESTING_FLAGS); status=$$?; rm -rf "$$tmp"; exit $$status
+test-build: $(VENDOR)/.patched ## Build the tests and the programs they start (native/.build/test: debug, optimized)
+	swift build --package-path $(ENGINE_DIR) --build-tests -j $(TEST_JOBS) $(TEST_BUILD_ARGS)
 
-# One suite while iterating: make swift-test FILTER=PythonJSONTests
-swift-test: $(VENDOR)/.patched ## Run the Swift tests FILTER names (a suite or test)
+test-build-args:
+	@echo $(TEST_BUILD_ARGS)
+
+# The tests run with a temporary XDG_CONFIG_HOME and PALAVER_HOME each (tools/swift_tests_parallel.sh): debug builds
+# stop a test that would reach the user's real ~/.config, home or ~/Meetings (PalaverCore/TestIsolation.swift).
+# `make test` runs the tests of what changed (tools/changed_tests.py): the Swift bundles a change can break, the e2e
+# tests of its area, the Python tests that name it; the Swift bundles and pytest side by side (tools/test.sh).
+test: $(VENDOR)/.patched ## Run the tests of what changed since master (Swift and pytest side by side, on half the cores)
+	@tools/test.sh
+
+test-all: $(VENDOR)/.patched ## Run every test: Swift, e2e, the page's JS, the release tooling and install.sh
+	@tools/test.sh --all
+
+test-long: $(VENDOR)/.patched ## test-all with the long tests too (PALAVER_LONG_TESTS=1: minutes of synthetic audio); before a release
+	@tools/test.sh --long
+
+engine-test: test-build ## Run all Swift tests (engine and app)
+	@tools/swift_tests_parallel.sh -w $(CORES) -- $(TEST_BUILD_ARGS)
+
+# One suite while iterating: make swift-test FILTER=VoiceActivityTests
+swift-test: test-build ## Run the Swift tests FILTER names (a suite or test)
 	@test -n "$(FILTER)" || { echo "usage: make swift-test FILTER=<SuiteName>"; exit 2; }
-	@$(SWIFT_TEST_HOME) && swift test --package-path $(ENGINE_DIR) $(TESTING_FLAGS) --filter '$(FILTER)'; status=$$?; rm -rf "$$tmp"; exit $$status
+	@tools/swift_tests_parallel.sh -f '$(FILTER)' -w $(CORES) -- $(TEST_BUILD_ARGS)
 
-# The debug programs some tests start: tests/test_worker_helpers.py (palaver-worker), the Swift tests that run
-# palaver-server and palaver-cli (swift test builds them too).
+# The debug programs, to run by hand (CONTRIBUTING.md): a plain debug build in native/.build/debug.
 debug-programs: $(VENDOR)/.patched ## Build palaver-cli, palaver-lm, palaver-server and palaver-worker (debug)
 	swift build --package-path $(ENGINE_DIR) --product palaver-cli
 	swift build --package-path $(ENGINE_DIR) --product palaver-lm
 	swift build --package-path $(ENGINE_DIR) --product palaver-server
 	swift build --package-path $(ENGINE_DIR) --product palaver-worker
 
-# In parallel (pytest-xdist): a test file's tests stay on one worker, so its
-# fixtures (a window's server, the browser) are made once. TEST_WORKERS=0: in order.
-TEST_WORKERS ?= auto
+e2e-server: test-build ## Build palaver-server and palaver-lm for the e2e tests (the tests' build)
+
+# Only the Python tests of what changed, in parallel (pytest-xdist: a test file's tests stay on one worker, so its
+# fixtures, a window's server and the browser, are made once). TEST_WORKERS=0: in order.
+TEST_WORKERS ?= $(TEST_JOBS)
 PYTEST = uv run --extra dev pytest -q $(if $(filter 0,$(TEST_WORKERS)),,-n $(TEST_WORKERS) --dist loadscope)
-
-# The e2e tests' palaver-server: a debug build (its test hooks, assertions on) that is
-# optimized, in its own build folder. Unoptimized, its glossary and audio mix are 5 to
-# 40 times slower, and the parallel suite times out on them.
-E2E_SERVER_BUILD = $(ENGINE_DIR)/.build/e2e
-e2e-server: $(VENDOR)/.patched ## Build palaver-server and palaver-lm for the e2e tests (debug, optimized)
-	swift build --package-path $(ENGINE_DIR) --product palaver-server --scratch-path $(E2E_SERVER_BUILD) \
-		-Xswiftc -O -Xswiftc -assert-config -Xswiftc Debug
-	swift build --package-path $(ENGINE_DIR) --product palaver-lm --scratch-path $(E2E_SERVER_BUILD) \
-		-Xswiftc -O -Xswiftc -assert-config -Xswiftc Debug
-
-# The Swift tests, then the Python ones: the e2e tests against palaver-server (e2e-server; a missing Playwright or
-# WebKit fails them instead of skipping them), the page's JS tests (node, through tests/test_js.py) and the tests of
-# the release build and install.sh.
-test: engine-test debug-programs e2e-server ## Run the test suite: Swift, then e2e, JS and build tooling (in parallel)
-	PALAVER_E2E_REQUIRED=1 $(PYTEST)
 
 eval-engine: ## Local gate on your recordings (needs PALAVER_EVAL_DIR). tools/eval_engine.py's exit: 0 pass, 1 a check FAILED, 2 misconfigured (make itself reports 2 for both)
 	@test -n "$$PALAVER_EVAL_DIR" -a -f "$$PALAVER_EVAL_DIR/eval.json" || { echo "eval-engine needs PALAVER_EVAL_DIR: a folder with the local eval.json (see tools/eval_engine.py)" >&2; exit 2; }
@@ -133,8 +143,8 @@ eval-engine-worker: ## The same gate through palaver-worker's in-process engine 
 	swift build -c release --package-path $(ENGINE_DIR) --product palaver-worker
 	$(PYTHON) tools/eval_engine.py --worker $(ENGINE_DIR)/.build/release/palaver-worker
 
-test-changed: ## Run the Python tests for what changed since master (tools/changed_tests.py)
-	@TESTS="$$(uv run python tools/changed_tests.py)"; \
+test-changed: ## Run only the Python tests for what changed since master (tools/changed_tests.py)
+	@TESTS="$$(python3 tools/changed_tests.py)"; \
 		if [ -z "$$TESTS" ]; then echo "nothing changed that a test covers"; else echo "$$TESTS" | tr '\n' ' '; echo; $(PYTEST) $$TESTS; fi
 
 icons: ## Draw the app and menu bar icons into native/Bundle (needs Pillow)
@@ -147,6 +157,8 @@ BUILD_RELEASE = $(PYTHON) tools/build_release.py
 BUILD_ARGS = --dist $(DIST)
 LATEST_MANIFEST = https://github.com/kenodressel/palaver/releases/latest/download/manifest.json
 PREVIOUS_MANIFEST ?= $(DIST)/previous-manifest.json
+# This release's notes: the manifest's (the app's update shows them) and the GitHub release's.
+NOTES = docs/release-notes/$(VERSION).md
 
 # The `palaver` command (phase 4): Contents/Resources/bin/palaver, which ~/.local/bin/palaver links to.
 cli: $(VENDOR)/.patched ## Build the palaver command (native/.build/release/palaver-cli)
@@ -167,7 +179,7 @@ manifest: ## Write manifest.json and upload.txt over the assets in dist/
 	@curl -fsSL -o "$(DIST)/previous-manifest.json" "$(LATEST_MANIFEST)" 2>/dev/null \
 		|| rm -f "$(DIST)/previous-manifest.json"
 	$(BUILD_RELEASE) manifest $(BUILD_ARGS) $$(test -f "$(PREVIOUS_MANIFEST)" && echo --previous "$(PREVIOUS_MANIFEST)") \
-		$$(test -f "$(DIST)/notes.md" && echo --notes "$(DIST)/notes.md")
+		$$(test -f "$(NOTES)" && echo --notes "$(NOTES)")
 
 release: app compat-runtime manifest ## All release assets in dist/ (upload.txt: what to upload)
 	@cp install.sh $(DIST)/install.sh
@@ -179,14 +191,16 @@ smoke-install: ## Install dist/ into a throwaway HOME, check it, and simulate an
 # Ad hoc signatures differ every build, and macOS asks testers for the
 # microphone and system audio again after each update: a release is signed
 # with the kept certificate (CONTRIBUTING.md, "Signing releases").
-publish: ## Create the GitHub release of this version from dist/upload.txt (needs gh and PALAVER_SIGN_IDENTITY)
+publish: ## Create the GitHub release of this version from dist/upload.txt (the fallback: a pushed tag does it on CI)
 	@test -n "$$PALAVER_SIGN_IDENTITY" \
 		|| { echo "✗ publish needs PALAVER_SIGN_IDENTITY (and make release built with it)"; exit 1; }
+	@test -s "$(NOTES)" || { echo "✗ $(NOTES) is missing: every release has its notes"; exit 1; }
 	@T=$$(mktemp -d); ditto -xk "$(DIST)/palaver-app-$(VERSION).zip" "$$T" || exit 1; \
 		if codesign -dv "$$T/Palaver.app" 2>&1 | grep -q "Signature=adhoc"; then rm -rf "$$T"; \
 			echo "✗ dist/palaver-app-$(VERSION).zip is signed ad hoc: run make release with PALAVER_SIGN_IDENTITY set"; \
 			exit 1; fi; rm -rf "$$T"
-	cd $(DIST) && gh release create "v$(VERSION)" --repo kenodressel/palaver $$(cat upload.txt) --generate-notes
+	cd $(DIST) && gh release create "v$(VERSION)" --repo kenodressel/palaver --title "Palaver $(VERSION)" \
+		--notes-file "$(CURDIR)/$(NOTES)" --generate-notes --latest $$(cat upload.txt)
 
 clean: ## Remove build output
 	rm -rf $(DIST) build

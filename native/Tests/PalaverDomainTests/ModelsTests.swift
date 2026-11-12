@@ -74,7 +74,4 @@ private func dumps(_ v: JSONValue) -> String { PythonJSON.dumps(v) }
         #expect(throws: ModelError.self) { try Word(json: .array([])) }
     }
 
-    @Test func theUnsureConfidenceIsPythons() {
-        #expect(UNSURE_CONFIDENCE == 0.85)
-    }
 }

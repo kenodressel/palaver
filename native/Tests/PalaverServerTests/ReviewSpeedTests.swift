@@ -7,8 +7,8 @@ import PalaverCore
 import PalaverDomain
 @testable import PalaverServer
 
-private let MEETINGS = 30
-private let LINES = 240  // a 30 to 40 minute meeting
+private let MEETINGS = 8  // enough for five unreviewed and three reviewed ones; the counts, not the size, are the point
+private let LINES = 60
 
 private func write(_ value: JSONValue, to url: URL) throws { try Data(PythonJSON.dumps(value).utf8).write(to: url) }
 

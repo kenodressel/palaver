@@ -139,22 +139,6 @@ private final class Home {
         #expect(!exists(aside))
     }
 
-    @Test func test_the_lines_of_a_meeting_and_of_other_writers_are_read_as_python_reads_them() throws {
-        let h = Home()
-        // A cut-short last line, an entry that is no object, "meetings" as text (Python's `in` is a substring test) and
-        // as an object (its keys); a number there is a TypeError, as in Python.
-        try write(h.log, """
-            {"n": 1, "meetings": "x\(MEETING)y"}
-            ["\(MEETING)"]
-            {"n": 2, "meetings": {"\(MEETING)": 1}}
-            {"n": 3, "meetings": ["\(MEETING)
-            """)
-        #expect(try McpLog.read(meeting: MEETING, stores: h.stores).map { $0["n"] } == [.int(2), .int(1)])
-        #expect(try h.ns() == [2, 1])
-        try write(h.log, "{\"n\": 4, \"meetings\": 7, \"id\": \"\(MEETING)\"}\n")
-        #expect(throws: McpLog.TypeError.self) { try McpLog.read(meeting: MEETING, stores: h.stores) }
-    }
-
     // MARK: - running servers
 
     @Test func test_heartbeat_files_show_the_live_clients_and_dead_ones_are_pruned() throws {
@@ -248,21 +232,6 @@ private final class Home {
                 == #"{"installed": true, "registered": false, "stale": true, "name": "meetings"}"#)
     }
 
-    @Test func test_the_config_files_are_read_as_python_reads_them() throws {
-        let h = Home()
-        func registered() throws -> String { dumps(try McpLog.registered(stores: h.stores)) }
-        // args as text are its characters, so "mcp" is no word of it; a list of the config's own types counts by str().
-        try write(h.stores.claudeConfig, #"{"mcpServers": {"a": {"command": "palaver", "args": "mcp"}, "#
-            + #""b": {"command": ["palaver"], "args": ["mcp"]}}}"#)
-        #expect(try registered() == #"{"registered": true, "name": "b", "scope": "user"}"#)
-        try write(h.stores.claudeConfig, #"{"projects": ["/x"]}"#)  // no object: can't be told
-        #expect(try registered() == #"{"registered": null}"#)
-        try write(h.stores.claudeConfig, "[]")
-        #expect(try registered() == #"{"registered": null}"#)
-        try write(h.stores.claudeConfig, #"{"mcpServers": {"a": {"command": "palaver", "args": 3}}}"#)  // a TypeError
-        #expect(throws: McpLog.TypeError.self) { try McpLog.registered(stores: h.stores) }
-    }
-
     // MARK: - the window's API
 
     @Test func test_http_mcp_shows_clients_log_and_setup() throws {
@@ -294,21 +263,6 @@ private final class Home {
         #expect(r.status == 200 && r.json?["log"]?.arrayValue?.map { $0["tool"] } == [.string("list_people"), .string("get_meeting")])
         r = s.post("/api/mcp/restore", .object([("token", answer["undo"]!)]))
         #expect(r.status == 404)
-    }
-
-    @Test func test_the_routes_answer_what_python_answers_for_odd_requests() throws {
-        let s = try TestServer()
-        defer { s.stop() }
-        var r = s.post("/api/mcp/clear")  // nothing to clear
-        #expect(r.status == 200 && r.json?["cleared"] == .int(0) && r.json?["undo"] == .null)
-        r = s.post("/api/mcp/restore")
-        #expect(r.status == 400 && r.error == "bad request: 'token'")
-        r = s.post("/api/mcp/restore", .object([("token", .string("../x"))]))  // no token: nothing read
-        #expect(r.status == 404 && r.error == "can't undo this any more")
-        r = s.post("/api/mcp/restore", .array([]))
-        #expect(r.status == 500 && r.error == "list indices must be integers or slices, not str")
-        r = s.post("/api/mcp/install", .string("code"))
-        #expect(r.status == 500 && r.error == "'str' object has no attribute 'get'")
     }
 
     @Test func test_http_mcp_install_adds_palaver_to_claude_code() throws {

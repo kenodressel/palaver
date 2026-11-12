@@ -2,8 +2,8 @@
 recordings, and a WebKit page (Playwright) that fails its test on any
 console.error, page error or dialog.
 
-The server is palaver-server (native/.build/e2e, `make e2e-server`: a debug build,
-optimized; $PALAVER_E2E_SERVER_BIN names another), a
+The server is palaver-server (native/.build/test, `make test-build`: the tests' debug
+build, optimized; $PALAVER_E2E_SERVER_BIN names another), a
 child process with fakes for what it talks to: the test model of palaver-lm
 (its control folder, FakePython) and fake_app.py for the menu bar app
 (daemon.json, app.sock). It starts no Python.
@@ -151,9 +151,9 @@ def audio_decoding(browser, tmp_path_factory):
 
 _REPO = Path(__file__).resolve().parents[2]
 SERVER_BIN = Path(os.environ.get("PALAVER_E2E_SERVER_BIN")
-                  or _REPO / "native" / ".build" / "e2e" / "debug" / "palaver-server")
+                  or _REPO / "native" / ".build" / "test" / "debug" / "palaver-server")
 STATIC = _REPO / "web"
-# The language model's worker the server and the fake app start: the e2e build's palaver-lm, whose model is the test's
+# The language model's worker the server and the fake app start: the test build's palaver-lm, whose model is the test's
 # ($PALAVER_TEST_LM: a control folder, see native/Sources/PalaverLM/ControlModel.swift).
 LM_BIN = Path(os.environ.get("PALAVER_E2E_LM_BIN") or SERVER_BIN.with_name("palaver-lm"))
 FAKE_CLAUDE = Path(__file__).with_name("fake_claude.py")
@@ -526,7 +526,7 @@ def _first_line(process: subprocess.Popen, timeout: float = 30) -> str:
 def _serve_swift(root: Path, key: str | None, config_home: Path, *, recordings: bool = True, user: str = USER,
                  events: list | None = None, env: dict | None = None):
     if not SERVER_BIN.exists() or not LM_BIN.exists():
-        pytest.fail(f"palaver-server or palaver-lm is not built ({SERVER_BIN.parent}): run `make e2e-server`", pytrace=False)
+        pytest.fail(f"palaver-server or palaver-lm is not built ({SERVER_BIN.parent}): run `make test-build`", pytrace=False)
     if config_home.resolve() in {Path.home().resolve(), (Path.home() / ".config").resolve()}:
         pytest.fail(f"the e2e server's XDG_CONFIG_HOME is the real {config_home}", pytrace=False)
     tmp = root.parent

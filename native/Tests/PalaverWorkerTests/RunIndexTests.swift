@@ -109,7 +109,7 @@ private final class Said: @unchecked Sendable { var lines: [String] = [] }
         let rc = await Index.run(outputDir: h.config.outputDir, stores: h.stores, download: download,
                                  modelFolder: { FileManager.default.fileExists(atPath: e5.path) ? e5 : nil },
                                  encoder: { madeFrom.append($0); return TinyEncoder() }, shouldStop: { false },
-                                 say: { said.lines.append($0) })
+                                 say: { said.lines.append($0) }, qos: .userInitiated)
         #expect(rc == 0)
         #expect(downloads.lines == ["e5"])
         #expect(madeFrom.map(\.path) == [e5.path])
@@ -118,7 +118,7 @@ private final class Said: @unchecked Sendable { var lines: [String] = [] }
         _ = try processed(h.config.outputDir, "2026-10-21T10-00-00")
         #expect(await Index.run(outputDir: h.config.outputDir, stores: h.stores, download: download,
                                 modelFolder: { FileManager.default.fileExists(atPath: e5.path) ? e5 : nil },
-                                encoder: { _ in TinyEncoder() }, shouldStop: { false }, say: { _ in }) == 0)
+                                encoder: { _ in TinyEncoder() }, shouldStop: { false }, say: { _ in }, qos: .userInitiated) == 0)
         #expect(downloads.lines.count == 1)
     }
 
@@ -133,14 +133,14 @@ private final class Said: @unchecked Sendable { var lines: [String] = [] }
         }
         var made = 0
         let rc = await Index.run(outputDir: h.config.outputDir, stores: h.stores, download: download, modelFolder: { nil },
-                                 encoder: { _ in made += 1; return TinyEncoder() }, shouldStop: { false }, say: { _ in })
+                                 encoder: { _ in made += 1; return TinyEncoder() }, shouldStop: { false }, say: { _ in }, qos: .userInitiated)
         #expect(rc == 1)
         #expect(downloads.lines == ["e5"] && made == 0)
         #expect(!FileManager.default.fileExists(atPath: paths.folder.appendingPathComponent(SearchIndex.INDEX_SIG).path))
         // Nothing to index: no model, no download.
         try FileManager.default.removeItem(at: paths.folder)
         #expect(await Index.run(outputDir: h.config.outputDir, stores: h.stores, download: download, modelFolder: { nil },
-                                encoder: { _ in TinyEncoder() }, shouldStop: { false }, say: { _ in }) == 0)
+                                encoder: { _ in TinyEncoder() }, shouldStop: { false }, say: { _ in }, qos: .userInitiated) == 0)
         #expect(downloads.lines.count == 1)
     }
 
@@ -171,7 +171,7 @@ private final class Said: @unchecked Sendable { var lines: [String] = [] }
         let said = Said()
         func index(only: [URL]? = nil, stop: @escaping () -> Bool = { false }) async -> Int32 {
             await Index.run(outputDir: h.config.outputDir, only: only, stores: h.stores, download: {}, modelFolder: { t.url },
-                            encoder: { _ in TinyEncoder() }, shouldStop: stop, say: { said.lines.append($0) })
+                            encoder: { _ in TinyEncoder() }, shouldStop: stop, say: { said.lines.append($0) }, qos: .userInitiated)
         }
         // Paused (a recording started): nothing indexed.
         #expect(await index(stop: { true }) == 0)
@@ -188,7 +188,8 @@ private final class Said: @unchecked Sendable { var lines: [String] = [] }
         let live = try processed(h.config.outputDir, "2026-10-22T11-00-00")
         let worker = Foundation.Process()
         worker.executableURL = URL(fileURLWithPath: "/bin/sh")
-        worker.arguments = ["-c", "sleep 30", "live", live.folder.path]
+        // `; exit`: a lone command the shell would exec, and the process would no longer say it works on the folder.
+        worker.arguments = ["-c", "sleep 30; exit 0", "live", live.folder.path]
         try worker.run()
         defer { worker.terminate(); worker.waitUntilExit() }
         try Data("\(worker.processIdentifier)".utf8).write(to: live.folder.appendingPathComponent("live.pid"))

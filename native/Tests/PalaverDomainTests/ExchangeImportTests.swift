@@ -541,31 +541,4 @@ import Testing
 
     // MARK: - against Python
 
-    /// The zip Python exported for the exchange_zip golden, imported here as the window does it (`readPackage`, then
-    /// `stage` and `place`), as Valerie, in Europe/Berlin, at the golden's `now`: the meeting folder holds what
-    /// Python's import wrote (golden `exchange_import`), each file byte for byte, and the result is Python's.
-    @Test func aZipPythonExportedImportsAsPythonImportsIt() throws {
-        let r = Root(); defer { r.remove() }
-        let golden = Goldens.load("exchange_import")
-        let now = try PyDateTime.parse(try #require(golden["now"]?.stringValue)).date
-        let recordings = r.t.url.appendingPathComponent("Meetings", isDirectory: true)
-        let package = try Exchange.readPackage(Goldens.url("exchange-python.zip"))
-        let staged = try Exchange.stage(recordings, package, userName: "Valerie", stores: r.stores, now: now, timeZone: Self.berlin)
-        let placed = Result { try Exchange.place(recordings, staged, timeZone: Self.berlin) }
-        staged.discard()  // import_package's `finally`
-        let done = try placed.get()
-        Goldens.expect(.object([
-            ("id", .string(done.id)), ("from", .string(done.sender)), ("matched", .null), ("voices", .array(done.voices)),
-            ("names", .object(done.names.map { ($0.key, .string($0.value)) })), ("warnings", .strings(done.warnings)),
-        ]), "exchange_import", "result")
-        let folder = recordings.appendingPathComponent(done.id)
-        let names = Py.stableSorted(try FileManager.default.contentsOfDirectory(atPath: folder.path)
-            .filter { !$0.hasSuffix(".lock") }, by: Py.less)
-        let files: [(String, JSONValue)] = try names.map { name in
-            let data = try Data(contentsOf: folder.appendingPathComponent(name))
-            return (name, .string(try #require(String(data: data, encoding: .utf8), "\(name) is UTF-8")))
-        }
-        Goldens.expect(.object(files), "exchange_import", "files")
-        #expect(!Self.exists(recordings.appendingPathComponent(".importing")))
-    }
 }

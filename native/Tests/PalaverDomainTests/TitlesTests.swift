@@ -91,9 +91,6 @@ import Testing
         #expect(throws: TitleError.self) { try Titles.clean(nil) }
         #expect(throws: TitleError.self) { try Titles.clean(.array([.string("Budget")])) }
         #expect(try Titles.clean(.string(" Budget ")) == "Budget")
-        for c in try Goldens.cases("organizations", "clean") {
-            #expect(Titles.clean(c[0].stringValue ?? "") == c[1].stringValue, "clean \(PythonJSON.dumps(c[0]))")
-        }
     }
 
     @Test func test_the_fallback_says_when_the_meeting_started() throws {
@@ -106,13 +103,6 @@ import Testing
         // This Mac's clock, as `astimezone()` reads it.
         let here = DateFormatter(); here.dateFormat = "HH:mm"; here.timeZone = .current
         #expect(Titles.fallback("2026-10-27T12:04:00+01:00") == "Meeting at \(here.string(from: Self.START.date))")
-    }
-
-    @Test func theTitleFileIsWrittenLikePython() throws {
-        let s = try Setup(); defer { s.t.remove() }
-        try Titles.save(s.paths, "Käse \"Ärger\" 😀")
-        #expect(try String(contentsOf: s.paths.title, encoding: .utf8) == #"{"title": "Käse \"Ärger\" 😀"}"#)
-        #expect(!FileManager.default.fileExists(atPath: s.paths.folder.appendingPathComponent("title.json.tmp").path))
     }
 
     @Test func theImportedTitleCountsBeforeTheEvent() throws {

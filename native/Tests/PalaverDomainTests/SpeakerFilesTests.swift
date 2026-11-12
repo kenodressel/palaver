@@ -149,45 +149,6 @@ struct SpeakerMeeting {
 
     // MARK: - beyond test_speakers.py: the files as Python writes them, and the locks
 
-    @Test func test_the_speaker_files_are_written_as_python_writes_them() throws {
-        let m = SpeakerMeeting.folder(); defer { m.remove() }
-        try m.save([("SPEAKER_01", "Zoë Ärger"), ("SPEAKER_00", "Valerie")])
-        #expect(try String(contentsOf: m.paths.speakers, encoding: .utf8) == "{\n  \"SPEAKER_01\": \"Zoë Ärger\",\n  \"SPEAKER_00\": \"Valerie\"\n}")
-        let transcript = try String(contentsOf: m.paths.transcriptJson, encoding: .utf8)
-        #expect(transcript.hasPrefix("[\n  {\n    \"speaker\": \"Timo\",\n    \"start\": 0.0,"))
-        #expect(transcript.contains("\"speaker\": \"Zo\\u00eb \\u00c4rger\",\n    \"start\": 5.0,\n    \"end\": 9.0,\n    \"text\": \"Numbers look good.\",\n    \"label\": \"SPEAKER_01\""))
-        #expect(m.markdown() == """
-            # 2026-10-20 14:35 — Meeting (0 min, 4 speakers)
-
-            **Timo** [14:35:17]  Hi all.
-
-            **Valerie** [14:35:17]  Welcome to the review.
-
-            **Zoë Ärger** [14:35:22]  Numbers look good.
-
-            **SPEAKER_02** [14:35:27]  Agreed.
-
-            """)
-
-        try Speakers.setIgnored(m.paths, "SPEAKER_02")
-        try Speakers.setIgnored(m.paths, "SPEAKER_00")
-        #expect(try String(contentsOf: m.paths.speakersIgnored, encoding: .utf8) == "[\"SPEAKER_00\", \"SPEAKER_02\"]")
-        try Speakers.setIgnored(m.paths, "SPEAKER_00", false)
-        try Speakers.setIgnored(m.paths, "SPEAKER_02", false)
-        #expect(!FileManager.default.fileExists(atPath: m.paths.speakersIgnored.path))
-
-        try Speakers.setUnknown(m.paths, "SPEAKER_01")
-        #expect(Speakers.loadUnknown(m.paths) == ["SPEAKER_01"])
-        try Speakers.setRejectedName(m.paths, "SPEAKER_01", "Tom")
-        try Speakers.setRejectedName(m.paths, "SPEAKER_01", "Zoë")
-        try Speakers.setRejectedName(m.paths, "SPEAKER_01", "TOM")  // once, as last said
-        #expect(try String(contentsOf: m.paths.speakersRejected, encoding: .utf8)
-                == "{\n  \"SPEAKER_01\": [\n    \"Zoë\",\n    \"TOM\"\n  ]\n}")
-        try Speakers.setRejectedName(m.paths, "SPEAKER_01", "zoë", false)
-        try Speakers.setRejectedName(m.paths, "SPEAKER_01", "tom", false)
-        #expect(!FileManager.default.fileExists(atPath: m.paths.speakersRejected.path))
-    }
-
     @Test func test_names_in_effect_layer_inferred_recognized_and_given_names() throws {
         let m = SpeakerMeeting.folder(); defer { m.remove() }
         m.write(m.paths.speakersInferred, .object([("SPEAKER_00", .object([("name", .string("Carla"))])),

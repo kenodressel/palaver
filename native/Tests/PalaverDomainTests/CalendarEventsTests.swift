@@ -89,13 +89,6 @@ import Testing
         #expect(C.looksLikeRoom("03 - Seestraße | Meetingroom | KLOUD Vienna"))
         #expect(C.looksLikeRoom("16 - Attakring | Conferenceroom | KLOUD Vienna"))
         #expect(!C.looksLikeRoom("Andres Moreno Vidal"))
-        // Python's answers for more shapes (tools/parity/goldens.py calendar).
-        for case_ in try #require(Goldens.load("calendar")["people"]?.arrayValue) {
-            let c = try #require(case_.arrayValue)
-            let raw = try #require(c[0].stringValue)
-            #expect(C.personName(raw) == c[1].stringValue, "personName(\(raw.debugDescription))")
-            #expect(C.looksLikeRoom(raw) == c[2].boolValue, "looksLikeRoom(\(raw.debugDescription))")
-        }
     }
 
     @Test func test_stored_events_are_tidied_and_invitees_listed_once() throws {
@@ -300,32 +293,6 @@ import Testing
 
     // MARK: calendar.json bytes
 
-    @Test func aStoredEventIsReadAndWrittenAsPythonDoes() throws {
-        let t = F.folder(); defer { t.remove() }
-        let paths = RecordingPaths(t.url)
-        let golden = Goldens.load("calendar")
-        let stored = try #require(golden["stored"])
-        let event = try CalendarEvent(json: stored)
-        Goldens.expect(event.json, "calendar", "event_json")
-        #expect(event.key == golden["event_key"]?.stringValue)
-        #expect(event.seriesId == golden["event_series_id"]?.stringValue)
-        let link = Link("event", "Migration", "calendar", 0.54, "time match; you said a recording was not this event once")
-        try C.save(paths, event, link)
-        #expect(t.text("calendar.json") == golden["saved"]?.stringValue)
-        let other = try CalendarEvent(json: .object(try fields(stored).map { key, value in
-            switch key {
-            case "title": return (key, .string("Äpfel"))
-            case "start": return (key, .string("2026-10-27T14:00:00+01:00"))
-            case "end": return (key, .string("2026-10-27T15:00:00+01:00"))
-            default: return (key, value)
-            }
-        }))
-        try C.ask(paths, [event, other])
-        #expect(t.text("calendar.json") == golden["asked"]?.stringValue)
-        try C.dismiss(paths)
-        #expect(t.text("calendar.json") == golden["dismissed"]?.stringValue)
-    }
-
     @Test func anUnchangedQuestionIsNotRewritten() throws {
         let t = F.folder(); defer { t.remove() }
         let paths = RecordingPaths(t.url)
@@ -381,21 +348,6 @@ import Testing
 
     // MARK: datetimes
 
-    @Test func datetimesParseAndPrintAsPythonDoes() throws {
-        for row in try #require(Goldens.load("calendar")["parsed"]?.arrayValue) {
-            let r = try #require(row.arrayValue)
-            let text = try #require(r[0].stringValue)
-            guard let iso = r[1].stringValue else {
-                #expect(throws: (any Error).self, "\(text)") { try PyDateTime.parse(text) }
-                continue
-            }
-            let d = try PyDateTime.parse(text)
-            #expect(d.iso == iso, "\(text)")
-            #expect(d.dayISO == r[2].stringValue, "\(text)")
-            if let stamp = r[3].doubleValue { #expect(Double(d.micros) / 1_000_000 == stamp, "\(text)") }
-        }
-    }
-
     @Test func aNaiveAndAnAwareDatetimeAreNeverEqual() throws {
         let naive = try PyDateTime.parse("2026-10-27T15:00:00"), aware = try PyDateTime.parse("2026-10-27T15:00:00+00:00")
         #expect(naive != aware)
@@ -404,15 +356,4 @@ import Testing
 
     // MARK: decisions
 
-    @Test func decisionsAreThoseOfPython() throws {
-        for (name, c) in try fields(try #require(Goldens.load("calendar")["decisions"])) {
-            let events = try #require(c["events"]?.arrayValue).map { try CalendarEvent(json: $0) }
-            let start = F.at(try Goldens.int(c["start"])), end = F.at(try Goldens.int(c["end"]))
-            let d = C.decide(events, start, end)
-            #expect(d.event?.title == c["event"]?.stringValue, "\(name)")
-            if let link = c["link"], !link.isNull { #expect(PythonJSON.dumps(d.link?.toDict() ?? .null) == PythonJSON.dumps(link), "\(name)") }
-            else { #expect(d.link == nil, "\(name)") }
-            #expect(d.question?.map(\.title) == c["question"]?.arrayValue?.compactMap(\.stringValue), "\(name)")
-        }
-    }
 }

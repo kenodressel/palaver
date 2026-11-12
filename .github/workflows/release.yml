@@ -1,64 +1,223 @@
-name: Release dry run
+name: Release
 
-# Builds and smoke-installs the release assets; publishes nothing. A release
-# is signed with the kept certificate, which only the maintainer's Mac has:
-# it is made there (make release, make publish; CONTRIBUTING.md, "Signing releases").
+# A pushed tag vX.Y.Z (X.Y.Z = VERSION) builds the release assets with `make release`, signed with the kept
+# certificate from the repository's secrets, smoke-installs them (`make smoke-install`) and publishes the GitHub
+# release from dist/upload.txt with docs/release-notes/X.Y.Z.md (CONTRIBUTING.md, "Releases"). Run by hand
+# (Actions → Release → Run workflow) it is a dry run: built, signed and smoke-installed, nothing published.
+#
+# Only the owner's own tag pushes and runs reach the secrets: no pull_request trigger, tags cannot come from forks,
+# and `check` stops any other actor or repository (the private archive carries this file too). The job that signs
+# has a read-only token; the job that publishes has the write token but no secret and builds nothing.
 on:
+  push:
+    tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: build, sign and smoke-install, publish nothing (uncheck only on the tag vVERSION)"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   UV_FROZEN: "1"
 
 jobs:
-  build:
-    runs-on: macos-15
+  check:
+    # The tag names VERSION and its notes exist; whether this run publishes.
+    if: github.repository == 'kenodressel/palaver' && github.actor == github.repository_owner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      publish: ${{ steps.version.outputs.publish }}
     steps:
       - uses: actions/checkout@v7
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
-
-      - name: Install the developer tooling (tests, release build)
-        run: uv sync --python 3.13 --extra dev
-
-      - name: Note the Swift toolchain
-        # Part of the cache key: a new Xcode on the runner must not restore a stale .build.
-        run: echo "SWIFT_TOOLCHAIN=$(swift --version 2>&1 | head -1 | tr -c 'A-Za-z0-9.' '-')" >> "$GITHUB_ENV"
-
-      - name: Cache the Swift engine's build
-        # Keyed on what decides the build: the Makefile (FluidAudio's tag),
-        # the package, and the scripts that fetch and patch FluidAudio.
-        uses: actions/cache@v4
         with:
-          path: |
-            native/vendor
-            native/.build
-          key: engine-${{ runner.os }}-${{ runner.arch }}-${{ env.SWIFT_TOOLCHAIN }}-${{ hashFiles('Makefile', 'native/Package.swift', 'tools/fetch_nemo.sh', 'tools/patch_fluidaudio.py') }}
+          persist-credentials: false
 
-      - name: Build the Swift engine
-        run: make engine
+      - name: Tag, VERSION and release notes
+        id: version
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          version="$(cat VERSION)"
+          tag="v${version}"
+          if [ "${EVENT}" = push ]; then
+            publish=true
+            [ "${REF}" = "refs/tags/${tag}" ] || { echo "::error::the tag ${REF#refs/tags/} is not ${tag} (VERSION says ${version})"; exit 1; }
+          elif [ "${DRY_RUN}" = true ]; then
+            publish=false
+          else
+            publish=true
+            [ "${REF}" = "refs/tags/${tag}" ] || { echo "::error::only a run on the tag ${tag} publishes (this is ${REF}); run it as a dry run"; exit 1; }
+          fi
+          notes="docs/release-notes/${version}.md"
+          [ -s "${notes}" ] || { echo "::error::${notes} is missing: every release has its notes"; exit 1; }
+          {
+            echo "version=${version}"
+            echo "tag=${tag}"
+            echo "publish=${publish}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Palaver ${version} (${tag}); publish: ${publish}"
 
-      - name: Install WebKit for the end-to-end tests
-        run: uv run --extra dev python -m playwright install webkit
+  ci-passed:
+    # The tests: ci.yml runs every test (make test-long) on the commit the maintainer's publish script pushes to
+    # master, before the tag. A release waits for that run to pass instead of building the tests (~4.5 GB) again.
+    needs: check
+    if: needs.check.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      actions: read
+    steps:
+      - name: Wait for ci.yml to pass on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          started=$SECONDS
+          while :; do
+            run="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&event=push&branch=master&per_page=1" \
+              --jq '.workflow_runs[0] // empty | "\(.status) \(.conclusion) \(.html_url)"')"
+            read -r status conclusion url <<< "${run:-none none none}"
+            if [ "${status}" = completed ]; then
+              [ "${conclusion}" = success ] && { echo "✓ ci.yml passed on ${SHA}: ${url}"; exit 0; }
+              echo "::error::ci.yml ended '${conclusion}' on ${SHA}: ${url}"; exit 1
+            fi
+            if [ "${status}" = none ] && [ $((SECONDS - started)) -gt 600 ]; then
+              echo "::error::ci.yml has not run on ${SHA}: push the commit to master before its tag"; exit 1
+            fi
+            echo "ci.yml on ${SHA}: ${status} (${url}); waiting"
+            sleep 60
+          done
 
-      - name: Run tests
-        run: make test
+  build:
+    needs: check
+    runs-on: macos-26  # as ci.yml: Apple Silicon, the newest Xcode (the package needs it)
+    timeout-minutes: 120
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Select the newest Xcode
+        run: |
+          xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
 
       - name: Metal toolchain (MLX's shaders in palaver-lm)
         # make lm compiles them with xcodebuild; newer Xcodes ship the Metal compiler as a separate download.
         run: xcrun --find metal >/dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.2.0
+
+      - name: Install the developer tooling (the release build; .venv's Python runs the old releases' updaters)
+        run: uv sync --python 3.13 --extra dev
+
+      - name: Import the signing certificate into a temporary keychain
+        # tools/release_keychain.sh prints no secret (no set -x here); it puts the keychain on the search list,
+        # where codesign finds "Palaver Release", and signs a probe with it.
+        env:
+          PALAVER_SIGN_P12: ${{ secrets.PALAVER_SIGN_P12 }}
+          PALAVER_SIGN_P12_PASSWORD: ${{ secrets.PALAVER_SIGN_P12_PASSWORD }}
+          PALAVER_SIGN_IDENTITY: Palaver Release
+        run: |
+          sh tools/release_keychain.sh create "${RUNNER_TEMP}/palaver-release.keychain-db"
+          echo "PALAVER_SIGN_IDENTITY=${PALAVER_SIGN_IDENTITY}" >> "$GITHUB_ENV"
+
       - name: Build release assets
-        # The same recipe as on a Mac (#60): the app (the Swift programs,
-        # no Python), the placeholder runtime the updaters before 0.6 need,
-        # manifest.json, install.sh.
+        # The same recipe as on a Mac: the app, the placeholder runtime, manifest.json (with
+        # docs/release-notes/VERSION.md, which the app's update shows), install.sh.
         run: make release
 
+      - name: The app is signed with the certificate
+        run: |
+          t="$(mktemp -d)"
+          ditto -xk "dist/palaver-app-${VERSION}.zip" "$t"
+          codesign --verify --strict "$t/Palaver.app"
+          codesign -dvv "$t/Palaver.app" 2>&1 | grep -qxF "Authority=${PALAVER_SIGN_IDENTITY}" \
+            || { echo "::error::Palaver.app is not signed by ${PALAVER_SIGN_IDENTITY}"; exit 1; }
+          rm -rf "$t"
+
       - name: Smoke-install the assets
-        # install.sh into a throwaway HOME under sandbox-exec, exactly as
-        # users run it; no Python anywhere, updates with install.sh and the
-        # Swift updater, and from 0.3.14 and 0.5.0rc6 with their own.
+        # install.sh into a throwaway HOME under sandbox-exec, as users run it; updates with install.sh and the
+        # Swift updater, and from 0.3.14 and 0.5.0rc6 (downloaded from this repository's releases) with their own
+        # updaters on .venv's Python 3.13 (they need only its standard library).
         run: make smoke-install
+
+      - name: Delete the temporary keychain
+        if: always()
+        run: sh tools/release_keychain.sh delete "${RUNNER_TEMP}/palaver-release.keychain-db"
+
+      - name: Collect what upload.txt names
+        run: |
+          mkdir release-assets
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            cp "dist/$f" release-assets/ || { echo "::error::upload.txt names $f, which dist/ lacks"; exit 1; }
+          done < dist/upload.txt
+          cp dist/upload.txt release-assets/
+          ls -l release-assets
+
+      - name: Keep the assets for the publish job
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-assets
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [check, ci-passed, build]
+    if: needs.check.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      TAG: ${{ needs.check.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-assets
+          path: release-assets
+
+      - name: Create the GitHub release
+        working-directory: release-assets
+        run: |
+          mapfile -t files < <(grep -v '^[[:space:]]*$' upload.txt)
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "Palaver $VERSION" \
+            --notes-file "../docs/release-notes/${VERSION}.md" --generate-notes --latest "${files[@]}"
+
+      - name: The latest manifest.json names this version
+        # GitHub's download CDN can take a moment to serve the new release.
+        run: |
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/manifest.json"
+          for _ in $(seq 12); do
+            got="$(curl -fsSL "$url" | jq -r .version || true)"
+            [ "$got" = "$VERSION" ] && { echo "✓ $url names $VERSION"; exit 0; }
+            echo "$url names ${got:-nothing} yet"
+            sleep 5
+          done
+          echo "::error::$url does not name $VERSION after 60 s"
+          exit 1

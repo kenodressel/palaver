@@ -411,7 +411,7 @@ private final class Fixture {
             ServeMain.started(f.app, log: nil, port: 0, url: nil, readyFD: writeEnd, warmClock: { s in
                 waits.lock.withLock { waits.seconds.append(s) }
                 held.wait(60)  // until the test ends (a shorter hold ran out under load and the warming went on)
-            })
+            }, warmQoS: .userInitiated)  // background QoS starves for half a minute on a busy Mac
             done.open()
         }.start()
         #expect(until(2) { f.app.background.warming != nil })  // started while the line waits to be written
@@ -425,8 +425,7 @@ private final class Fixture {
         }
         #expect(out.count == filler + 6 && String(decoding: out.suffix(6), as: UTF8.self) == "ready\n")  // once
         done.wait(5)
-        // The warming thread runs at background QoS: under load it may take a while to get there.
-        #expect(until(30) { waits.lock.withLock { waits.seconds } == [Background.WARM_DELAY_SECONDS] })  // no sleeping: held
+        #expect(until(10) { waits.lock.withLock { waits.seconds } == [Background.WARM_DELAY_SECONDS] })  // no sleeping: held
     }
 
     // MARK: - test_webapp.py

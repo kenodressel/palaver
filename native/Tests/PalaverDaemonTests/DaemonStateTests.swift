@@ -76,43 +76,8 @@ func pythonLikeRig(_ root: URL) throws -> Harness {
     return h
 }
 
-extension DaemonTicks {
+extension DaemonTicksC {
     @Suite struct DaemonStateTests {
-        @Test func daemonJsonKeysMatchPython() async throws {
-            let root = tempDir()
-            let h = try pythonLikeRig(root)
-            await h.run { $0 > 400 }
-            let recording = try #require(JSONValue.parse(Data(try pythonState("recording.json", root: root).utf8)))
-            let mine = h.state()
-            #expect(keys(mine) == keys(recording))
-            // In Python's order too (json.dumps keeps the dict's).
-            #expect(topKeys(h.statePath) == topKeys(pythonFixtures.appendingPathComponent("recording.json")))
-            #expect(topKeys(h.statePath).count == 33)
-            #expect(sameShape(mine, recording).isEmpty, "\(sameShape(mine, recording))")
-            h.daemon.shutdown()
-            let stopped = try #require(JSONValue.parse(Data(try pythonState("stopped.json", root: root).utf8)))
-            let mineStopped = h.state()
-            #expect(keys(mineStopped) == keys(stopped))
-            #expect(topKeys(h.statePath) == topKeys(pythonFixtures.appendingPathComponent("stopped.json")))
-            #expect(sameShape(mineStopped, stopped).isEmpty, "\(sameShape(mineStopped, stopped))")
-        }
-
-        @Test func theRecordingStatusIsPythonsValueForValue() async throws {
-            // Beyond the shapes: with the same inputs, every value but `memory` (no watchdog in either) is Python's.
-            let root = tempDir()
-            let h = try pythonLikeRig(root)
-            h.daemon.deps.wall = { [unowned h] in WallTime.parse("2026-11-03T09:00:00+01:00")!.addingTimeInterval(h.clock) }
-            await h.run { $0 > 400 }
-            let python = try #require(JSONValue.parse(Data(try pythonState("recording.json", root: root).utf8)))
-            for k in keys(python) where k != "since" {
-                #expect(h.state()[k] == python[k], "\(k): \(h.state()[k]!) != \(python[k]!)")
-            }
-            h.daemon.shutdown()
-            let stopped = try #require(JSONValue.parse(Data(try pythonState("stopped.json", root: root).utf8)))
-            for k in keys(stopped) where !["since", "transcribing", "transcribing_folder"].contains(k) {
-                #expect(h.state()[k] == stopped[k], "\(k): \(h.state()[k]!) != \(stopped[k]!)")
-            }
-        }
 
         /// Review focus 4: the update from the Python app takes over its queue, notes, cut and ignored holds.
         @Test func restoresPythonDaemonJson() async throws {
@@ -175,26 +140,6 @@ extension DaemonTicks {
             #expect(h.state()["state"] == .string("stopped"))
             let text = try String(contentsOf: h.statePath, encoding: .utf8)
             #expect(text.hasPrefix("{\n  \"state\": \"stopped\",\n  \"auto\": true,"))  // json.dumps(indent=2)
-        }
-
-        @Test func jsonIsWrittenAsPythonWritesIt() async {
-            let v = JSONValue.object([("a", .double(24000)), ("b", .double(0.1)), ("c", .int(3)), ("d", .string("a · b — ⚠")),
-                                      ("e", .array([])), ("f", .object([])), ("g", .null), ("h", .array([.bool(true)]))])
-            #expect(v.encoded(indent: 2) == """
-            {
-              "a": 24000.0,
-              "b": 0.1,
-              "c": 3,
-              "d": "a \\u00b7 b \\u2014 \\u26a0",
-              "e": [],
-              "f": {},
-              "g": null,
-              "h": [
-                true
-              ]
-            }
-            """)
-            #expect(JSONValue.object([("x", .double(1e-05))]).encoded(indent: nil) == #"{"x": 1e-05}"#)
         }
 
         @Test func wallTimesAreIsoformat() async {

@@ -100,7 +100,7 @@ private func folder(_ dir: URL, _ name: String = "m1") -> URL {
     return f
 }
 
-extension DaemonTicks {
+extension DaemonTicksD {
     @Suite struct DaemonMemoryTests {
         @Test func aLiveWorkerOverBudgetIsRestartedAndTheRecordingGoesOn() async throws {
             let r = try MemRig(tempDir())

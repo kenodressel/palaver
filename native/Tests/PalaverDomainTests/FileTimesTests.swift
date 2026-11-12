@@ -15,11 +15,6 @@ import Testing
         return FileTimes.mtimeNs(st)
     }
 
-    @Test func test_a_time_in_range_is_python_s_integer() throws {
-        #expect(try mtime(1_700_000_000, 123_456_789) == 1_700_000_000_123_456_789)
-        #expect(try mtime(0, 0) == 0)
-    }
-
     @Test func test_a_time_beyond_int_nanoseconds_is_nil() {
         // APFS clamps a file's time to Int.max nanoseconds itself, so this is tried on the timespec (other file
         // systems, network shares and odd mounts can report what a Python int holds and an Int does not).

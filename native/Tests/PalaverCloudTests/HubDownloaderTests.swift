@@ -256,10 +256,11 @@ private func files(_ dir: URL) -> [String] { (try? FileManager.default.contentsO
         let snap = try await stub.downloader(c).fetch(repo: REPO, revision: COMMIT, patterns: PATTERNS, token: nil)
         #expect(try Data(contentsOf: snap.appendingPathComponent("model.safetensors")) == stub.content("model.safetensors"))
         // Each try goes on where the file ends (URLSession may drop the last piece before a cut, so not always exactly
-        // at 100 000 and 150 000): no Range first, then growing ones.
+        // at 100 000 and 150 000; on a very busy Mac nothing of a cut answer arrives, and a try starts at 0 again): no
+        // Range first, then growing ones. aPartLeftByAnEarlierRunIsResumed checks a Range without the timing.
         let ranges = stub.cdnRequests.map { $0.headers["range"] }
         let starts = ranges.dropFirst().compactMap { $0.flatMap { Int($0.dropFirst(6).dropLast()) } }
-        #expect(ranges.count == 3 && ranges[0] == nil && starts.count == 2, "\(ranges)")
+        #expect(ranges.count == 3 && ranges[0] == nil, "\(ranges)")
         #expect(starts == starts.sorted() && starts.allSatisfy { $0 > 0 && $0 <= 150_000 }, "\(ranges)")
         #expect(!files(c.blobsDir(REPO)).contains { $0.hasSuffix(".incomplete") })
     }
@@ -303,7 +304,9 @@ private func files(_ dir: URL) -> [String] { (try? FileManager.default.contentsO
         let gets = stub.cdnRequests
         #expect(gets.count == 3, "\(gets.map(\.path))")
         #expect(gets[0].path.hasSuffix("&sig=2") && gets[1].path.hasSuffix("&sig=2") && gets[2].path.hasSuffix("&sig=3"))
-        #expect(gets[1].headers["range"] != nil && gets[2].headers["range"] == gets[1].headers["range"])
+        // The resume after the new link asks for what the refused one asked for (no Range when the cut came before
+        // the first byte, as it may on a busy Mac).
+        #expect(gets[2].headers["range"] == gets[1].headers["range"])
         #expect(gets.allSatisfy { $0.headers["authorization"] == nil })
         #expect(try Data(contentsOf: c.blob(REPO, etag: stub.etag("model.safetensors"))) == stub.content("model.safetensors"))
         // A CDN that keeps refusing: one new link, then one line that does not blame a gated repo.

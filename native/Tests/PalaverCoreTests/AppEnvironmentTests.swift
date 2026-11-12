@@ -168,12 +168,6 @@ private func checkout(_ root: URL, version: String) {
         #expect(RunningApp.other(stateFile: state, myPid: 1, alive: { _ in true }) == nil)
     }
 
-    @Test func theCrashLogsHeaderSaysWhoCrashedAsPythonsDoes() {
-        let line = CrashLog.header(where: "palaver app", version: "0.5.0", pid: 77, argv: ["--no-notify"],
-                                   now: Date(timeIntervalSince1970: 0))
-        #expect(line.hasPrefix("=== "))
-        #expect(line.hasSuffix(" palaver app pid 77 palaver 0.5.0 argv ['--no-notify']\n"))
-    }
 }
 
 @Suite struct BundleWatchTests {

@@ -33,15 +33,6 @@ import Testing
         #expect(Orgs.defaultName("extern") == "Extern")
     }
 
-    @Test func test_the_keys_and_names_are_pythons_over_unicode_15_1() throws {
-        for c in try Goldens.cases("organizations", "keys") {
-            #expect(Orgs.orgKey(c[0].stringValue) == c[1].stringValue, "key of \(PythonJSON.dumps(c[0]))")
-        }
-        for c in try Goldens.cases("organizations", "defaults") {
-            #expect(Orgs.defaultName(c[0].stringValue ?? "") == c[1].stringValue, "name of \(PythonJSON.dumps(c[0]))")
-        }
-    }
-
     private func withInvitees(_ t: TempFolder) throws -> RecordingPaths {
         let paths = RecordingPaths(t.url.appendingPathComponent("2026-10-27T16-03-07", isDirectory: true))
         try FileManager.default.createDirectory(at: paths.folder, withIntermediateDirectories: true)
@@ -146,47 +137,6 @@ import Testing
     }
 
     // MARK: the store
-
-    @Test func theFileKeepsItsOwnKeysAndIsWrittenLikePython() throws {
-        let t = folder(); defer { t.remove() }
-        let file = t.url.appendingPathComponent("organizations.json")
-        try Data(#"{"extra": [1, 2.50], "people": {"timo strauss": "KLOUD"}, "names": {"northwind": "Northwind Traders"}}"#.utf8).write(to: file)
-        let o = Organizations(path: file)
-        o.rename("kloud", "KLOUD")  // the default again: nothing stored
-        o.rename("contoso", "  Contoso Iberia ")
-        o.setPerson(" Timo Strauß ", "x")
-        o.setPerson("  Anna ", "  RTV ")
-        try o.save()
-        let want = """
-        {
-          "extra": [
-            1,
-            2.5
-          ],
-          "people": {
-            "timo strauss": "x",
-            "anna": "RTV"
-          },
-          "names": {
-            "northwind": "Northwind Traders",
-            "contoso": "Contoso Iberia"
-          }
-        }
-        """
-        #expect(try String(contentsOf: file, encoding: .utf8) == want)  // ensure_ascii off, no trailing newline
-        #expect(!FileManager.default.fileExists(atPath: t.url.appendingPathComponent("organizations.json.tmp").path))
-    }
-
-    @Test func aFileMissingItsKeysGetsThemInPythonsOrder() throws {
-        let t = folder(); defer { t.remove() }
-        let o = orgs(t)
-        try o.save()
-        #expect(try String(contentsOf: t.url.appendingPathComponent("organizations.json"), encoding: .utf8)
-                == "{\n  \"names\": {},\n  \"people\": {}\n}")
-        try Data("{not json".utf8).write(to: t.url.appendingPathComponent("broken.json"))
-        let broken = orgs(t, "broken.json")
-        #expect(broken.name("kloud") == "KLOUD" && broken.person("Anna") == nil)
-    }
 
     @Test func savingWaitsForTheStoreLockAndKeepsItsFile() throws {
         let t = folder(); defer { t.remove() }

@@ -9,9 +9,18 @@ import PalaverDomain
 @testable import PalaverLM
 import Testing
 
-/// native/.build/debug/palaver-lm (swift build --build-tests builds it with the tests).
-let LM_BINARY = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-    .deletingLastPathComponent().appendingPathComponent(".build/debug/palaver-lm").path
+/// palaver-lm, built with the tests (swift build --build-tests).
+let LM_BINARY = builtProgram("palaver-lm")
+
+/// A program built with this test bundle: next to it in the products folder of whichever build ran the tests
+/// (native/.build/test/debug for `make test`, native/.build/debug for `swift test`).
+func builtProgram(_ name: String) -> String {
+    var info = Dl_info()
+    guard dladdr(#dsohandle, &info) != 0, let file = info.dli_fname else { return name }
+    var url = URL(fileURLWithPath: String(cString: file))  // <products>/<Bundle>.xctest/Contents/MacOS/<Bundle>
+    for _ in 0..<4 { url.deleteLastPathComponent() }
+    return url.appendingPathComponent(name).path
+}
 
 @Suite(.serialized, .enabled(if: FileManager.default.isExecutableFile(atPath: LM_BINARY))) struct LMProcessTests {
     /// A home whose notes run on the Claude Code CLI `script`; palaver-lm started on its meeting in a session of its own.

@@ -14,8 +14,18 @@ private let worktree = URL(fileURLWithPath: #filePath).deletingLastPathComponent
 /// The worktree's venv (`uv sync`, as `make test` and CI have it).
 let venvPython = worktree.appendingPathComponent(".venv/bin/python").path
 let haveVenv = FileManager.default.isExecutableFile(atPath: venvPython)
-/// The debug palaver-server, built with the tests (`make debug-programs` builds it too).
-let debugServer = worktree.appendingPathComponent("native/.build/debug/palaver-server").path
+/// palaver-server, built with the tests.
+let debugServer = builtProgram("palaver-server")
+
+/// A program built with this test bundle: next to it in the products folder of whichever build ran the tests
+/// (native/.build/test/debug for `make test`, native/.build/debug for `swift test`).
+func builtProgram(_ name: String) -> String {
+    var info = Dl_info()
+    guard dladdr(#dsohandle, &info) != 0, let file = info.dli_fname else { return name }
+    var url = URL(fileURLWithPath: String(cString: file))  // <products>/<Bundle>.xctest/Contents/MacOS/<Bundle>
+    for _ in 0..<4 { url.deleteLastPathComponent() }
+    return url.appendingPathComponent(name).path
+}
 let haveDebugServer = FileManager.default.isExecutableFile(atPath: debugServer)
 
 // A stand-in server: answers every request with its pid. MODE: "serve"; "crash" (exits 1 after a
@@ -374,12 +384,11 @@ struct WebSupervisorTests {
         #expect(addr.sin_addr.s_addr == inet_addr("127.0.0.1"))
     }
 
-    /// n ports nothing listens on: a run of n in a row, as windowPorts is.
+    /// n ports nothing listens on: a run of n in a row, as windowPorts is. Below the ephemeral range (49152 on):
+    /// a port found free there is handed to the next process that listens on port 0 (an e2e test's server).
     private func freePorts(_ n: Int) throws -> [Int] {
         for _ in 0..<50 {
-            let probe = try WebListener.listen()
-            let start = probe.port
-            probe.close()
+            let start = Int.random(in: 20_000..<40_000)
             var socks: [WebListener] = []
             for p in start..<(start + n) {
                 guard let s = try? WebListener.listen(port: p) else { break }
@@ -419,7 +428,7 @@ struct RestartWebCallTests {
 /// the socket it bound, and the window's sign-in works: `/?key=…` sets the key cookie and drops the
 /// key from the address, the page answers with the cookie only, and after a restart the new server
 /// (a new pid) answers the same cookie. A throwaway HOME: never the real ~/Meetings or ~/.config.
-@Suite(.enabled(if: haveDebugServer, "needs the debug palaver-server (make debug-programs)"))
+@Suite(.enabled(if: haveDebugServer, "needs palaver-server built with the tests (make test-build)"))
 struct RealWebServerContractTests {
     @Test func theRealServerSignsTheWindowInAndAnswersAgainAfterARestart() throws {
         let home = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("pv\(getpid())-\(UInt32.random(in: 0..<999_999))")

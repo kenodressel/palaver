@@ -4,8 +4,8 @@
 // 0.3.14 app. These tests run that script's text (tests/fixtures/updater_0.3.14/swap.sh.txt, from git
 // 8956274) against a fake new bundle whose Contents/MacOS/Palaver is a sleeping script, and check the
 // Swift side's two defences: started-ok is written from the bundle's version even when Python never
-// answers, and an app whose bundle was put aside quits. Hermetic: a temp folder, a fake `open`, and a
-// fake `sleep` on PATH that makes the script's 0.2 s waits short.
+// answers, and an app whose bundle was put aside quits. Hermetic: a temp folder, a fake `open`, a
+// fake `sleep` on PATH that makes the script's 0.2 s waits short and a `pgrep` that looks for the started app only.
 import Darwin
 import Foundation
 import Testing
@@ -86,6 +86,10 @@ private struct OldSwap {
             """)
         // The script's `sleep 0.2` (looked up on PATH), 20 times shorter.
         executable(root.appendingPathComponent("fastbin/sleep"), "#!/bin/sh\nexec /bin/sleep 0.01\n")
+        // Its `pgrep -f "$target/Contents/MacOS/"`: the app `open` started, while it runs. The real one reads every
+        // process of the Mac, 150 times in the wait for a new app that never started: 10 to 20 s on a busy Mac.
+        executable(root.appendingPathComponent("fastbin/pgrep"),
+                   "#!/bin/sh\npid=$(cat \(sh(appPid.path)) 2>/dev/null) && kill -0 \"$pid\" 2>/dev/null\n")
         func failure(_ error: String) -> String {
             #"{"state": "failed", "from_swap": true, "error": "\#(error)", "available": {"version": "0.5.0"}}"#
         }

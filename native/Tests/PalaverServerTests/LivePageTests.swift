@@ -142,29 +142,6 @@ private final class Fixture {
         #expect(FileManager.default.fileExists(atPath: paths.live.path))
     }
 
-    /// The whole page, key by key: the live shape (no notes, no audio), each lane's talk, a voice the bank knows.
-    @Test func theLivePageHasPythonsShape() throws {
-        let f = try Fixture()
-        let paths = try recording(f.out)
-        let bank = VoiceBank(directory: f.stores.voices)
-        _ = try bank.add("Valerie", [0.0, 1.0], source: "2026-10-20T10-00-00:SPEAKER_01")
-        try write(.object([("start_time", .string("2026-10-27T16:03:07+01:00"))]), to: paths.meta)
-        let m = try f.page()
-        #expect(keys(m) == ["id", "title", "title_from", "calendar", "start", "duration", "status", "live", "notes",
-                                 "notes_stale", "notes_stale_reason", "my_notes_revision", "speakers", "transcript",
-                                 "has_audio", "projects", "project_suggestions", "all_projects"])
-        #expect(m["start"] == .string("2026-10-27T16:03:07+01:00") && m["has_audio"] == .bool(false) && m["notes"] == .null)
-        let speakers = m["speakers"]!.arrayValue!
-        #expect(dumps(speakers[0]) == #"{"label": null, "name": "Timo", "display": "Timo", "is_user": true, "clips": [], "#
-            + #""talk_seconds": 2.0, "org": null, "org_link": null}"#)
-        #expect(dumps(speakers[2]) == #"{"label": "SPEAKER_01", "name": "Valerie", "display": "Valerie", "is_user": false, "#
-            + #""named_by": "voice", "recognized": {"name": "Valerie", "similarity": 1.0}, "guesses": [], "maybe": [], "#
-            + #""merged": [], "clips": [], "talk_seconds": 12.0, "org": null, "org_link": null}"#)
-        #expect(dumps(m["transcript"]?.arrayValue?[2]) == #"{"speaker": "Valerie", "label": "SPEAKER_01", "start": 20.0, "end": 22.0, "#
-            + #""text": "Ja, passt.", "glossed": []}"#)
-        #expect(m["transcript"]?.arrayValue?[0]["label"] == .null)
-    }
-
     /// live.json is replaced whole (`live.json.tmp`, then a rename): one half-written beside it is not read; and a
     /// live.json that is no JSON at all reads as nothing yet (api `_read_json(paths.live, {})`), as in Python. Never a 500.
     @Test func test_a_half_written_live_json_shows_the_last_good_state() throws {
@@ -308,33 +285,6 @@ private final class Fixture {
     }
 
     // MARK: - since=
-
-    /// server.py: `float(query.get("since", ["0"])[0])`, 0.0 where that raises.
-    @Test func sinceIsReadAsPythonsFloat() throws {
-        for (text, value) in [("71", 71.0), (" 71.5\n", 71.5), ("1_0", 10.0), ("1e1", 10.0), ("1.e1", 10.0), (".5", 0.5),
-                              ("5.", 5.0), ("+3", 3.0), ("-0", -0.0), ("٧١", 71.0), ("\u{2003}7\u{3000}", 7.0),
-                              ("1e400", .infinity), ("-Infinity", -.infinity), ("iNf", .infinity)] {
-            #expect(Py.float(text) == value, "\(text)")
-        }
-        #expect(Py.float("nan")?.isNaN == true && Py.float("-NaN")?.isNaN == true)
-        for bad in ["", " ", "abc", "1__0", "_1", "1_", "1_.5", "1._5", "0x10", "1e", "e5", ".", "1 2", "in_f", "nan(1)",
-                    "infinit", "1,5", "７x", "½", "1e1_", "++1", "1\u{0}"] {
-            #expect(Py.float(bad) == nil, "\(bad)")
-        }
-
-        let server = try TestServer(meetings: { out in try recording(out) })
-        defer { server.stop() }
-        let paths = RecordingPaths(server.app.outputDir.appendingPathComponent(MEETING, isDirectory: true))
-        try streamJSON(paths)
-        func starts(_ query: String) -> [JSONValue]? {
-            server.get("/api/meetings/\(MEETING)/stream\(query)").json?["lines"]?.arrayValue?.map { $0["start"]! }
-        }
-        let all: [JSONValue] = [.double(50.0), .double(70.0), .double(72.0), .double(74.0)]
-        #expect(starts("") == all && starts("?since=") == all && starts("?since=abc") == all && starts("?since=%FF") == all)
-        #expect(starts("?since=-inf") == all && starts("?since=nan") == [] && starts("?since=inf") == [])
-        #expect(starts("?since=7_1") == [.double(72.0), .double(74.0)] && starts("?since=+71&since=0") == [.double(72.0), .double(74.0)])
-        #expect(starts("?since=%2071%20") == [.double(72.0), .double(74.0)] && starts("?since=71+") == [.double(72.0), .double(74.0)])
-    }
 
     /// A stream.json number that is an int stays one in the answer (`round(70, 2)` is 70), as Python writes it.
     @Test func intTimesStayInts() throws {

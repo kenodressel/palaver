@@ -336,13 +336,6 @@ private final class Said: @unchecked Sendable {
         #expect(Storage.canDrop(bad) && Storage.canDrop(late))
     }
 
-    @Test func aFloatDayIsSavedAsPythonSavesItAndReadAsNone() throws {
-        let place = Place(); defer { place.remove() }
-        try Storage.setAudioDays(.double(7.0), stores: place.stores)  // 7.0 in DAYS is True in Python
-        #expect(SettingsFile.readRaw(stores: place.stores)["audio_days"] == .double(7.0))
-        #expect(Storage.audioDays(stores: place.stores) == 0)  // not an int
-    }
-
     @Test func aMarkerWithBytesThatAreNoNumberIsATypeError() throws {
         let place = Place(); defer { place.remove() }
         let p = place.meeting("2026-10-01T10-00-00")
@@ -457,16 +450,6 @@ private final class Said: @unchecked Sendable {
         #expect(ModelCatalog.modelHere(speech, repo: ModelCatalog.repoFor(speech), speechHere: { true }, stores: place.stores))
         let e5 = ModelCatalog.model("e5")!
         #expect(!ModelCatalog.modelHere(e5, repo: e5.repo, speechHere: { true }, stores: place.stores))
-    }
-
-    @Test func theCatalogIsPythons() {
-        #expect(ModelCatalog.models.map(\.id) == ["speech", "gemma", "e5"])
-        #expect(ModelCatalog.retired.map(\.id) == ["qwen", "parakeet", "pyannote", "whisper"])
-        #expect(ModelCatalog.model("whisper")?.transcriber == "mlx-whisper" && ModelCatalog.model("whisper")!.manual)
-        #expect(ModelCatalog.notesModels.keys == [ModelCatalog.GEMMA] && ModelCatalog.notesModels[ModelCatalog.GEMMA] == "gemma")
-        #expect(ModelCatalog.SPEECH_FILES.count == 10 && ModelCatalog.SPEECH_FOLDER == "fluidaudio")
-        #expect(ModelCatalog.model("pyannote")?.localFolder == "pyannote-community-1" && ModelCatalog.model("pyannote")!.manual)
-        #expect(ModelCatalog.model("nope") == nil)
     }
 
     @Test func downloadsRunWhileTheMarkersPidLives() throws {

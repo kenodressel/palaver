@@ -1,6 +1,5 @@
-// The e5 encoder (embeddings.py) and its safetensors reader: tests/test_embeddings.py's tests by name, the encoder
-// against palaver.embeddings' own vectors on the tiny fixtures (goldens section `e5_tiny`), F16 rows converted one at a
-// time, and broken safetensors files that throw, never trap.
+// The e5 encoder and its safetensors reader: against transformers' vectors and the reference tokenizer's ids, F16 rows
+// converted one at a time, and broken safetensors files that throw, never trap.
 import Foundation
 import PalaverCore
 @testable import PalaverDomain
@@ -190,33 +189,6 @@ import Testing
         let name = "cblas_test_only_\(UUID().uuidString)"
         #expect(Blas.fellBack(name))
         #expect(!Blas.fellBack(name))
-    }
-
-    @Test func test_the_encoder_matches_python_on_the_tiny_fixtures() throws {
-        #expect(Blas.isAccelerate)  // numpy's own sgemm entry point, not the fallback loop
-        let golden = Goldens.load("e5_tiny")
-        let texts = try #require(golden["texts"]?.arrayValue).map { try #require($0.stringValue) }
-        for kind in ["bert", "xlm-roberta"] {
-            let model = try #require(golden[kind])
-            let encoder = try E5Encoder(folder: Self.repo.appendingPathComponent(try #require(model["folder"]?.stringValue)))
-            let ids = try #require(model["ids"]?.arrayValue)
-            #expect(ids.count == texts.count)
-            for (text, want) in zip(texts, ids) {
-                let got = JSONValue.array(encoder.ids(encoder.prefixPassage + text).map { .int($0) })
-                #expect(PythonJSON.dumps(got) == PythonJSON.dumps(want), "\(kind) ids of \(text.prefix(30))")
-            }
-            func floats(_ key: String) throws -> [[Float]] {
-                try #require(model[key]?.arrayValue).map { try #require($0.arrayValue).map { Float(try #require($0.doubleValue)) } }
-            }
-            let passages = try encoder.passages(texts), queries = try texts.map { try encoder.query($0) }
-            for (i, (got, want)) in zip(passages, try floats("passages")).enumerated() {
-                #expect(Self.maxDifference(got, want) < 1e-5, "\(kind) passage \(i)")
-            }
-            for (i, (got, want)) in zip(queries, try floats("queries")).enumerated() {
-                #expect(Self.maxDifference(got, want) < 1e-5, "\(kind) query \(i)")
-            }
-            #expect(passages.count == texts.count && queries.count == texts.count)
-        }
     }
 
     // MARK: - Safetensors

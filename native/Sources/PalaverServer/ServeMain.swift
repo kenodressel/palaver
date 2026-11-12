@@ -243,12 +243,13 @@ public enum ServeMain {
     /// Once the server listens (process.py `serve`): the search warming starts (so its thread exists when the app reads
     /// the ready line), the log line, the address for a server started by hand, the ready line, then the sweep, the
     /// glossary's warm-up and a missing speech model's download (after it: they never delay it). `warmClock`: how the
-    /// warming waits.
+    /// warming waits; `warmQoS`: its thread's (background; a test under load takes a higher one).
     static func started(_ app: ServerApp, log: SessionLog?, port: Int, url: String?, readyFD: Int32?,
-                        warmClock: @escaping (Double) -> Void = { Thread.sleep(forTimeInterval: $0) }) {
+                        warmClock: @escaping (Double) -> Void = { Thread.sleep(forTimeInterval: $0) },
+                        warmQoS: QualityOfService = .background) {
         // The first search after a start reads every meeting: do that before it is asked, a little later and never
         // during a recording (#46).
-        app.background.startWarming(clock: warmClock)
+        app.background.startWarming(clock: warmClock, qos: warmQoS)
         log?.message("the window's server (pid \(getpid())) serves on port \(port)")
         if let url { print("Open \(url)") }
         if let fd = readyFD {

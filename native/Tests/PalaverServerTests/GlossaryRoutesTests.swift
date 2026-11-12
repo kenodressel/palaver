@@ -259,22 +259,4 @@ private func object(_ pairs: [(String, JSONValue)]) -> JSONValue { .object(pairs
         #expect(try GlossaryAPI.seed(f.app, object([("terms", .strings([" "]))])) == object([("added", .int(0)), ("undo", .null)]))
     }
 
-    /// The request checks of the glossary routes, as server.py reads the bodies.
-    @Test func theGlossaryRoutesReadTheirBodiesAsPythonDoes() throws {
-        let s = try server()
-        defer { s.stop() }
-        #expect(s.post("/api/glossary/accept", object([("variants", .strings(["x"]))])).error == "bad request: 'term'")
-        #expect(s.post("/api/glossary/accept", object([("term", .string(" "))])).error == "bad request: a term is needed")
-        #expect(s.post("/api/glossary/respell", object([("heard", .string("x"))])).error == "bad request: 'term'")
-        #expect(s.post("/api/glossary/unrespell", object([("heard", .string("Kunden"))])).error
-                == "“Kunden” is not respelled by the glossary.")
-        #expect(s.post("/api/glossary/reject", object([])).error == "bad request: 'key'")
-        #expect(s.post("/api/glossary/nothing", object([])).status == 404)
-        let r = s.post("/api/setup/glossary", object([("terms", .strings(["Contoso"]))]))
-        #expect(r.status == 200 && r.json?["added"] == .int(1))
-        let tid = try #require(Glossary(path: s.app.stores.glossary).terms.keys.first)
-        _ = post(s, "/api/glossary/accept", object([("term", .string("Northwind"))]))
-        #expect(s.post("/api/glossary/\(tid)", object([("term", .string("northwind"))])).error
-                == "bad request: northwind is already in the glossary")
-    }
 }

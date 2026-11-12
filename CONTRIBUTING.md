@@ -23,7 +23,7 @@ Layout:
 | `native/` | The Swift package: `Sources/` (the app and its programs), `Tests/`, `Bundle/` (the release bundle's icons, entitlements, the one-release MCP shim), `Vendored/webrtc_aec` (the echo canceller's prebuilt libraries) |
 | `web/` | The Meetings window's page, served by `palaver-server` |
 | `tests/` | `e2e/` (the window in WebKit against `palaver-server`), `js/` (the page's unit tests, run with node), the tests of the release tooling and `install.sh`, `fixtures/` (shared with the Swift tests) |
-| `tools/` | The release build, `smoke_install.sh`, the engine gate, and generators of checked-in data (icons, Unicode tables, the zipf table, the embedder fixture) |
+| `tools/` | The release build, `smoke_install.sh`, `release_keychain.sh` (signing on CI), the engine gate, and generators of checked-in data (icons, Unicode tables, the zipf table, the embedder fixture) |
 | `install.sh` | The installer testers run |
 
 ## Setup (from source)
@@ -114,13 +114,22 @@ palaver --help
 ## Tests
 
 ```bash
-make test            # the whole suite: the Swift tests, then pytest in parallel (pytest-xdist); TEST_WORKERS=0 runs it in order
+make test            # the tests of what changed since master: Swift and pytest side by side, on half the cores
+make test-all        # every test (CI runs it, with the long ones: make test-long)
 make swift-test FILTER=<Suite>   # one Swift suite or test
-make test-changed    # only the Python tests for what changed since master (tools/changed_tests.py)
+make test-changed    # only the Python tests for what changed since master
 ```
 
-Use `make swift-test` and `make test-changed` while you work, and run
-`make test` once before a merge.
+`make test` runs what a change can break (`tools/changed_tests.py`): a change
+to a Swift target runs every test bundle built from it (PalaverCore and
+PalaverDomain: nearly all) and the bundles that start a program built from
+it; a changed Swift test file runs its suites; a change to the page runs its
+JS tests and the e2e tests of its area (all of them for `web/app.js`); a
+change to `palaver-server` or `palaver-lm` runs the e2e tests. It builds once
+(`make test-build`), then runs the Swift bundles and pytest at the same time,
+reniced, on about half the cores (`TEST_JOBS`), so the Mac stays usable in a
+call. `make test-all` runs everything; CI runs `make test-long` on every push
+and pull request. Run `make test-all` before a merge when the change is wide.
 
 - The default tests need no models, no hardware and no network: the root
   `tests/conftest.py` gives every test a temporary config folder and no
@@ -132,12 +141,16 @@ Use `make swift-test` and `make test-changed` while you work, and run
   tests are skipped (in CI they fail instead).
 - `tests/js/` holds the page's JavaScript unit tests, run with node through
   `tests/test_js.py` (skipped without node).
-- The Swift tests (`native/Tests`, swift-testing) run first in `make test`
-  (`make engine-test`; one suite: `make swift-test FILTER=<Suite>`), with a
-  temporary config and home: a debug build stops a test that reaches the real
-  `~/.config`, home or `~/Meetings`.
-- `tests/e2e/` runs against `palaver-server` and `palaver-lm` (`make
-  e2e-server`: debug builds, optimized), with a fake menu bar app
+- The Swift tests (`native/Tests`, swift-testing; all: `make engine-test`,
+  one suite: `make swift-test FILTER=<Suite>`) run from the tests' build,
+  `native/.build/test` (`make test-build`: debug, so assertions and test hooks
+  are on, but optimized), each bundle in its own process
+  (`tools/swift_tests_parallel.sh`) with a temporary config and home: a debug
+  build stops a test that reaches the real `~/.config`, home or `~/Meetings`.
+  A test that needs minutes of synthetic audio runs only with
+  `PALAVER_LONG_TESTS=1` (`make test-long`).
+- `tests/e2e/` runs against the same build's `palaver-server` and
+  `palaver-lm`, with a fake menu bar app
   (`tests/e2e/fake_app.py`) and palaver-lm's test model; it sets up and checks
   the meetings' and stores' files itself (`tests/e2e/stores.py`).
 - The tests of the release tooling build bundles from stand-in programs
@@ -145,11 +158,12 @@ Use `make swift-test` and `make test-changed` while you work, and run
   before 0.6 take what `make release` makes (`tests/test_release_compat.py`,
   their code frozen in `tests/fixtures/updater_*`) and run `install.sh` in a
   throwaway home (`tests/test_install_sh.py`).
-- Some Swift tests read golden files the Python app wrote
-  (`native/Tests/PalaverDomainTests/Goldens`, `tests/fixtures`): they are
-  frozen; the script that wrote them is in the git history.
+- A few Swift tests read files earlier releases wrote (exports, an undo
+  folder: `native/Tests/PalaverDomainTests/Goldens`, `tests/fixtures`) or the
+  reference tokenizer's ids (SentencePiece): they are frozen.
 
-CI (`.github/workflows/ci.yml`) runs `make test` on macOS 15.
+CI (`.github/workflows/ci.yml`) runs `make test-long` on every push to master
+and every pull request; a release waits for it to pass on the tagged commit.
 
 ## Make targets
 
@@ -157,12 +171,13 @@ CI (`.github/workflows/ci.yml`) runs `make test` on macOS 15.
 
 | Target | What it does |
 |---|---|
-| `test` | Run the test suite: the Swift tests, then pytest in parallel (e2e on `palaver-server`, the page's JS tests, the release tooling and install.sh) |
+| `test` / `test-all` / `test-long` | Run the tests of what changed since master / every test (Swift, e2e on `palaver-server`, the page's JS tests, the release tooling and install.sh) / every test and the long ones |
 | `engine` / `app-swift` / `server` / `worker` / `lm` / `cli` | Build `palaver-engine`, the Swift app, `palaver-server`, `palaver-worker`, `palaver-lm` (xcodebuild, with MLX's shaders) and `palaver-cli` (release; all but the engine and the app fail when the program holds this Mac's paths) |
 | `engine-test` / `swift-test` | Run all Swift tests / the ones `FILTER` names |
-| `debug-programs` / `e2e-server` | Build `palaver-cli`, `palaver-lm`, `palaver-server` and `palaver-worker` (debug) / the e2e tests' `palaver-server` and `palaver-lm` |
+| `test-build` | Build the tests and the programs they and the e2e tests start (`native/.build/test`: debug, optimized) |
+| `debug-programs` | Build `palaver-cli`, `palaver-lm`, `palaver-server` and `palaver-worker` (debug, to run by hand) |
 | `eval-engine-worker` | `eval-engine` through `palaver-worker engine-serve` (the in-process engine), writes `engine-gate-worker.md` |
-| `test-changed` | Run the Python tests for what changed since master |
+| `test-changed` | Run only the Python tests for what changed since master |
 | `eval-engine` | Maintainer-only gate: the Swift engine against the old stack's numbers on your own recordings. Needs `PALAVER_EVAL_DIR` (a folder with a local `eval.json`); writes numbers only to `engine-gate.md`. The exit code contract is `tools/eval_engine.py`'s: 0 pass, 1 a check FAILED, 2 misconfigured. Through make both failures show as make's exit 2, so read the printed table |
 | `icons` | Draw the app and menu bar icons into `native/Bundle` |
 | `models` | Pack the models Palaver hosts (none now; the engine downloads its own) |
@@ -171,7 +186,7 @@ CI (`.github/workflows/ci.yml`) runs `make test` on macOS 15.
 | `manifest` | Write `manifest.json` and `upload.txt` over the assets in `dist/` |
 | `release` | All release assets in `dist/` |
 | `smoke-install` | Install `dist/` into a throwaway home, check it, and simulate an update |
-| `publish` | Create the GitHub release of this version from `dist/upload.txt` |
+| `publish` | Create the GitHub release of this version from `dist/upload.txt` (the fallback: a pushed tag publishes on CI) |
 | `clean` | Remove build output |
 
 ## Running it from a checkout
@@ -570,9 +585,10 @@ palaver report create -m "Notes never came"   # the same zip, about the latest m
 
 ## Releases
 
-`make release` builds every asset on this Mac into `dist/`. GitHub Actions'
-`release.yml` runs the same recipe as a manual dry run but never publishes:
-only the Mac with the signing certificate does (below).
+`make release` builds every asset into `dist/`. A pushed tag `vX.Y.Z` has
+GitHub Actions (`.github/workflows/release.yml`) build them, sign them with the
+kept certificate, smoke-install them and publish the release (below); on a Mac
+the same recipe is the fallback.
 
 - `palaver-app-<version>.zip`: Palaver.app, the Swift programs only
   (`tools/build_release.py app`); the build refuses a bundle with a Python
@@ -584,8 +600,50 @@ only the Mac with the signing certificate does (below).
   an old runtime folder after its first good start.
 - `manifest.json`, `install.sh`, and `upload.txt`: the files this release must
   upload. An asset the previous release published unchanged keeps its URL
-  there and is not uploaded again; `make publish` creates the GitHub release
-  from `upload.txt`.
+  there and is not uploaded again; the GitHub release is created from
+  `upload.txt`. The manifest carries `docs/release-notes/<version>.md` as its
+  notes, which the app's update shows.
+
+### Publishing a release
+
+1. Bump `VERSION` (`X.Y.Z`).
+2. Write `docs/release-notes/X.Y.Z.md`: what testers notice, in Markdown. It
+   heads the GitHub release (GitHub's generated list of changes follows it) and
+   is the manifest's notes. A release without it fails.
+3. Merge to master.
+4. Run the maintainer's publish script. It syncs master to the public
+   repository (kenodressel/palaver) as one commit, where `ci.yml` runs every
+   test on it. Tags are not synced.
+5. Tag that public commit and push the tag, from the publish script's clone of
+   the public repository:
+
+   ```bash
+   git fetch origin
+   git tag -a vX.Y.Z -m "Palaver X.Y.Z" origin/master
+   git push origin vX.Y.Z
+   gh run watch --repo kenodressel/palaver   # pick the Release run
+   ```
+
+`release.yml` then fails unless the tag is `v` + `VERSION` and the notes exist.
+It builds `make release` on macOS (the newest Xcode, as `ci.yml`) with the
+certificate in a temporary keychain, checks that the app is signed with it,
+runs `make smoke-install` (which downloads 0.3.14 and 0.5.0rc6 from this
+repository's releases) and deletes the keychain. Meanwhile it waits for
+`ci.yml` to pass on the tagged commit instead of running the tests again.
+Then a job without the certificate creates the release with `gh release
+create` (the files `upload.txt` names, `--latest`) and waits until
+`releases/latest/download/manifest.json` names the new version. Only the
+owner's tag pushes and runs in kenodressel/palaver get that far; the workflow
+has no `pull_request` trigger.
+
+Actions → Release → Run workflow (or `gh workflow run release.yml --repo
+kenodressel/palaver --ref master`) is a dry run: built, signed and
+smoke-installed, nothing published. Unchecking "dry run" publishes only when
+run on the tag `vVERSION`.
+
+**Fallback** (CI down): on the Mac with the certificate,
+`PALAVER_SIGN_IDENTITY="Palaver Release" make release smoke-install publish`
+uploads from this Mac. `make publish` takes the same notes file.
 
 An installed Palaver has two layers, each downloaded only when it changed:
 the app (`~/Applications/Palaver.app`, every release) and the models
@@ -626,6 +684,24 @@ Then `PALAVER_SIGN_IDENTITY="Palaver Release" make release publish`. A lost
 certificate means a new one, and every tester is asked for the permissions
 once more. A Developer ID certificate works the same way and also satisfies
 Gatekeeper for downloads.
+
+**For GitHub Actions** (once, and again for a new certificate): store the
+`.p12` backup (from Keychain Access: the "Palaver Release" identity → Export →
+`.p12`) and its password as the public repository's secrets:
+
+```bash
+base64 -i palaver-release.p12 | gh secret set PALAVER_SIGN_P12 --repo kenodressel/palaver
+gh secret set PALAVER_SIGN_P12_PASSWORD --repo kenodressel/palaver   # asks for the .p12's password
+```
+
+`tools/release_keychain.sh` imports it into a temporary keychain with a random
+password (`security import -T /usr/bin/codesign`, then `security
+set-key-partition-list`), puts that keychain first on the search list (where
+`codesign --sign "Palaver Release"` in `tools/app_bundle.py` finds it; there
+is no `--keychain`), and signs a probe before the build. Self-signed, the
+certificate shows as `CSSMERR_TP_NOT_TRUSTED` in `security find-identity`,
+and codesign signs with it all the same. The keychain and the decoded `.p12`
+are deleted at the end of the job, also when it fails.
 
 `make smoke-install` installs `dist/` into a throwaway home under
 `sandbox-exec` (no writes outside it, no network, no Python on `PATH`), checks

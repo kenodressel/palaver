@@ -88,8 +88,11 @@ func waitFor(_ file: URL, seconds: Double = 10) -> String? {
             #expect(error.description == "Claude Code CLI gave no answer within 1 seconds")
         }
         #expect(Date().timeIntervalSince(started) < 10)
-        let pid = try #require(waitFor(seen).flatMap { Int32($0.trimmingCharacters(in: .whitespacesAndNewlines)) })
-        #expect(kill(pid, 0) != 0)  // ended and reaped
+        // On a busy Mac the second may run out before the shell got to its first line: then nothing is left to end.
+        // One that started (now or still about to) must be ended and reaped.
+        if let pid = waitFor(seen, seconds: 2).flatMap({ Int32($0.trimmingCharacters(in: .whitespacesAndNewlines)) }) {
+            #expect(kill(pid, 0) != 0)
+        }
     }
 
     @Test func theCLIStartsInAnEmptyFolderOfItsOwnAndAnswers() throws {

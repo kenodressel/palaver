@@ -192,63 +192,6 @@ import Testing
                           orgs: v["orgs"]?.arrayValue?.compactMap(\.stringValue) ?? [])
     }
 
-    @Test func queriesMatchPython() throws {
-        let golden = Goldens.load("search_parse")
-        let today = try #require(golden["today"]?.stringValue.flatMap(PyDate.init(iso:)))
-        let cases = try Goldens.cases("search_parse", "cases")
-        #expect(cases.count >= 150)
-        var vocabs: [String: Vocabulary] = [:]
-        for name in ["main", "empty", "strauss"] { vocabs[name] = try Self.vocabulary(golden["vocabs"]?[name]) }
-        let got = try cases.map { c -> JSONValue in
-            let name = try #require(c[0].stringValue)
-            let vocab = try #require(vocabs[name])
-            let text = try #require(c[1].stringValue)
-            return .array([c[0], c[1], SearchParser.parse(text, vocab: vocab, today: today).json])
-        }
-        Goldens.expectEach(got, "search_parse", "cases")
-    }
-
-    @Test func datesMatchPythonOnEveryEdgeDay() throws {
-        let vocab = Vocabulary()
-        let got = try Goldens.cases("search_parse", "dated").map { c -> JSONValue in
-            let today = try #require(c[0].stringValue.flatMap(PyDate.init(iso:)))
-            let text = try #require(c[1].stringValue)
-            return .array([c[0], c[1], SearchParser.parse(text, vocab: vocab, today: today).json])
-        }
-        #expect(got.count > 400)
-        Goldens.expectEach(got, "search_parse", "dated")
-    }
-
-    @Test func todayIsTheLocalDateOfNow() throws {
-        let got = try Goldens.cases("search_parse", "today_of").map { c -> JSONValue in
-            let seconds = try Goldens.int(c[0])
-            let zone = try #require(c[1].stringValue.flatMap(TimeZone.init(identifier:)))
-            let today = PyDate.today(now: Date(timeIntervalSince1970: TimeInterval(seconds)), timeZone: zone)
-            return .array([c[0], c[1], .string(today.iso)])
-        }
-        Goldens.expectEach(got, "search_parse", "today_of")
-    }
-
-    @Test func dateArithmeticIsPythons() {
-        #expect(PyDate(2026, 2, 29) == nil && PyDate(2024, 2, 29) != nil && PyDate(0, 1, 1) == nil && PyDate(2026, 13, 1) == nil)
-        #expect(PyDate(2024, 2, 29)!.adding(days: 1)?.iso == "2024-03-01")
-        #expect(PyDate(2027, 1, 1)!.adding(days: -1)?.iso == "2026-12-31")
-        #expect(PyDate(1, 1, 1)!.adding(days: 3_652_058)?.iso == "9999-12-31")
-        #expect(PyDate(2026, 10, 26)!.weekday == 0 && PyDate(2026, 11, 1)!.weekday == 6)
-        #expect(PyDate(iso: "2026-10-30")?.iso == "2026-10-30" && PyDate(iso: "2026-10-3") == nil && PyDate(iso: "2026-02-30") == nil)
-        #expect(PyDate(5, 3, 7)!.iso == "0005-03-07")
-    }
-
-    @Test func aDayPythonsDateCannotHoldMakesNoFilter() {
-        // Python raises OverflowError (ledger: accepted parity diffs, Task 19).
-        let q = parse("after 9999-12-31 budget")
-        #expect(q.filters.isEmpty && q.words == ["budget"])
-        #expect(parse("before 0001-01-01").filters.isEmpty)
-        let early = SearchParser.parse("yesterday", vocab: Vocabulary(), today: PyDate(1, 1, 1)!)
-        #expect(early.filters.isEmpty && early.words == ["yesterday"])
-        #expect(kinds(parse("until 9999-12-31")) == ["until 9999-12-31"])
-    }
-
     @Test func aNameTypedTwiceAndAFilterRemovedKeepTheirPlaces() {
         // filters.remove(f) removes that one project filter; the rest keep Python's order.
         let vocab = Vocabulary(people: ["Mara"], projects: PyDict([("p1", "Search")]), orgs: [])

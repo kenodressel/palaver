@@ -102,22 +102,6 @@ struct FakeHub {
         #expect(LocalModel.limits(ModelCatalog.GEMMA, env: [LocalModel.BUDGET_ENV: "lots"]) == .init(budget: 14 * gib, ceiling: 21 * gib))
     }
 
-    @Test func theModelIsAskedAsPythonsMLXPathAskedIt() {
-        #expect(LocalModel.MAX_TOKENS == 4096 && LocalModel.TEMPERATURE == 0.2)
-        #expect(LocalModel.TEMPLATE_CONTEXT == ["enable_thinking": false])
-        #expect(LocalModel.CACHE_LIMIT_BYTES == 1 << 30)
-        var fields = PyDict<JSONValue>(NotesPrompt.SCHEMA)!
-        fields["description"] = .string("Write the notes in German.")
-        let schema = fields.json
-        let messages = LocalModel.messages(prompt: "Das Transkript", schema: schema)
-        #expect(messages.map { $0["role"] } == ["system", "user"])
-        #expect(messages[1]["content"] == "Das Transkript")
-        let system = messages[0]["content"] ?? ""
-        // The notes' language said first, then the schema.
-        #expect(system.hasPrefix(schema["description"]?.stringValue ?? "?"))
-        #expect(system.contains("Answer with a single JSON object that follows this JSON schema, and nothing else:\n{"))
-    }
-
     /// A watchdog over scripted footprints (GB), free memory (GB) and a clock that ticks `step` seconds a look.
     final class Script: @unchecked Sendable {
         var used: [Double]

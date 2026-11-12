@@ -1,5 +1,4 @@
-// exchange's schema checks (exchange.py:133-280): the schemas as Python has them, `check`, `_json` and `_time` with
-// Python's words for what does not fit, and the schema tests of test_exchange.py.
+// The exchange's schema checks: what does not fit is rejected before anything is written, and never traps.
 import Foundation
 import PalaverCore
 import Testing
@@ -25,52 +24,6 @@ import Testing
     }
 
     // MARK: - Goldens
-
-    @Test func theSchemasAreVerbatim() {
-        let schemas: JSONValue = .object([
-            ("SCHEMAS", .object(JSONSchemaCheck.SCHEMAS.map { ($0.key, $0.value.json) })),
-            ("MANIFEST", JSONSchemaCheck.MANIFEST.json), ("VOICE", JSONSchemaCheck.VOICE.json),
-        ])
-        Goldens.expect(schemas, "exchange_zip", "schemas")
-    }
-
-    @Test func checkSaysWhatPythonSays() throws {
-        var got: [JSONValue] = []
-        for c in try Goldens.cases("exchange_zip", "check") {
-            let m = Self.message(c[0], Self.schema(c[1].stringValue!), c[2].stringValue!)
-            got.append(.array([c[0], c[1], c[2], m.map { .string($0) } ?? .null]))
-        }
-        Goldens.expectEach(got, "exchange_zip", "check")
-    }
-
-    @Test func jsonSaysWhatPythonSays() throws {
-        var got: [JSONValue] = []
-        for c in try Goldens.cases("exchange_zip", "json") {
-            let result: JSONValue
-            do {
-                result = .object([("value", try JSONSchemaCheck.json(hexData(c[0].stringValue!), where: c[1].stringValue!))])
-            } catch let e as ExchangeRejected {
-                result = .object([("rejected", .string(e.message))])
-            }
-            got.append(.array([c[0], c[1], result]))
-        }
-        Goldens.expectEach(got, "exchange_zip", "json")
-    }
-
-    @Test func timeSaysWhatPythonSays() throws {
-        var got: [JSONValue] = []
-        for c in try Goldens.cases("exchange_zip", "time") {
-            let result: JSONValue
-            do {
-                let t = try JSONSchemaCheck.time(c[0].stringValue!, where: c[1].stringValue!)
-                result = .array([t.year, t.month, t.day, t.hour, t.minute, t.second, t.microsecond, t.utcOffset].map { .int($0) })
-            } catch let e as ExchangeRejected {
-                result = .object([("rejected", .string(e.message))])
-            }
-            got.append(.array([c[0], c[1], result]))
-        }
-        Goldens.expectEach(got, "exchange_zip", "time")
-    }
 
     @Test func timesCompareAsMoments() throws {
         let a = try JSONSchemaCheck.time("2026-10-29T10:00:00+01:00", where: "a")

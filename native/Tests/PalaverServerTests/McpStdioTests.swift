@@ -9,9 +9,8 @@ import PalaverCore
 import PalaverDomain
 @testable import PalaverServer
 
-/// native/.build/debug/palaver-cli (built with the tests).
-private let cliBinary = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-    .deletingLastPathComponent().appendingPathComponent(".build/debug/palaver-cli").path
+/// palaver-cli, built with the tests.
+private let cliBinary = builtProgram("palaver-cli")
 /// native/Bundle/bin/python: the shim Palaver.app carries for one release.
 private let shim = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
     .deletingLastPathComponent().appendingPathComponent("Bundle/bin/python").path

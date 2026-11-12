@@ -146,6 +146,7 @@ def test_the_time_chip_plays_from_there(page, app_server):
     page.locator("#play").click()
 
 
+@pytest.mark.long  # Vision reads the image: about 10 s
 def test_a_pasted_image_is_kept_and_its_text_read(page, app_server):
     open_meeting(page, app_server, A, tab="Notes")
     _start_typing(page)

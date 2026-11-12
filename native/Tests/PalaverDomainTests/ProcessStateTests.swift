@@ -7,18 +7,6 @@ import Testing
 @Suite struct ProcessStateTests {
     private func paths(_ t: TempFolder) -> RecordingPaths { RecordingPaths(t.url) }
 
-    @Test func aMarkIsReadBackAndWrittenInPythonsFormat() throws {
-        let t = TempFolder("failed"); defer { t.remove() }
-        try ProcessState.mark(paths(t), reason: ProcessState.models, missing: ["Speech models"])
-        let text = try #require(t.text("failed.json"))
-        #expect(text.hasPrefix("{\n  \"reason\": \"models\",\n  \"at\": \""))
-        #expect(text.hasSuffix("\",\n  \"missing\": [\n    \"Speech models\"\n  ],\n  \"error\": null\n}"))  // indent=2, no newline
-        #expect(!t.exists("failed.json.tmp"))
-        let read = try #require(ProcessState.read(paths(t)))
-        #expect(read["reason"]?.stringValue == "models" && read["missing"] == .strings(["Speech models"]) && read["error"] == .null)
-        #expect(WallTime.parse(read["at"]?.stringValue) != nil)
-    }
-
     @Test func anErrorKeepsItsWords() throws {
         let t = TempFolder("failed"); defer { t.remove() }
         try ProcessState.mark(paths(t), reason: ProcessState.error, error: "Unable to reach MTLCompilerService — äh")

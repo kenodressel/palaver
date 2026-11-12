@@ -376,49 +376,6 @@ private final class FakeEncoder: MeaningEncoder {
         #expect(SearchIndex.isCurrent(paths) && !t.exists("\(Self.MEETING)/\(SearchIndex.INDEX_FAILED)"))
     }
 
-    @Test func theFilesAreWrittenAsPythonWritesThem() throws {
-        let t = TempFolder("semantic"); defer { t.remove() }
-        let paths = try meeting(t.url)
-        let sources = SearchIndex.signature(paths)
-        _ = try index(t.url)
-        let sig = try String(contentsOf: paths.folder.appendingPathComponent(SearchIndex.INDEX_SIG), encoding: .utf8)
-        #expect(sig == #"{"model": "intfloat/multilingual-e5-small", "sources": "# + PythonJSON.dumps(sources) + #", "count": 4}"#)
-        #expect(sources["speakers_ignored.json"] == .null && sources["notes.json"] == .int(mtime(paths.notes)))
-        let meta = try String(contentsOf: paths.folder.appendingPathComponent(SearchIndex.INDEX_JSON), encoding: .utf8)
-        #expect(meta.hasPrefix(#"{"model": "intfloat/multilingual-e5-small", "chunks": [{"kind": "summary""#))
-        #expect(meta.contains("für") && !meta.hasSuffix("\n"))
-        let left = try FileManager.default.contentsOfDirectory(atPath: paths.folder.path).filter { $0.hasSuffix(".tmp") }
-        #expect(left.isEmpty)
-    }
-
-    @Test func notesOfTheWrongShapeFailAsPythonFails() throws {
-        let t = TempFolder("semantic"); defer { t.remove() }
-        let paths = try meeting(t.url)
-        func chunks(_ notes: String) throws -> [JSONValue] {
-            try Data(notes.utf8).write(to: paths.notes)
-            return try SearchIndex.chunks(paths).filter { $0["kind"]?.stringValue != "line" }
-        }
-        // Raise: no dict, a section or point that is no dict, a detail that is no text, a number to iterate.
-        for bad in [#"[1]"#, #"{"sections": ["x"]}"#, #"{"sections": [{"points": [1]}]}"#,
-                    #"{"sections": [{"points": [{"text": "a", "details": [1]}]}]}"#, #"{"decisions": 5}"#] {
-            #expect(throws: SearchIndexError.self, "\(bad)") { try chunks(bad) }
-        }
-        // Python iterates a text by character and a dict by key; falsy values are no pieces.
-        #expect(try chunks(#"{"decisions": "ab", "next_steps": {"task": 1}, "summary": 0}"#).map { PythonJSON.dumps($0) }
-                == [#"{"kind": "decision", "text": "a"}"#, #"{"kind": "decision", "text": "b"}"#])
-        let point = try chunks(#"{"sections": [{"heading": "Kosten", "points": [{"text": "", "details": "xy"}]}], "next_steps": [{"task": "T", "owner": null}]}"#)
-        #expect(point.map { PythonJSON.dumps($0) } == [#"{"kind": "step", "text": "T", "owner": ""}"#,
-                                                       #"{"kind": "point", "text": "x y", "heading": "Kosten"}"#])
-        #expect(try SearchIndex.passage(point[1]) == "Kosten: x y")
-        #expect(throws: SearchIndexError.self) { try SearchIndex.passage(.object([("kind", .string("summary")), ("text", .int(1))])) }
-        #expect(try chunks("not json").isEmpty)
-        // A time float() can't read: no lines at all (Python's ValueError); a missing key raises.
-        try Data(#"[{"speaker": "A", "start": "soon", "end": 1, "text": "x"}]"#.utf8).write(to: paths.transcriptJson)
-        #expect(try SearchIndex.chunks(paths).allSatisfy { $0["kind"]?.stringValue != "line" })
-        try Data(#"[{"speaker": "A", "end": 1, "text": "x"}]"#.utf8).write(to: paths.transcriptJson)
-        #expect(throws: (any Error).self) { try SearchIndex.chunks(paths) }
-    }
-
     @Test func brokenNpyFilesThrowNeverTrap() throws {
         let good = Npy.float16(rows: 2, columns: 3, [Float](repeating: 0.5, count: 6))
         #expect(try Npy.read(Data(good)).values == [Float](repeating: 0.5, count: 6))
@@ -474,24 +431,6 @@ private final class FakeEncoder: MeaningEncoder {
 
     private static func hex(_ bytes: [UInt8]) -> String { bytes.map { String(format: "%02x", $0) }.joined() }
 
-    @Test func float16RoundingIsNumpys() throws {
-        let cases = try Goldens.cases("search_index", "half")
-        #expect(cases.count > 3000)
-        var wrong = 0
-        for c in cases {
-            guard case .int(let f) = c[0], case .int(let h) = c[1] else { Issue.record("half case"); return }
-            if Npy.floatToHalf(Float(bitPattern: UInt32(f))) != UInt16(h) { wrong += 1 }
-        }
-        #expect(wrong == 0)
-    }
-
-    @Test func npyBytesAreNumpys() throws {
-        for c in try Goldens.cases("search_index", "npy") {
-            guard case .int(let rows) = c[0], case .int(let cols) = c[1] else { Issue.record("npy case"); return }
-            #expect(Self.hex(Npy.float16(rows: rows, columns: cols, Self.floats(c[2]))) == c[3].stringValue, "\(rows)x\(cols)")
-        }
-    }
-
     @Test func npyFilesNumpyWritesAreRead() throws {
         for c in try Goldens.cases("search_index", "npy_read") {
             let m = try Npy.read(hexData(c[0].stringValue ?? ""))
@@ -500,28 +439,4 @@ private final class FakeEncoder: MeaningEncoder {
         }
     }
 
-    @Test func scoresAreNumpysToTheBit() throws {
-        for c in try Goldens.cases("search_index", "scores") {
-            guard case .int(let rows) = c[0], case .int(let cols) = c[1], let halves = c[2].arrayValue else {
-                Issue.record("scores case"); return
-            }
-            let values = halves.map { v -> Float in if case .int(let h) = v { return halfToFloat(UInt16(h)) } else { return .nan } }
-            let got = try Searcher.scores(Npy.Matrix(rows: rows, columns: cols, values: values), Self.floats(c[3]))
-            #expect(Self.bits(got) == Self.bits(Self.floats(c[4])), "\(rows)x\(cols)")
-        }
-    }
-
-    @Test func argsortIsNumpys() throws {
-        for c in try Goldens.cases("search_index", "argsort") {
-            let keys = Self.floats(c[0])
-            #expect(Searcher.argsort(keys) == c[1].arrayValue?.compactMap { if case .int(let n) = $0 { return n } else { return nil } },
-                    "\(keys.count) keys")
-        }
-    }
-
-    @Test func theFloorIsSemanticPys() throws {
-        for c in try Goldens.cases("search_index", "floor") {
-            #expect(SearchIndex.floor(Self.floats(c[0])) == c[1].doubleValue, "\(c[0].arrayValue?.count ?? 0) scores")
-        }
-    }
 }

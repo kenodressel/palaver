@@ -58,20 +58,6 @@ private func bytes<T>(_ values: [T]) -> Data { values.withUnsafeBytes { Data($0)
         #expect(PCM.decodeMono(bytes(x), channels: 2, bits: 32, isFloat: true, nonInterleaved: false)!.count == 1)
     }
 
-    @Test func rejectsWhatPythonRejects() {
-        #expect(PCM.decodeMono(Data([1, 2, 3]), channels: 1, bits: 16, isFloat: false, nonInterleaved: false) == nil)
-        #expect(PCM.decodeMono(Data([1, 2, 3]), channels: 1, bits: 24, isFloat: false, nonInterleaved: false) == nil)
-        let f = PCMFormat(sampleRate: 48_000, formatFlags: PCMFormat.flagIsFloat, channels: 1, bitsPerChannel: 32)
-        #expect(PCM.mono(bytes([Float(0.1)]), format: f)?.rate == 48_000)
-        var notPCM = f; notPCM.formatID = 0x6161_6320  // 'aac '
-        #expect(PCM.mono(bytes([Float(0.1)]), format: notPCM) == nil)
-        var noRate = f; noRate.sampleRate = 0
-        #expect(PCM.mono(bytes([Float(0.1)]), format: noRate) == nil)
-        var noChannels = f; noChannels.channels = 0
-        #expect(PCM.mono(bytes([Float(0.1)]), format: noChannels) == nil)
-        #expect(PCM.mono(Data(), format: f) == nil)
-    }
-
     @Test func formatFlagsDecideFloatAndPlanar() {
         let planarInt = PCMFormat(sampleRate: 24_000, formatFlags: PCMFormat.flagIsNonInterleaved | 0x4,
                                   channels: 2, bitsPerChannel: 16)

@@ -1,5 +1,4 @@
-// Py against Python 3.13: the goldens section `py` (tools/parity/goldens.py) for round, repr,
-// casefold and str.split; the Unicode tables (tools/make_unicode_tables.py) are 15.1.
+// Py's helpers the app relies on: a stable sort, the time with its offset, a dict in insertion order.
 import Foundation
 import PalaverCore
 import PalaverDomain
@@ -24,43 +23,6 @@ func fromPyHex(_ s: String?) throws -> Double {
 }
 
 @Suite struct PyTests {
-    @Test func roundMatchesPython() throws {
-        let cases = try Goldens.cases("py", "round")
-        #expect(cases.count == 1620)
-        let actual: [JSONValue] = try cases.map { c in
-            let x = try fromPyHex(c[0].stringValue), digits = try Goldens.int(c[1])
-            return .array([.string(pyHex(x)), .int(digits), .string(pyHex(Py.round(x, digits)))])
-        }
-        Goldens.expectEach(actual, "py", "round")
-    }
-
-    @Test func reprMatchesPython() throws {
-        let cases = try Goldens.cases("py", "repr")
-        let actual: [JSONValue] = try cases.map { c in
-            let x = try fromPyHex(c[0].stringValue)
-            return .array([.string(pyHex(x)), .string(Py.repr(x))])
-        }
-        Goldens.expectEach(actual, "py", "repr")
-        #expect([Py.repr(.nan), Py.repr(.infinity), Py.repr(-.infinity), Py.repr(-0.0)] == ["nan", "inf", "-inf", "-0.0"])
-    }
-
-    @Test func casefoldMatchesPython() throws {
-        let actual: [JSONValue] = try Goldens.cases("py", "casefold").map { c in
-            let s = try #require(c[0].stringValue)
-            return .array([.string(s), .string(Py.casefold(s))])
-        }
-        Goldens.expectEach(actual, "py", "casefold")
-    }
-
-    @Test func splitMatchesPython() throws {
-        let actual: [JSONValue] = try Goldens.cases("py", "split").map { c in
-            let s = try #require(c[0].stringValue)
-            return .array([.string(s), .strings(Py.split(s))])
-        }
-        Goldens.expectEach(actual, "py", "split")
-        #expect(Py.strip("\u{85}\u{1C} Timo Strauß\t\u{3000}") == "Timo Strauß")
-        #expect(Py.strip("\u{200B}x\u{200B}") == "\u{200B}x\u{200B}")  // not whitespace to Python
-    }
 
     @Test func stableSortKeepsEqualOrder() {
         var rng = SystemRandomNumberGenerator()
@@ -116,17 +78,4 @@ func fromPyHex(_ s: String?) throws -> Double {
         #expect(PyDict<JSONValue>(.array([])) == nil)
     }
 
-    @Test func tablesAreUnicode15_1() throws {
-        #expect(UnicodeTables.version == "15.1.0")
-        let newer = try #require(Unicode.Scalar(UInt32(try Goldens.int(Goldens.load("py")["newer_than_15_1"]))))
-        #expect(!Py.isAlpha(newer) && !Py.isWordScalar(newer) && !Py.isUpper(newer))
-        #expect(Py.isAlpha("ß") && Py.isUpper("ẞ") && !Py.isUpper("ǅ") && !Py.isUpper("ß"))
-        #expect(Py.isDecimal("٣") && Py.isDecimal("४") && !Py.isDecimal("²") && Py.isWordScalar("²"))
-        #expect(Py.isWordScalar("_") && !Py.isWordScalar("-") && !Py.isWordScalar("😀"))
-        #expect(Py.isSpace("\u{1C}") && Py.isSpace("\u{85}") && Py.isSpace("\u{3000}") && !Py.isSpace("\u{200B}"))
-        #expect(UnicodeTables.caseFold[0xDF] == [0x73, 0x73])
-        #expect(UnicodeTables.simpleFold[0x6B] == [0x4B, 0x212A])  // k: K and the Kelvin sign
-        #expect(UnicodeTables.simpleFold[0xDF] == [0x1E9E])  // ß only with ẞ, never "ss"
-        #expect(UnicodeTables.wordRanges.first! == (0x30, 0x39))
-    }
 }

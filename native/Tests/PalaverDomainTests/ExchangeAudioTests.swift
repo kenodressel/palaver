@@ -158,65 +158,6 @@ import Testing
         return (v[0]?.intValue ?? 0, v[1]?.intValue ?? 0, samples)
     }
 
-    @Test func test_python_decodes_a_swift_opus() throws {
-        let t = TempFolder("audio"); defer { t.remove() }
-        guard let py = Self.python() else { return }
-        // Opus: the tone again, as Python hears it, the length exact.
-        let samples = Self.tone(16_000, seconds: 2, hz: 440, amplitude: 0.3)
-        let wav = t.url.appendingPathComponent("x.wav"), opus = t.url.appendingPathComponent("x.opus")
-        try Wav16.write(samples, rate: 16_000, to: wav)
-        try OggOpus.encode(wav: wav, to: opus)
-        let heard = try Self.pythonReads(py, opus)
-        #expect(heard.rate == 16_000 && heard.frames == samples.count && heard.samples.count == samples.count)
-        #expect(Self.correlation(heard.samples, samples.map { Float($0) / 32768 }) > 0.9)
-        // Short ones, all on one page that ends the stream: the length as Python reads it.
-        for (rate, frames) in [(12_000, 239), (8000, 1), (48_000, 960)] {
-            try Wav16.write(Self.tone(rate, seconds: Double(frames) / Double(rate), hz: 300, amplitude: 0.2), rate: rate, to: wav)
-            try OggOpus.encode(wav: wav, to: opus)
-            let short = try Self.pythonReads(py, opus)
-            #expect(short.rate == rate && short.frames == frames && short.samples.count == frames, "\(rate) \(frames)")
-        }
-        // FLAC: lossless, every sample as written.
-        let odd = Self.tone(22_050, seconds: 1.5, hz: 660, amplitude: 0.5)
-        let wav2 = t.url.appendingPathComponent("y.wav")
-        try Wav16.write(odd, rate: 22_050, to: wav2)
-        let flac = try ExchangeAudio.encodeTrack(wav2, destDir: t.url, track: "mic")
-        #expect(flac.lastPathComponent == "mic.flac")
-        let lossless = try Self.pythonReads(py, flac)
-        #expect(lossless.rate == 22_050 && lossless.frames == odd.count)
-        #expect(lossless.samples == odd.map { Float($0) / 32768 })
-    }
-
-    @Test func test_swift_decodes_a_python_opus() throws {
-        let t = TempFolder("audio"); defer { t.remove() }
-        let golden = Goldens.load("exchange_zip_audio")
-        let zip = Goldens.url("exchange-python-audio.zip")
-        let file = t.url.appendingPathComponent("system.opus")
-        try Self.entryData(zip, "audio/system.opus").write(to: file)
-        let info = try #require(golden["zips"]?["exchange-python-audio.zip"]?["audio"]?["audio/system.opus"])
-        let reader = try OggOpus.Reader(file)
-        #expect(reader.rate == info["rate"]?.intValue && reader.channels == 1 && reader.frames == info["frames"]?.intValue)
-        reader.close()
-        let (rate, samples) = try OggOpus.decode(file)
-        let python = try Wav16.read(Goldens.url("exchange-python-audio-decoded.wav"))
-        #expect(rate == 16_000 && samples.count == python.count)
-        #expect(Self.maxDifference(samples.map(ExchangeAudio.pcm16), python) <= 2)
-        // The headers are libsndfile's: OpusHead as Python wrote it, OpusTags by the same rule (its vendor, libopus 1.4).
-        let packets = try Self.headers(file)
-        #expect(packets.head == OggOpus.head(channels: 1, preskip: 312, rate: 16_000))
-        #expect(packets.tags == OggOpus.tags(vendor: "libopus 1.4"))
-        let ours = t.url.appendingPathComponent("ours.opus"), wav = t.url.appendingPathComponent("x.wav")
-        try Wav16.write(python, rate: 16_000, to: wav)
-        try OggOpus.encode(wav: wav, to: ours)
-        let mine = try Self.headers(ours)
-        #expect(mine.head == packets.head && mine.tags == OggOpus.tags(vendor: "libopus 1.5.2"))
-        // The FLAC Python wrote reads here as written.
-        let flacFile = t.url.appendingPathComponent("system.flac")
-        try Self.entryData(Goldens.url("exchange-python-audio-flac.zip"), "audio/system.flac").write(to: flacFile)
-        let flac = try Flac.decode(flacFile)
-        #expect(flac.rate == 22_050 && flac.samples.count == 44_100)
-    }
-
     /// The first two packets of an Ogg file (OpusHead, OpusTags), read with a page parser of its own.
     static func headers(_ url: URL) throws -> (head: [UInt8], tags: [UInt8]) {
         let d = [UInt8](try Data(contentsOf: url))

@@ -1,5 +1,4 @@
-// Helpers of the setup assistant's suites: tests/test_onboarding.py's `lm_registry`, `with_transcription`, `current`, `recs`
-// and the goldens of tools/parity/goldens.py's "setup" section (Fixtures/setup-goldens.json).
+// Helpers of the setup assistant's suites: tests/test_onboarding.py's `lm_registry`, `with_transcription`, `current`, `recs`.
 import CryptoKit
 import Foundation
 import Testing
@@ -58,28 +57,7 @@ enum SetupFixtures {
         return out
     }
 
-    // MARK: - goldens
-
-    /// Fixtures/setup-goldens.json.gz (tools/parity/goldens.py writes goldens past 100 KB gzip-compressed).
-    static let golden: JSONValue = {
-        let url = Bundle.module.resourceURL!.appendingPathComponent("Fixtures/setup-goldens.json.gz")
-        guard let packed = try? Data(contentsOf: url), let data = gunzip(packed), let value = try? PythonJSON.parse(data) else {
-            Issue.record("no golden \(url.path): the goldens are frozen, restore it from git")
-            return .object([])
-        }
-        return value
-    }()
-
-    /// One gzip member's content (Python's `gzip.compress`: no name, comment or extra field); nil when it is not one.
-    static func gunzip(_ packed: Data) -> Data? {
-        let b = [UInt8](packed)
-        guard b.count >= 18, b[0] == 0x1F, b[1] == 0x8B, b[2] == 8, b[3] == 0,
-              let out = try? (Data(b[10..<(b.count - 8)]) as NSData).decompressed(using: .zlib) as Data else { return nil }
-        let size = b[(b.count - 4)...].reversed().reduce(UInt32(0)) { $0 << 8 | UInt32($1) }
-        return UInt32(truncatingIfNeeded: out.count) == size ? out : nil
-    }
-
-    static func list(_ key: String) -> [JSONValue] { golden[key]?.arrayValue ?? [] }
+    // MARK: - JSON helpers
 
     static func num(_ v: JSONValue?) -> Double {
         switch v {
@@ -123,7 +101,6 @@ enum SetupFixtures {
                             chosen: strings(v?["chosen"]))
     }
 
-    static func currents() -> [SetupCurrent] { list("currents").map { current($0) } }
 
     static func hardware(_ v: JSONValue?) -> Hardware {
         let a = v?.arrayValue ?? []

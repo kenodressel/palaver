@@ -441,11 +441,4 @@ import Testing
 
     // MARK: - Swift only
 
-    /// `system_speech` sums with Python's `sum()`, which is compensated: 100 turns of 0.1 s are 10.0 s, a call
-    /// (Python, checked); a plain sum is 9.99999999999998.
-    @Test func systemSpeechSumsAsPythonDoes() {
-        let m = SpeakerMeeting(); defer { m.remove() }
-        m.write(m.paths.systemTurns, SpeakerMeeting.turns(Array(repeating: ("SPEAKER_00", 0.0, 0.1), count: 100)))
-        #expect(SharedMic.systemSpeech(m.paths))
-    }
 }

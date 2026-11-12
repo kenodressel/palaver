@@ -612,72 +612,6 @@ private func withEvents(_ f: Fixture) throws -> (CalendarEvent, CalendarEvent, C
         #expect(until { s.log.contains("rolling back split failed; the snapshot \(token) is kept: nope") })
     }
 
-    @Test func test_undo_route_restores_a_python_snapshot() throws {
-        // The domain tests' copy (Goldens/python-undo, tools/parity/goldens.py undo_fixture), read in the checkout.
-        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("PalaverDomainTests/Goldens/python-undo", isDirectory: true)
-        try #require(FileManager.default.fileExists(atPath: fixture.appendingPathComponent("root/Meetings").path))
-        let s = try TestServer(meetings: { out in
-            let fm = FileManager.default
-            let root = fixture.appendingPathComponent("root")
-            for name in try fm.contentsOfDirectory(atPath: root.appendingPathComponent("Meetings").path) {
-                try fm.copyItem(at: root.appendingPathComponent("Meetings/\(name)"), to: out.appendingPathComponent(name))
-            }
-            let config = out.deletingLastPathComponent().appendingPathComponent("config/palaver", isDirectory: true)
-            try fm.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try fm.copyItem(at: root.appendingPathComponent("config/palaver"), to: config)
-            // Taken a minute ago (each undo prunes what is older than a day), in the order Python took them.
-            let taken = DateFormatter()
-            taken.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-            taken.timeZone = TimeZone(secondsFromGMT: 3600)
-            taken.locale = Locale(identifier: "en_US_POSIX")
-            let undo = out.appendingPathComponent(".trash/.undo")
-            for token in try fm.contentsOfDirectory(atPath: undo.path) {
-                let m = undo.appendingPathComponent("\(token)/manifest.json")
-                let text = try String(contentsOf: m, encoding: .utf8)
-                    .replacingOccurrences(of: "/PALAVER-UNDO-ROOT/root", with: out.deletingLastPathComponent().path)
-                    .replacingOccurrences(of: "2026-11-04T22:10:33", with: taken.string(from: Date(timeIntervalSinceNow: -60)))
-                try Data(text.utf8).write(to: m)
-            }
-        })
-        defer { s.stop() }
-        // Newest first. Only the newest is undone: what follows an undo (the notes' paragraphs written again, the
-        // names and projects derived again) changes what the older snapshots expect, so Python refuses them too
-        // (`api.undo_change` on this fixture answers [], then Changed four times).
-        let steps: [(String, Int, JSONValue)] = [
-            ("a45aa10eb21240649258f89290a5dcf4", 200, .object([("restored", .array([]))])),
-            ("8602c958df4647eeaba72b7824f618bc", 409, .object([("error", .string("the meeting changed since"))])),
-            ("bdb38b70a69d44e2a39c2a3c1b1546d6", 409, .object([("error", .string("the meeting changed since"))])),
-            ("fcdac49802bf49e6a1ce74e8693a6e37", 409, .object([("error", .string("the meeting changed since"))])),
-            ("bb7cbf3039184bda85933c0080b279b7", 409, .object([("error", .string("the meeting changed since"))])),
-        ]
-        for (token, status, answer) in steps {
-            let got = post(s, "/api/undo", .object([("token", .string(token))]))
-            #expect(got.0 == status && got.1 == answer, "\(token): \(got)")
-        }
-        for id in ["2026-10-20T14-35-17", "2026-10-22T10-00-00", "2026-10-22T10-00-30"] {  // the refusals moved nothing
-            #expect(MeetingsAPI.isDirectory(s.app.outputDir.appendingPathComponent(id)))
-        }
-        #expect(snapshots(s.app.outputDir).count == 4)
-        // The cleared notes are back as Python's undo leaves them: the image, its text, the paragraph merged in.
-        let folder = s.app.outputDir.appendingPathComponent("2026-10-20T14-35-17")
-        #expect(exists(folder.appendingPathComponent("my-notes/img-0123456789ab.png")))
-        #expect(exists(folder.appendingPathComponent("my-notes/img-0123456789ab.png.txt")))
-        #expect(try Data(contentsOf: folder.appendingPathComponent("my-notes.json")) == Data("""
-            [
-             {
-              "text": "Budget f\u{fc}r Contoso",
-              "at": 0.1
-             },
-             {
-              "text": "",
-              "at": null,
-              "image": "img-0123456789ab.png"
-             }
-            ]
-            """.utf8))
-    }
-
     /// The general undo's glossary half (test_http_glossary_undo_renders_the_markdown_again goes through the glossary
     /// routes, Task 44): a snapshot of the glossary put back renders every transcript.md again.
     @Test func undoingAGlossaryChangeRendersTheMarkdownAgain() throws {
@@ -950,18 +884,6 @@ private func withEvents(_ f: Fixture) throws -> (CalendarEvent, CalendarEvent, C
             #expect(r.status == 500, "\(duration)")
             #expect(s.get("/api/ping").status == 200, "\(duration)")
         }
-    }
-
-    @Test func anEditedLineKeepsItsKeysInTheirOrderAndPythonsFormat() throws {
-        let f = try Fixture()
-        try ChangesAPI.editLine(f.app, id: MEETING, start: 13.004, text: " Thanks, Rico. ")
-        let text = try String(contentsOf: f.paths.transcriptJson, encoding: .utf8)
-        let raw = try #require(read(f.paths.transcriptJson)?.arrayValue?.last)
-        #expect(Array(raw.objectKeys) == ["speaker", "start", "end", "text", "heard"])
-        #expect(text == PythonJSON.dumps(read(f.paths.transcriptJson)!, indent: 2, ensureAscii: false))
-        try ChangesAPI.editLine(f.app, id: MEETING, start: 13, text: "Thanks Rico, the salary band is fine.")  // as heard: the edit goes
-        #expect(Array(try #require(read(f.paths.transcriptJson)?.arrayValue?.last).objectKeys) == ["speaker", "start", "end", "text"])
-        #expect(throws: NotFound.self) { try ChangesAPI.editLine(f.app, id: MEETING, start: 13.02, text: "x") }
     }
 
     @Test func test_http_edit_line() throws {

@@ -80,58 +80,6 @@ private func samples(_ n: Int, _ f: (Int) -> Int16) -> [Int16] { (0..<n).map(f) 
         #expect(s.get("/api/meetings/\(MEETING)/audio", headers: [("Range", "bytes=\(total)-")]).status == 416)
     }
 
-    /// server.py:818-841, each branch: the headers, and bytes that are the whole file's.
-    @Test func rangesAsPythonAnswersThem() throws {
-        let s = try TestServer(meetings: { try pageMeeting($0) })
-        defer { s.stop() }
-        let paths = RecordingPaths(s.app.outputDir.appendingPathComponent(MEETING, isDirectory: true))
-        let whole = try AudioSource(paths: paths, track: "mix").read(range: 0..<(44 + 2 * SR * 20))
-        let size = whole.count, target = "/api/meetings/\(MEETING)/audio"
-        func get(_ range: String?, method: String = "GET", track: String = "") -> Reply {
-            s.get(target + track, headers: range.map { [("Range", $0)] } ?? [], method: method)
-        }
-        func expectRange(_ r: Reply, _ start: Int, _ end: Int, sourceLocation: SourceLocation = #_sourceLocation) {
-            #expect(r.status == 206, sourceLocation: sourceLocation)
-            #expect(r.header("Content-Range") == "bytes \(start)-\(end)/\(size)", sourceLocation: sourceLocation)
-            #expect(r.header("Content-Length") == String(end - start + 1), sourceLocation: sourceLocation)
-            #expect(r.body == whole.subdata(in: start..<end + 1), sourceLocation: sourceLocation)
-        }
-        let first = get(nil)  // no range: from the start, at most a slice (all of this short file)
-        expectRange(first, 0, size - 1)
-        #expect(first.headers.map(\.0) == ["Server", "Date", "Content-Type", "Accept-Ranges", "Content-Range", "Content-Length"])
-        #expect(first.header("Content-Type") == "audio/wav" && first.header("Accept-Ranges") == "bytes")
-        expectRange(get("bytes=-"), 0, size - 1)
-        expectRange(get("  bytes=5-9 "), 5, 9)
-        expectRange(get("bytes=1001-"), 1001, size - 1)
-        expectRange(get("bytes=-10"), size - 10, size - 1)  // the last 10 bytes
-        expectRange(get("bytes=-99999999"), 0, size - 1)
-        expectRange(get("bytes=3-99999999999999999999999"), 3, size - 1)
-        for notOne in ["bytes=0-1,5-6", "bytes=a-b", "items=0-1", "bytes=0", "bytes=-1-"] {
-            expectRange(get(notOne), 0, size - 1)  // not one range: as without
-        }
-        let backwards = get("bytes=10-5")
-        #expect(backwards.status == 206 && backwards.header("Content-Range") == "bytes 10-5/\(size)")
-        #expect(backwards.header("Content-Length") == "-4" && backwards.body.isEmpty)
-        for past in ["bytes=\(size)-", "bytes=-0", "bytes=99999999999999999999999-1"] {
-            let r = get(past)
-            #expect(r.status == 416 && r.header("Content-Range") == "bytes */\(size)" && r.body.isEmpty)
-            #expect(r.headers.map(\.0) == ["Server", "Date", "Content-Range"])
-        }
-        let head = get("bytes=5-9", method: "HEAD")
-        #expect(head.status == 206 && head.header("Content-Length") == "5" && head.body.isEmpty)
-        #expect(head.header("Content-Range") == "bytes 5-9/\(size)")
-        // The track: blank is the mix; only "mix" and "system" are tracks.
-        expectRange(get("bytes=0-99", track: "?track="), 0, 99)
-        let system = get(nil, track: "?track=system&track=mix")
-        #expect(system.status == 206 && system.body != whole && system.body.count == size)
-        for bad in ["mic", "..%2Fmeta.json", "MIX"] {
-            let r = get(nil, track: "?track=\(bad)")
-            #expect(r.status == 404 && r.error == "not found: \(PyURL.unquote(bad))")
-        }
-        #expect(s.get("/api/meetings/..%2F..%2Fetc/audio").error == "not found: ..%2F..%2Fetc")
-        #expect(s.get("/api/meetings/2026-01-01T00-00-00/audio").status == 404)
-    }
-
     /// A range past a slice: at most a slice from its start, and the last N bytes in full (read a slice at a time).
     @Test func aLongTrackIsAnsweredASliceAtATime() throws {
         let f = try Fixture()

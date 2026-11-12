@@ -8,7 +8,7 @@ import PalaverCapture
 import PalaverCore
 @testable import PalaverDaemon
 
-extension DaemonTicks {
+extension DaemonTicksD {
 @Suite struct CoachTests {
     let status: [String: Any] = ["talk": ["share": 0.7, "speaking": "me"], "talk_text": "You 70 % of the last 10 min",
                                  "nudge": ["kind": "talk_share", "text": "4-min monologue", "at": 640.0], "quiet": ["Timo Strauß"]]

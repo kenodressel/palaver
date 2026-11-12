@@ -23,6 +23,9 @@ OLD_RID = "3.13.18-arm64-155fa76f8b4e"  # 0.5.0rc6's runtime
 
 pytestmark = pytest.mark.skipif(shutil.which("ditto") is None, reason="macOS only")
 
+# A stand-in quit with SIGTERM: its trap exits 0, or, on a busy Mac, the signal came before its shell set the trap.
+QUIT_BY_SIGTERM = (0, -signal.SIGTERM)
+
 
 def _asset(path: Path) -> release.Asset:
     return release.Asset(path.name, f"https://example.test/{path.name}", path.stat().st_size,
@@ -250,7 +253,7 @@ def test_an_update_waits_for_processing_quits_only_the_menu_bar_app_and_opens_it
         out = output.all()
         assert proc.returncode == 0, out
         assert "waits until it is done" in out
-        assert launcher.wait(5) == 0  # quit with SIGTERM, as from the menu
+        assert launcher.wait(5) in QUIT_BY_SIGTERM  # quit with SIGTERM, as from the menu
         assert installed_version(home) == "0.2.0"
         assert opened.read_text().split() == [str(app)]  # it ran before: it runs again
     finally:
@@ -284,7 +287,7 @@ def test_an_update_waits_for_the_swift_apps_workers_and_quits_only_the_app(home,
         out = output.all()
         assert proc.returncode == 0, out
         assert "processing a meeting" in out
-        assert swift_app.wait(5) == 0  # quit with SIGTERM
+        assert swift_app.wait(5) in QUIT_BY_SIGTERM
         assert installed_version(home) == "0.2.0"
         assert opened.read_text().split() == [str(app)]  # it ran before: it runs again
     finally:

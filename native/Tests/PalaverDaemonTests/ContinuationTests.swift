@@ -28,7 +28,7 @@ func crashedState(_ dir: URL, folder: URL, continues: [URL] = [], trigger: Strin
     writeJSON(dir.appendingPathComponent("state.json"), state)
 }
 
-extension DaemonTicks {
+extension DaemonTicksB {
     @Suite struct ContinuationTests {
         @Test func aRestartDuringACallContinuesTheRecordingAndJoinsItAfter() async throws {
             let dir = tempDir()
@@ -231,7 +231,7 @@ extension DaemonTicks {
     }
 }
 
-extension DaemonTicks {
+extension DaemonTicksC {
     @Suite struct CrashRecoveryTests {
         @Test func aCrashWhileAContinuedPartRecordsCanStillBeContinued() async throws {
             let dir = tempDir()
@@ -404,7 +404,7 @@ final class SlowCalendar {
     }
 }
 
-extension DaemonTicks {
+extension DaemonTicksC {
     @Suite struct SlowCalendarTests {
         /// A call cut at 402 and still on after the restart at 430; the trigger starts at 434, the
         /// calendar answers ~3 s later.

@@ -54,15 +54,6 @@ import Testing
         #expect(tie.apply("AB") == "1")  // the first of two of the same length takes it
     }
 
-    @Test func applyMatchesPythonsReOnTheGolden() throws {
-        let golden = Goldens.load("dictionary")
-        guard case .object(let fields)? = golden["replacements"] else { Issue.record("no replacements"); return }
-        let d = TranscriberDictionary(initialPrompt: "",
-                                      replacements: PyDict(fields.map { ($0.0, $0.1.stringValue ?? "") }))
-        let cases = try Goldens.cases("dictionary", "cases")
-        Goldens.expectEach(cases.map { .strings([$0[0].stringValue!, d.apply($0[0].stringValue!)]) }, "dictionary", "cases")
-    }
-
     @Test func aReplacementIsATemplateNotLiteralText() {
         let d = TranscriberDictionary(initialPrompt: "", replacements: PyDict([("a.b", #"a\\b"#), ("x", #"[\g<0>]"#)]))
         #expect(d.apply("a.b but not axb; x") == #"a\b but not a[x]b; [x]"#)

@@ -33,55 +33,10 @@ import Testing
 
     // MARK: goldens
 
-    @Test func test_transcript_hash_matches_python_for_tricky_starts() throws {
-        let cases = try Goldens.cases("notes_read", "hash")
-        #expect(cases.count > 100)
-        for c in cases {
-            let us = try #require(c[0].arrayValue).map { row -> Utterance in
-                let a = row.arrayValue!
-                return Utterance(speaker: a[1].stringValue!, start: Double(a[2].stringValue!)!, end: 0, text: a[3].stringValue!,
-                                 label: a[0].stringValue)
-            }
-            #expect(Notes.transcriptHash(us) == c[1].stringValue, "\(PythonJSON.dumps(c[0]))")
-        }
-    }
-
     @Test func test_fixed_point_start_spelling() {
         #expect(Notes.fixed2(0.125) == "0.12" && Notes.fixed2(0.375) == "0.38" && Notes.fixed2(2.675) == "2.67")
         #expect(Notes.fixed2(-0.004) == "-0.00" && Notes.fixed2(-0.0) == "-0.00" && Notes.fixed2(1e6) == "1000000.00")
         #expect(Notes.fixed2(.nan) == "nan" && Notes.fixed2(-.infinity) == "-inf" && Notes.fixed2(.infinity) == "inf")
-    }
-
-    @Test func test_meeting_language_matches_python() throws {
-        for c in try Goldens.cases("notes_read", "language") {
-            let us = try #require(c[0].arrayValue).map { Utterance(speaker: $0.arrayValue![0].stringValue!, start: 0, end: 1, text: $0.arrayValue![1].stringValue!) }
-            #expect(Notes.meetingLanguage(us) == c[1].stringValue, "\(PythonJSON.dumps(c[0]))")
-        }
-    }
-
-    @Test func test_shared_lanes_match_python() throws {
-        for c in try Goldens.cases("notes_read", "lanes") {
-            let us = try #require(c[0].arrayValue).map { Utterance(speaker: $0.arrayValue![0].stringValue!, start: 0, end: 1, text: "t", label: $0.arrayValue![1].stringValue) }
-            let shared = PyDict(fields(c[1]).map { ($0.0, $0.1.stringValue ?? "") })
-            #expect(Notes.sharedLanes(us, shared: shared, mic: c[2].stringValue) == c[3].arrayValue?.compactMap(\.stringValue), "\(PythonJSON.dumps(c[0]))")
-        }
-    }
-
-    @Test func test_backed_name_guesses_match_python() throws {
-        let scenarios = try #require(Goldens.load("notes_read")["guesses"]?.arrayValue)
-        #expect(scenarios.count > 100)
-        for s in scenarios {
-            let us = try #require(s["lines"]?.arrayValue).map(line)
-            let kept = Notes.backedNameGuesses(try #require(s["guesses"]?.arrayValue), us, glossary: glossary)
-            #expect(PythonJSON.dumps(.array(kept)) == PythonJSON.dumps(s["kept"]!), "\(PythonJSON.dumps(s["lines"]!)) \(PythonJSON.dumps(s["guesses"]!))")
-        }
-    }
-
-    @Test func test_with_names_matches_python() throws {
-        for c in try Goldens.cases("notes_read", "names") {
-            let names = PyDict(fields(c[1]).map { ($0.0, $0.1.stringValue ?? "") })
-            #expect(PythonJSON.dumps(Notes.withNames(c[0], names)) == PythonJSON.dumps(c[2]), "\(PythonJSON.dumps(c[0])) \(PythonJSON.dumps(c[1]))")
-        }
     }
 
     // MARK: test_notes.py

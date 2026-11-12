@@ -1,7 +1,7 @@
 // `palaver-worker index [folder…]` (cli.py `_cmd_index`, semantic.py `index_stale`): the search-by-meaning index of
 // the meetings without a current one (or of the folders named), the e5 model loaded once and only when there is
 // something to index; downloaded first (`download`: PalaverCloud's HubDownloader, the pinned revision) when it is not on
-// this Mac. It runs at background QoS and stops between meetings once a recording or a transcription runs, or free
+// this Mac. It runs at background QoS (`qos`) and stops between meetings once a recording or a transcription runs, or free
 // memory falls under `SearchIndex.INDEX_MEMORY_GB` (the daemon's rule for starting it).
 import Foundation
 import PalaverCloud
@@ -13,7 +13,8 @@ public enum Index {
     /// could not be had.
     public static func run(outputDir: URL, only folders: [URL]? = nil, stores: StorePaths, download: @escaping () throws -> Void,
                            modelFolder: @escaping () -> URL?, encoder makeEncoder: @escaping (URL) throws -> MeaningEncoder,
-                           shouldStop: @escaping () -> Bool, say: @escaping (String) -> Void = Pipeline.printLine) async -> Int32 {
+                           shouldStop: @escaping () -> Bool, say: @escaping (String) -> Void = Pipeline.printLine,
+                           qos: QualityOfService = .background) async -> Int32 {
         guard SearchIndex.enabled(stores: stores) else {
             say("Search by meaning is switched off in the settings.")
             return 0
@@ -31,7 +32,7 @@ public enum Index {
             guard let folder = modelFolder() else { return nil }
             return try makeEncoder(folder)
         }
-        let result: Result<Int, Error> = await background {
+        let result: Result<Int, Error> = await background(qos) {
             Result { try SearchIndex.indexStale(outputDir: outputDir, encoder: factory, shouldStop: shouldStop, only: only) }
         }
         switch result {
@@ -50,11 +51,11 @@ public enum Index {
         try hub.fetchPinned(E5Encoder.model, token: token())
     }
 
-    /// `body` on a thread of background QoS, awaited.
-    static func background<T>(_ body: @escaping () -> T) async -> T {
+    /// `body` on a thread of `qos` (background; a test on a busy Mac takes a higher one), awaited.
+    static func background<T>(_ qos: QualityOfService, _ body: @escaping () -> T) async -> T {
         await withCheckedContinuation { (c: CheckedContinuation<T, Never>) in
             let thread = Thread { c.resume(returning: body()) }
-            thread.qualityOfService = .background
+            thread.qualityOfService = qos
             thread.start()
         }
     }

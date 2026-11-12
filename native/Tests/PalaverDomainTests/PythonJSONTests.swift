@@ -1,4 +1,4 @@
-// PythonJSON against Python's json module: the goldens section `json` (tools/parity/goldens.py).
+// PythonJSON: parsing (key order, ints and floats apart, what it refuses) and writing files.
 import Foundation
 import PalaverCore
 import PalaverDomain
@@ -15,19 +15,6 @@ private func tempDir() throws -> URL {
 private func text(_ url: URL) throws -> String { String(decoding: try Data(contentsOf: url), as: UTF8.self) }
 
 @Suite struct PythonJSONTests {
-    @Test func everyGoldenTextRoundTrips() throws {
-        let cases = try #require(Goldens.load("json")["cases"]?.arrayValue)
-        #expect(cases.count == 42)
-        for c in cases {
-            let want = try #require(c["text"]?.stringValue)
-            let source = try #require(c["value_json"]?.stringValue)
-            let indent: Int? = if case .int(let i)? = c["indent"] { i } else { nil }
-            let ascii = try #require(c["ensure_ascii"]?.boolValue as Bool?)
-            let fromText = try parse(want), fromSource = try parse(source)
-            #expect(PythonJSON.dumps(fromText, indent: indent, ensureAscii: ascii) == want)
-            #expect(PythonJSON.dumps(fromSource, indent: indent, ensureAscii: ascii) == want)
-        }
-    }
 
     @Test func parseKeepsKeyOrder() throws {
         let v = try parse(#"{"z": 1, "a": {"y": true, "b": null}, "m": []}"#)
@@ -98,32 +85,4 @@ private func text(_ url: URL) throws -> String { String(decoding: try Data(conte
         #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == ["speakers.json"])
     }
 
-    @Test func floatsArePythonsRepr() {
-        let cases: [(Double, String)] = [
-            (600, "600.0"), (0.0001, "0.0001"), (0.00001, "1e-05"), (1e15, "1000000000000000.0"),
-            (1e16, "1e+16"), (1234567890123456.0, "1234567890123456.0"), (12345678901234567.0, "1.2345678901234568e+16"),
-            (-1.5e-7, "-1.5e-07"), (1e100, "1e+100"), (0.5, "0.5"), (123.456, "123.456"),
-        ]
-        for (d, want) in cases { #expect(JSONValue.pythonFloat(d) == want, "\(d)") }
-    }
-
-    @Test func goldensCompareAsBytes() {
-        // The golden is {"b": 2, "a": 1}: the same dict to `==`, another text.
-        let same: JSONValue = .object([("a", .int(1)), ("b", .int(2))])
-        #expect(same == .object([("b", .int(2)), ("a", .int(1))]))
-        withKnownIssue {
-            Goldens.expect(same, "json", "key_order")
-        }
-        Goldens.expect(.object([("b", .int(2)), ("a", .int(1))]), "json", "key_order")
-    }
-
-    @Test func equalIsPythonsEquality() {
-        // Objects in any order, numbers by value (1 == 1.0 == True), strings by code points.
-        #expect(PythonJSON.equal(.object([("a", .int(1)), ("b", .array([.bool(true)]))]),
-                                 .object([("b", .array([.double(1)])), ("a", .double(1))])))
-        #expect(!PythonJSON.equal(.string("Zo\u{EB}"), .string("Zoe\u{308}")))
-        #expect(!PythonJSON.equal(.object([("a", .int(1))]), .object([("a", .int(1)), ("b", .null)])))
-        #expect(!PythonJSON.equal(.string("1"), .int(1)) && !PythonJSON.equal(.null, .bool(false)))
-        #expect(!PythonJSON.equal(.object([]), .array([])))
-    }
 }

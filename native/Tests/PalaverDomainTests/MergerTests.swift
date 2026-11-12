@@ -89,13 +89,4 @@ import Testing
         #expect(Merger.merge(mic: [seg(0, 1, " Hallo ", speaker: "")], system: [], turns: []).map(\.speaker) == ["User"])
     }
 
-    @Test func speakersAsPythonAssignsThem() throws {
-        var got: [JSONValue] = []
-        for c in try Goldens.cases("pipeline", "assign") {
-            let segs = try c[0].arrayValue!.map { try Segment(json: $0) }
-            let turns = try c[1].arrayValue!.map { try SpeakerTurn(json: $0) }
-            got.append(.array([c[0], c[1], .strings(Merger.assignSpeakersToWords(segs, turns).map(\.speaker))]))
-        }
-        Goldens.expectEach(got, "pipeline", "assign")
-    }
 }

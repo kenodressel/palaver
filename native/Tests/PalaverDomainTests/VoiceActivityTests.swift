@@ -262,13 +262,14 @@ private final class Clock: @unchecked Sendable {
         #expect(va.snapshot()["monologue"] == .int(0))
     }
 
-    @Test func test_talk_share_is_over_the_last_ten_minutes() {
+    @Test func test_talk_share_is_over_the_last_window() {
         let g = Gen()
-        let (mic, system) = g.tracks([g.speech(300), quiet(600)], [quiet(300), g.speech(600)], echoDb: -12)
-        let va = VoiceActivity()
+        // The window is 10 minutes; a one-minute one says the same with a tenth of the audio.
+        let (mic, system) = g.tracks([g.speech(30), quiet(60)], [quiet(30), g.speech(60)], echoDb: -12)
+        let va = VoiceActivity(window: 60, keep: 90)
         feed(va, mic, system, chunk: 1.0)
         let s = va.snapshot()
-        #expect(near(s["window"], 600, 1))
+        #expect(near(s["window"], 60, 1))
         #expect(near(s["me"], 0, 1))
         #expect(near(s["share"], 0, 0.01))
     }
@@ -449,14 +450,15 @@ private final class Clock: @unchecked Sendable {
 
     @Test func test_answered_questions_keep_their_wait_as_the_minutes_go_by() {
         let g = Gen()
-        let va = VoiceActivity()
+        // Turns are kept 15 minutes; 90 seconds here, so two minutes later they are pruned.
+        let va = VoiceActivity(window: 60, keep: 90)
         var (mic, system) = g.tracks([g.speech(8), quiet(12)], [quiet(11), g.speech(9)], echoDb: nil)
         feed(va, mic, system)
         va.questions([7.9])
         let first = va.snapshot()
         #expect(near(first["median_wait"], 3.1, 0.3))
-        (mic, system) = g.tracks([g.speech(600), quiet(600)], [quiet(600), g.speech(600)], echoDb: nil)
-        feed(va, mic, system, chunk: 1.0)  // 20 minutes later: the old turns are pruned
+        (mic, system) = g.tracks([g.speech(60), quiet(60)], [quiet(60), g.speech(60)], echoDb: nil)
+        feed(va, mic, system, chunk: 1.0)  // two minutes later: the old turns are pruned
         va.questions([7.9])  // the stream lists it again
         let later = va.snapshot()
         #expect(later["median_wait"] == first["median_wait"] && later["questions"] == .int(1))

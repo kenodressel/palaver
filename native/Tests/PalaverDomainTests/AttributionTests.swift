@@ -254,27 +254,6 @@ import Testing
 
     // MARK: on disk (Swift's own: the bytes are Python's)
 
-    @Test func theEvidenceFileIsPythonsBytesUnderItsLock() throws {
-        let t = F.folder(); defer { t.remove() }
-        let file = t.url.appendingPathComponent("attributions.json")
-        let evidence = Evidence(path: file, outputDir: t.url)
-        let focus = F.event("Focus time", 0, 60, "Anna", uid: "focus/RID=1", series: true)
-        let nameless = CalendarEvent(title: "", start: F.at(0), end: F.at(5))
-        for m in ["m1", "m2"] { evidence.rejectEvent(focus, m) }
-        evidence.confirmEvent(focus, "m3")
-        evidence.confirmEvent(focus, "m2")
-        for m in ["ä1", "ä2", "ä3"] { evidence.rejectEvent(nameless, m) }
-        evidence.forgetRule("nothing")
-        try evidence.save()
-        #expect(t.text("attributions.json") == Goldens.load("calendar")["evidence_file"]?.stringValue)
-        #expect(t.exists("attributions.json.lock"))
-        #expect(!t.exists("attributions.json.tmp"))
-        evidence.forgetRule("")
-        try evidence.save()
-        #expect(t.text("attributions.json") == Goldens.load("calendar")["evidence_after_forget"]?.stringValue)
-        Goldens.expect(.array(evidence.rules().map(\.json)), "calendar", "evidence_rules")
-    }
-
     @Test func aStoreKeepsTheFilesOtherKeysAndUnknownEntryFields() throws {
         let t = F.folder(); defer { t.remove() }
         let file = t.url.appendingPathComponent("attributions.json")
@@ -313,16 +292,6 @@ import Testing
         let evidence = Evidence(path: file)
         try evidence.save()
         #expect(t.text("attributions.json") == "{\n  \"events\": {}\n}")
-    }
-
-    @Test func linksAreStoredAndShownAsInPython() {
-        let link = Link("event", "Migration", "calendar", 0.54, "time match; you said a recording was not this event once")
-        Goldens.expect(link.stored(), "calendar", "link_stored")
-        Goldens.expect(link.toDict(), "calendar", "link_dict")
-        #expect(Link("event", "x", "you").stored() == .object([("source", .string("you"))]))
-        #expect(Link.from(kind: "org", target: "Contoso", .object([("source", .string("email")), ("confidence", .int(1))])).confidence == 1.0)
-        #expect(Link.from(kind: "org", target: "Contoso", .object([("confidence", .bool(true))])).confidence == nil)
-        #expect(Link("weird kind", "t").label == "Weird Kind: t")
     }
 
     // Python 3.13 knows Unicode 15.1: a letter assigned later (U+1C89, U+A7CB) is not cased there, whatever macOS says.

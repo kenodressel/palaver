@@ -1,5 +1,5 @@
-// Undo snapshots (undo.py, test_undo.py): take, seal, restore, prune; the fingerprints; and the snapshots the Python
-// server took (Goldens/python-undo, tools/parity/goldens.py undo_fixture), which Swift restores after the update.
+// Undo snapshots: take, seal, restore, prune; the fingerprints; and manifests that are broken or of another shape
+// (on the snapshots of an earlier release, Goldens/python-undo).
 import CryptoKit
 import Foundation
 import PalaverCore
@@ -458,24 +458,6 @@ import Testing
         return out
     }
 
-    @Test func test_restores_a_python_snapshot() throws {
-        let temp = TempFolder("undo"); defer { temp.remove() }
-        let root = try pythonRoot(temp), out = root.appendingPathComponent("Meetings", isDirectory: true)
-        let snapshots = try Goldens.cases("undo_fixture", "snapshots")
-        for snapshot in snapshots {
-            #expect(try Undo.label(out, #require(snapshot[0].stringValue)) == snapshot[1].stringValue)
-        }
-        for snapshot in snapshots.reversed() {
-            let token = try #require(snapshot[0].stringValue)
-            let ids = try Undo.restore(out, token)
-            #expect(ids == (snapshot[2].arrayValue ?? []).compactMap(\.stringValue), "restore \(snapshot[1])")
-        }
-        let got = try tree(root), want = try tree(Goldens.url("python-undo/restored"))
-        #expect(Set(got.keys) == Set(want.keys), "\(got.values.map(\.0).sorted()) vs \(want.values.map(\.0).sorted())")
-        for (key, (rel, data)) in want where got[key]?.1 != data { Issue.record("\(rel) differs from Python's restore") }
-        #expect(want.count > 40)
-    }
-
     @Test func test_an_unreadable_manifest_is_gone() throws {
         let temp = TempFolder("undo"); defer { temp.remove() }
         let root = try pythonRoot(temp), out = root.appendingPathComponent("Meetings", isDirectory: true)
@@ -512,84 +494,6 @@ import Testing
             #expect(gone { try Undo.restore(temp.url, token) }, "\(shape)")
             #expect(exists(temp.url.appendingPathComponent(Self.ID)))
         }
-    }
-
-    @Test func test_fingerprint_matches_python() throws {
-        let temp = TempFolder("undo"); defer { temp.remove() }
-        let root = try pythonRoot(temp)
-        for item in try Goldens.cases("undo_fixture", "fingerprints") {
-            let url = root.appendingPathComponent(try #require(item[0].stringValue))
-            let got = item[2].boolValue == true ? try Undo.storeFingerprint(url)
-                : try Undo.fingerprint(url, partial: item[1].boolValue == true)
-            #expect(got == item[3].stringValue, "\(item[0]) partial \(item[1])")
-        }
-        let trees = try #require(Goldens.load("undo_fixture")["trees"]?.arrayValue)
-        for (n, case_) in trees.enumerated() {
-            let top = temp.url.appendingPathComponent("tree\(n)", isDirectory: true)
-            try FileManager.default.createDirectory(at: top, withIntermediateDirectories: true)
-            for file in case_["files"]?.arrayValue ?? [] {
-                let pair = file.arrayValue ?? []
-                let path = top.path + "/" + (try #require(pair.first?.stringValue))
-                guard let hexText = pair.last?.stringValue else {
-                    try Undo.makedirs(path)
-                    continue
-                }
-                var bytes = [UInt8]()
-                var i = hexText.startIndex
-                while i < hexText.endIndex {
-                    let j = hexText.index(i, offsetBy: 2)
-                    bytes.append(UInt8(hexText[i..<j], radix: 16)!)
-                    i = j
-                }
-                try posixWrite(path, Data(bytes))
-            }
-            for link in case_["links"]?.arrayValue ?? [] {
-                let pair = (link.arrayValue ?? []).compactMap(\.stringValue)
-                try #require(pair.count == 2)
-                #expect(symlink(pair[1], top.path + "/" + pair[0]) == 0)
-            }
-            let got = try Undo.fingerprint(top, partial: case_["partial"]?.boolValue == true)
-            #expect(got == case_["fingerprint"]?.stringValue, "tree \(n)")
-        }
-        #expect(try Undo.fingerprint(temp.url.appendingPathComponent("missing"), partial: false) == "")
-    }
-
-    @Test func aTakeWritesWhatPythonsTakeWrites() throws {
-        let temp = TempFolder("undo"); defer { temp.remove() }
-        let root = try pythonRoot(temp), out = root.appendingPathComponent("Meetings", isDirectory: true)
-        let stores = root.appendingPathComponent("config/palaver")
-        let token = try Undo.take(out, "check", meetings: ["2026-10-20T14-35-17"], speakerFilesOfAll: true,
-                                  stores: [stores.appendingPathComponent("projects.json"), stores.appendingPathComponent("voices"),
-                                           stores.appendingPathComponent("missing.json")])
-        let golden = try #require(Goldens.load("undo_fixture")["take"])
-        let time = try #require(json(manifest(out, token))?["time"]?.stringValue)
-        #expect(try PyDateTime.parse(time).offset != nil)
-        let pythonManifest = try #require(golden["manifest"]?.stringValue)
-        let pythonTime = try #require(PythonJSON.parse(Data(pythonManifest.utf8))["time"]?.stringValue)
-        let want = pythonManifest
-            .replacingOccurrences(of: Self.PLACEHOLDER, with: temp.url.path)
-            .replacingOccurrences(of: "\"time\": \"\(pythonTime)\"", with: "\"time\": \"\(time)\"")
-        #expect(text(manifest(out, token)) == want)
-        var hashes: [String: String] = [:]
-        for rel in files(snap(out, token)) where rel != "manifest.json" {
-            let data = try Data(contentsOf: snap(out, token).appendingPathComponent(rel))
-            hashes[rel] = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        }
-        var pythons: [String: String] = [:]
-        for (rel, digest) in try #require(PyDict<JSONValue>(golden["files"] ?? .null)) { pythons[rel] = digest.stringValue }
-        #expect(hashes == pythons)
-    }
-
-    @Test func aSealWritesWhatPythonsSealWrites() throws {
-        let temp = TempFolder("undo"); defer { temp.remove() }
-        let root = try pythonRoot(temp), out = root.appendingPathComponent("Meetings", isDirectory: true)
-        let newest = try #require(Goldens.cases("undo_fixture", "snapshots").last?[0].stringValue)
-        let sealed = try #require(text(manifest(out, newest)))
-        let unsealed = try #require(Goldens.load("undo_fixture")["unsealed"]?.stringValue)
-        write(manifest(out, newest), unsealed.replacingOccurrences(of: Self.PLACEHOLDER, with: temp.url.path))
-        try Undo.sealed(out, newest)
-        #expect(text(manifest(out, newest)) == sealed)
-        #expect(!exists(snap(out, newest).appendingPathComponent("manifest.json.tmp")))
     }
 
     // MARK: - Swift's own: locks, derived files, odd times

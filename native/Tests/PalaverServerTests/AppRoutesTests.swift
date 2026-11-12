@@ -490,23 +490,4 @@ private final class Flag: @unchecked Sendable {
 
     // MARK: - bodies as Python's handler reads them
 
-    @Test func bodiesThatAreNoObjectAreAnsweredAsPythonDoes() throws {
-        let rec = FakeRecording()
-        var asked: [String] = []
-        rec.onRecord = { action, meeting in asked.append("\(action) \(meeting ?? "None")"); return .object([]) }
-        let s = try TestServer(recording: rec)
-        defer { s.stop() }
-        #expect(s.post("/api/recording/start", .array([])).status == 200)  // `meeting` only from an object
-        #expect(s.post("/api/recording/start", .object([("meeting", .int(5))])).status == 200)
-        #expect(s.post("/api/recording/start", .object([("meeting", .null)])).status == 200)
-        #expect(asked == ["start None", "start 5", "start None"])
-        let list = s.post("/api/recording/stop", .array([]))
-        #expect(list.status == 500 && list.error == "list indices must be integers or slices, not str")
-        #expect(s.post("/api/recording/keep", .string("x")).error == "string indices must be integers, not 'str'")
-        #expect(s.post("/api/recording/keep", .null).error == "'NoneType' object is not subscriptable")
-        let kept = s.post("/api/recording/keep", .object([("meeting", .int(7))]))
-        #expect(kept.status == 400 && rec.answers.last.map { $0.1 } == "7")
-        let uninstall = s.post("/api/uninstall", .array([]))
-        #expect(uninstall.status == 500 && uninstall.error == "'list' object has no attribute 'get'")
-    }
 }

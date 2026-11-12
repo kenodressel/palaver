@@ -1,52 +1,93 @@
 name: CI
 
+# The whole suite on every push to master and every pull request: the Swift tests, the e2e tests (Playwright's
+# WebKit against palaver-server), the page's JS tests, the release tooling and install.sh, and the long tests
+# (PALAVER_LONG_TESTS=1). On a Mac `make test` runs only the tests of what changed; here everything runs.
 on:
   push:
     branches: [master]
   pull_request:
     branches: [master]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   # Never re-resolve in CI: the suite runs against exactly what uv.lock says.
   UV_FROZEN: "1"
+  # The runner is the suite's alone: every core, no nice.
+  PALAVER_TEST_NICE: "0"
 
 jobs:
   test:
-    runs-on: macos-15  # Apple Silicon; the app needs macOS 15+
+    runs-on: macos-26  # Apple Silicon; the app needs macOS 15+, the package the newest Xcode
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install uv
-        # setup-uv publishes no major tags since v8 — pin the exact release.
-        uses: astral-sh/setup-uv@v10.2.0
+      - name: Select the newest Xcode
+        run: |
+          xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+          echo "SWIFT_TOOLCHAIN=$(swift --version 2>&1 | head -1 | tr -c 'A-Za-z0-9.' '-')" >> "$GITHUB_ENV"
+          echo "TEST_JOBS=$(sysctl -n hw.ncpu)" >> "$GITHUB_ENV"
 
-      - name: Install the developer tooling (tests, release build)
+      - name: Install uv
+        # setup-uv publishes no major tags since v8 — pin the exact release. Its cache holds the wheels.
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install the e2e runner (pytest, Playwright)
         run: uv sync --python 3.13 --extra dev
 
-      - name: Note the Swift toolchain
-        # Part of the cache key: a new Xcode on the runner must not restore a stale .build.
-        run: echo "SWIFT_TOOLCHAIN=$(swift --version 2>&1 | head -1 | tr -c 'A-Za-z0-9.' '-')" >> "$GITHUB_ENV"
-
-      - name: Cache the Swift engine's build
-        # Keyed on what decides the build: the Makefile (FluidAudio's tag),
-        # the package, and the scripts that fetch and patch FluidAudio.
+      - name: Cache Playwright's WebKit
+        id: webkit
         uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/ms-playwright
+          key: webkit-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock') }}
+
+      - name: Install WebKit for the e2e tests
+        if: steps.webkit.outputs.cache-hit != 'true'
+        run: uv run --extra dev python -m playwright install webkit
+
+      - name: Restore the tests' build
+        # SwiftPM's checkouts, the tests' build (native/.build/test) and the patched FluidAudio (vendor/), about 4.5 GB.
+        # Keyed on the toolchain and the dependencies: new sources start from the newest build and build only what
+        # changed. Only master saves one (below): GitHub keeps 10 GB of caches per repository.
+        id: build-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             native/vendor
-            native/.build
-          key: engine-${{ runner.os }}-${{ runner.arch }}-${{ env.SWIFT_TOOLCHAIN }}-${{ hashFiles('Makefile', 'native/Package.swift', 'tools/fetch_nemo.sh', 'tools/patch_fluidaudio.py') }}
+            native/.build/checkouts
+            native/.build/repositories
+            native/.build/test
+          key: test-build-${{ runner.os }}-${{ runner.arch }}-${{ env.SWIFT_TOOLCHAIN }}-${{ hashFiles('Makefile', 'native/Package.swift', 'native/Package.resolved', 'tools/fetch_nemo.sh', 'tools/patch_fluidaudio.py') }}-${{ github.sha }}
+          restore-keys: |
+            test-build-${{ runner.os }}-${{ runner.arch }}-${{ env.SWIFT_TOOLCHAIN }}-${{ hashFiles('Makefile', 'native/Package.swift', 'native/Package.resolved', 'tools/fetch_nemo.sh', 'tools/patch_fluidaudio.py') }}-
 
-      - name: Build the Swift engine
-        run: make engine
+      - name: Build the tests
+        run: make test-build
 
-      - name: Run the engine once
-        # The suite uses a fake engine; this proves the built binary starts and answers.
-        run: printf '{"id":1,"cmd":"hello"}\n' | native/.build/release/palaver-engine --version ci | grep -q '"ok":true'
+      - name: Save the tests' build
+        # Before the tests: a failing test still leaves the build for the next run.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            native/vendor
+            native/.build/checkouts
+            native/.build/repositories
+            native/.build/test
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
 
-      - name: Install WebKit for the end-to-end tests
-        # tests/e2e drive the Meetings window's page in Playwright's WebKit.
-        run: uv run --extra dev python -m playwright install webkit
-
-      - name: Run tests
-        run: make test
+      - name: Run every test, the long ones too
+        run: make test-long

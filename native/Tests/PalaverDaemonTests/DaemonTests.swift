@@ -834,7 +834,7 @@ extension DaemonTicks {
     }
 }
 
-extension DaemonTicks {
+extension DaemonTicksB {
     @Suite struct DaemonManualTests {
         @Test func manualRecordingAsksOnceWhenItsCallEndsAndNeverStopsItself() async throws {
             let h = try Harness(tempDir(), activity: teams { 20 <= $0 && $0 < 300 })
@@ -922,7 +922,7 @@ extension DaemonTicks {
     }
 }
 
-extension DaemonTicks {
+extension DaemonTicksC {
     @Suite struct DaemonSilentCallTests {
         @Test func aHuddleTakenOnThePhoneIsAskedAboutThenStopped() async throws {
             let r = try HeldRig(tempDir(), slack: [(10, 1e6)])

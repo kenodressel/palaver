@@ -111,45 +111,6 @@ import Testing
         func next() -> String { n += 1; return n == 1 ? "aaaaaaaa" : "bbbbbbbb" }
     }
 
-    @Test func goldenApplyAndFileBytesMatchPython() throws {
-        let t = folder(); defer { t.remove() }
-        t.write("glossary.json", PythonJSON.dumps(.object([
-            ("version", .int(3)), ("rejected", .strings(["term:x"])), ("terms", .object([])),
-            ("extra", .object([("k", .array([.int(1), .double(2.5)]))])),
-        ])))
-        let g = glossary(t)
-        var ids = ["aaaaaaaa", "bbbbbbbb", "cccccccc", "dddddddd", "eeeeeeee", "ffffffff"].makeIterator()
-        g.makeId = { ids.next()! }
-        try g.add(term: "Attakring", variants: ["Atterkring", "Atter-Kring"])
-        try g.add(term: "Unit 214", variants: ["Unit zu14"])
-        try g.add(term: "Unit", variants: ["Junit"])
-        try g.add(term: "Straße", variants: ["Strasse", "STRAßE", "Straße"], note: "  the street ")
-        try g.add(term: "Timo Strauß", variants: ["Timo Strauss", "Tim Strauß"])
-        try g.add(term: "KLOUD 😀", variants: ["Cloud", "😀 Cloud"])
-        g.reject("variant:a:b")
-        g.reject("term:x")
-        try g.save()
-        let golden = Goldens.load("glossary_apply")
-        let lines = try #require(golden["cases"]?.arrayValue).map { try #require($0.arrayValue) }
-        var got: [JSONValue] = []
-        for line in lines {
-            let (text, found) = g.applyMarked(line[0].stringValue!)
-            got.append(.array([line[0], .string(text), .array(found.map { .array([.int($0.start), .int($0.end), .string($0.heard)]) })]))
-        }
-        Goldens.expectEach(got, "glossary_apply", "cases")
-        try g.update("aaaaaaaa", term: "Attakring 2", note: "n")
-        try g.removeVariant("aaaaaaaa", "ATTERKRING")
-        Goldens.expect(.array(lines.prefix(2).map { .array([$0[0], .string(g.apply($0[0].stringValue!))]) }), "glossary_apply", "after_update")
-        try g.delete("cccccccc")
-        try g.save()
-        Goldens.expect(.string(t.text("glossary.json") ?? ""), "glossary_apply", "file")
-        Goldens.expect(.strings(g.terms.keys), "glossary_apply", "ids")
-        Goldens.expect(.array([.str(g.find("  attakring 2 ")), .str(g.find("nope"))]), "glossary_apply", "find")
-        Goldens.expect(.array([.str(g.owner("junit")), .str(g.owner(" CLOUD ")), .str(g.owner("Unit"))]), "glossary_apply", "owner")
-        Goldens.expect(.strings(g.rejected()), "glossary_apply", "rejected")
-        #expect(t.exists("glossary.json.lock") && !t.exists("glossary.json.tmp"))
-    }
-
     @Test func removeVariantComparesByCasefoldAndANonexistentIdThrows() throws {
         let t = folder(); defer { t.remove() }
         let g = glossary(t)

@@ -9,9 +9,8 @@ import PalaverCore
 import PalaverDomain
 @testable import PalaverServer
 
-/// native/.build/debug/palaver-cli (built with the tests).
-private let cliBinary = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-    .deletingLastPathComponent().appendingPathComponent(".build/debug/palaver-cli").path
+/// palaver-cli, built with the tests.
+private let cliBinary = builtProgram("palaver-cli")
 
 /// A home under /tmp with config.toml (its own recordings) and a copy of palaver-cli in a fake Palaver.app, linked
 /// from `~/.local/bin/palaver` as install.sh links it.

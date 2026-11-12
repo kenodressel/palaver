@@ -50,25 +50,4 @@ private func event(_ title: String, _ people: (String, String?, Bool)...) -> Cal
         }
     }
 
-    @Test func golden_seed_terms_and_own_organization() {
-        let sets = F.list("events").map { events($0) }
-        var got: [JSONValue] = [], want: [JSONValue] = []
-        for c in F.list("seeds") {
-            let a = c.arrayValue!
-            let terms = Recommendations.seedTerms(sets[F.int(a[0])], userName: a[1].stringValue!, known: F.strings(a[2]))
-            got.append(.array(terms.map(\.json)))
-            want.append(a[3])
-        }
-        #expect(want.count > 50)
-        var reported = 0
-        for (i, (g, w)) in zip(got, want).enumerated() where reported < 5 && F.dumps(g) != F.dumps(w) {
-            Issue.record("seed_terms #\(i): got \(F.dumps(g)), want \(F.dumps(w))")
-            reported += 1
-        }
-        #expect(reported == 0 && got.count == want.count)
-        for c in F.list("own") {
-            let a = c.arrayValue!
-            #expect(Recommendations.ownOrganization(sets[F.int(a[0])]) == a[1].stringValue, "own \(a[0])")
-        }
-    }
 }

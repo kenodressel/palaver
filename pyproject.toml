@@ -14,7 +14,7 @@ dev = [
     "pytest>=7.0",
     "pytest-xdist>=3.8.0",
     "playwright>=1.48",
-    # The e2e tests' synthetic recordings and the Swift tests' Opus check (soundfile reads what Swift wrote).
+    # The e2e tests' synthetic recordings (numpy, soundfile).
     "numpy>=1.24",
     "soundfile>=0.12",
     # An image in the e2e tests (my notes).
@@ -30,5 +30,6 @@ package = false
 markers = [
     "integration: hits real models or external services; default-skip",
     "e2e: drives the Meetings window in Playwright's WebKit; skipped when WebKit is not installed",
+    "long: real model work or minutes of it; runs with PALAVER_LONG_TESTS=1 (make test-long, CI)",
 ]
 addopts = "-m 'not integration' -p pytester"

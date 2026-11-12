@@ -67,7 +67,7 @@ let package = Package(
         // The `palaver` command (phase 4; bin/palaver in the bundle): `palaver mcp`, Claude's tools over stdio.
         .executableTarget(name: "palaver-cli", dependencies: ["PalaverServer"], swiftSettings: v5),
         .testTarget(name: "PalaverServerTests", dependencies: ["PalaverServer", "PalaverDomain", "PalaverCore", "PalaverCloud"],
-                    resources: [.copy("Fixtures")], swiftSettings: v5),
+                    swiftSettings: v5),
         // The pipeline's worker (phase 3): `palaver-worker <cmd> …`, the port of `palaver process|run|live|stream|coach|
         // index`, `calendar attach` and `app query`; the speech engine runs in its process.
         // WebRTC echo cancellation (libraven_aec): the prebuilt archives force-loaded, the header in place.

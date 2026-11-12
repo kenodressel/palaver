@@ -329,3 +329,13 @@ final class PythonKeychain {
                              kSecMatchSearchList: [keychain] as CFArray] as CFDictionary, nil) == errSecSuccess
     }
 }
+
+/// A program built with this test bundle: next to it in the products folder of whichever build ran the tests
+/// (native/.build/test/debug for `make test`, native/.build/debug for `swift test`).
+func builtProgram(_ name: String) -> String {
+    var info = Dl_info()
+    guard dladdr(#dsohandle, &info) != 0, let file = info.dli_fname else { return name }
+    var url = URL(fileURLWithPath: String(cString: file))  // <products>/<Bundle>.xctest/Contents/MacOS/<Bundle>
+    for _ in 0..<4 { url.deleteLastPathComponent() }
+    return url.appendingPathComponent(name).path
+}

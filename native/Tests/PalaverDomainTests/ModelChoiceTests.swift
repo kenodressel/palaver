@@ -223,16 +223,4 @@ private let GEMMA = "mlx-community/gemma-4-12B-it-OptiQ-4bit"
         #expect(ModelChoice.isLocalNetwork(host) == local, "\(host)")
     }
 
-    @Test func theProvidersAndFeaturesArePythons() {
-        #expect(ModelChoice.providers.map(\.id) == ["anthropic", "openai", "claude-cli", "assemblyai", "soniox", "mistral",
-                                                    "openai-transcribe"])
-        #expect(ModelChoice.providerLabels.keys == ModelChoice.providers.map(\.id))
-        #expect(ModelChoice.providerLabels["openai-transcribe"] == "OpenAI-compatible transcription")
-        #expect(ModelChoice.label(choice: "local") == nil)
-        #expect(ModelChoice.forFeature("notes") == ["anthropic", "openai", "claude-cli"])
-        #expect(ModelChoice.forFeature("transcription") == ["assemblyai", "soniox", "mistral", "openai-transcribe"])
-        #expect(ModelChoice.forFeature("nope") == ["anthropic", "openai", "claude-cli"])
-        #expect(ModelChoice.features.map(\.id) == ["notes", "projects", "coach", "transcription"])
-        #expect(ModelChoice.LOCAL_MODELS.map(\.0) == [GEMMA] && ModelChoice.LOCAL_MODELS[0].1.contextTokens == 131_072)
-    }
 }

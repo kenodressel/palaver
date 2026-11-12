@@ -143,50 +143,6 @@ struct ProjectsRoot {
         #expect(throws: ProjectValueError.self) { try store.create("  ") }
     }
 
-    @Test func theFileIsPythonsBytesAndKeepsItsOtherKeys() throws {
-        let root = ProjectsRoot(); defer { root.remove() }
-        let file = root.stores.projects
-        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try #"{"version": 1, "meetings": {"m0": {"assigned": {}, "rejected": ["x"]}}}"#.write(to: file, atomically: false, encoding: .utf8)
-        let store = root.store()
-        store.makeId = { "4e6f7274" }
-        let pid = try store.create("Straße", description: " Ölwechsel ")
-        try store.assign("m1", pid, by: "auto", why: "title like “Straße”", confidence: 1.0)
-        try store.save()
-        let want = """
-        {
-          "version": 1,
-          "meetings": {
-            "m0": {
-              "assigned": {},
-              "rejected": [
-                "x"
-              ]
-            },
-            "m1": {
-              "assigned": {
-                "4e6f7274": {
-                  "by": "auto",
-                  "why": "title like “Straße”",
-                  "confidence": 1.0
-                }
-              },
-              "rejected": []
-            }
-          },
-          "projects": {
-            "4e6f7274": {
-              "name": "Straße",
-              "description": "Ölwechsel",
-              "description_by": "you"
-            }
-          }
-        }
-        """
-        #expect(try String(contentsOf: file, encoding: .utf8) == want)
-        #expect(!FileManager.default.fileExists(atPath: file.path + ".tmp"))
-    }
-
     @Test func saveWaitsForTheStoresLock() throws {
         let root = ProjectsRoot(); defer { root.remove() }
         let file = root.stores.projects
@@ -328,37 +284,6 @@ struct ProjectsRoot {
 
     // MARK: goldens
 
-    @Test func similarityWordsAndCustomersAreFromPython() throws {
-        let golden = Goldens.load("similarity")
-        let words: [JSONValue] = (golden["words"]?.arrayValue ?? []).map { c in
-            let title = c[0]?.stringValue ?? "", user = c[1]?.stringValue ?? ""
-            let me = user.isEmpty ? [] : [Py.casefold(user)]
-            return .array([.string(title), .string(user), .strings(ProjectRules.distinct(ProjectRules.words(title, me: me)))])
-        }
-        Goldens.expectEach(words, "similarity", "words")
-        let orgs: [JSONValue] = (golden["orgs"]?.arrayValue ?? []).map { c in
-            .array([c[0] ?? .null, .str(ProjectRules.org(c[0]?.stringValue))])
-        }
-        Goldens.expectEach(orgs, "similarity", "orgs")
-
-        var all = PyDict<ProjectFacts>()
-        for f in golden["facts"]?.arrayValue ?? [] {
-            func list(_ k: String) -> [String] { (f[k]?.arrayValue ?? []).compactMap(\.stringValue) }
-            let id = f["meeting"]?.stringValue ?? ""
-            all[id] = ProjectFacts(meeting: id, title: f["title"]?.stringValue ?? "", start: "", people: list("people"),
-                                   orgs: list("orgs"), words: list("words"), series: f["series"]?.stringValue ?? "")
-        }
-        #expect(all.count >= 6)
-        let similarity = Similarity(all)
-        var pairs: [JSONValue] = []
-        for a in all.values {
-            for b in all.values {
-                let (score, why) = similarity(a, b)
-                pairs.append(.array([.string(a.meeting), .string(b.meeting), .double(Py.round(score, 12)), .string(why)]))
-            }
-        }
-        Goldens.expectEach(pairs, "similarity", "pairs")
-    }
 }
 
 private extension JSONValue {

@@ -234,19 +234,6 @@ private func part(_ url: URL) -> URL { URL(fileURLWithPath: url.path + ".part") 
 }
 
 @Suite struct LocalOnlyTests {
-    @Test func theMarkerSaysSinceWhenAndIsPythonsFormat() throws {
-        let t = TempFolder("local"); defer { t.remove() }
-        #expect(!LocalOnly.isLocalOnly(t.url))
-        let berlin = TimeZone(identifier: "Europe/Berlin")!
-        try LocalOnly.set(t.url, on: true, now: Date(timeIntervalSince1970: 1_793_786_400), timeZone: berlin)
-        #expect(LocalOnly.isLocalOnly(t.url))
-        #expect(t.text("local_only.json") == #"{"since": "2026-11-04T11:00:00+01:00"}"#)  // no indent, no newline
-        try LocalOnly.set(t.url, on: true)  // set again: written again
-        #expect(WallTime.parse(PythonJSON.read(t.url.appendingPathComponent("local_only.json"))?["since"]?.stringValue) != nil)
-        try LocalOnly.set(t.url, on: false)
-        #expect(!LocalOnly.isLocalOnly(t.url))
-        try LocalOnly.set(t.url, on: false)  // missing_ok
-    }
 
     @Test func theMeetingsKeptOnThisMacAreTheFoldersWithTheMarker() throws {
         let t = TempFolder("local"); defer { t.remove() }

@@ -5,9 +5,13 @@ import PalaverCore
 import Testing
 @testable import PalaverDaemon
 
-/// The suites that tick a daemon thousands of times run one test at a time: in parallel they
-/// would keep the cooperative pool busy for seconds, and app.sock's tests need it.
+/// The suites that tick a daemon thousands of times run one test at a time in each of four groups: all in parallel
+/// they would keep the cooperative pool busy for seconds, and app.sock's tests need it; all in one line they take
+/// half a minute.
 @Suite(.serialized) struct DaemonTicks {}
+@Suite(.serialized) struct DaemonTicksB {}
+@Suite(.serialized) struct DaemonTicksC {}
+@Suite(.serialized) struct DaemonTicksD {}
 
 /// The wall clock at the fake clock's 0: what daemon.json and the status show.
 let WALL0 = WallTime.parse("2026-10-29T12:06:00+01:00")!

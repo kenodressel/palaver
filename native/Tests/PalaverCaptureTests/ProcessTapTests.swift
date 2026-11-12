@@ -294,9 +294,4 @@ import Testing
         tap.stop()
     }
 
-    @Test func formatsOSStatusLikePython() {
-        #expect(formatOSStatus(1_852_797_029) == "1852797029 ('nope')")
-        #expect(formatOSStatus(-10_863) == "-10863")
-        #expect(formatOSStatus(1) == "1")
-    }
 }

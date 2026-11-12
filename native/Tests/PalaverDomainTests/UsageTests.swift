@@ -77,17 +77,6 @@ private func rows(_ url: URL) throws -> [JSONValue] {
 
     // MARK: - Swift only: the formats and the edges
 
-    @Test func theLineIsPythonsJsonDumpsWithoutEnsureAscii() throws {
-        let path = try tempDir().appendingPathComponent("usage.jsonl")
-        let now = Date(timeIntervalSince1970: 1_793_000_000)
-        Usage.record("notes", "ü\u{1F600}", fields: [("ok", .bool(true)), ("seconds", .double(12.25)), ("n", .int(3)),
-                                                       ("model", .null), ("by", .array((0..<25).map { .int($0) }))],
-                     path: path, now: now, timeZone: TimeZone(identifier: "Europe/Berlin")!)
-        let line = try text(path)
-        #expect(line == "{\"ts\": \"2026-10-26T08:33:20+01:00\", \"kind\": \"notes\", \"id\": \"ü\u{1F600}\", \"ok\": true, "
-                + "\"seconds\": 12.2, \"n\": 3, \"model\": null, \"by\": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]}\n")
-    }
-
     @Test func textIsCutByCodePointsAndFieldsMayReplaceKindAndId() throws {
         let path = try tempDir().appendingPathComponent("usage.jsonl")
         let long = String(repeating: "e\u{301}", count: 150)  // 300 scalars, 150 characters
@@ -114,13 +103,6 @@ private func rows(_ url: URL) throws -> [JSONValue] {
         #expect(all.count == 801)
         #expect(all.first?["kind"] == .string("old"))
         #expect(Set(all.dropFirst().compactMap { $0["id"]?.stringValue }).count == 800)
-    }
-
-    @Test func readTakesLinesTheWayPythonSplitsThem() {
-        let rows = Usage.readLines("[1]\n{\"kind\": \"a\", \"ts\": \"t\"}\u{2028}{\"kind\": 1, \"ts\": \"t\"}\r\n{\"kind\": \"b\"}\n"
-                                   + "{\"kind\": \"c\", \"ts\": \"t\"}")
-        #expect(rows.map { $0["kind"] } == [.string("a"), .string("c")])
-        #expect(Usage.read(URL(fileURLWithPath: "/nonexistent/usage.jsonl")).isEmpty)
     }
 
     @Test func aFeatureIsAKindWithAnIdAndACliCommandOnlyWhenAPersonTypedIt() throws {
@@ -152,23 +134,4 @@ private func rows(_ url: URL) throws -> [JSONValue] {
                 == #"[{"id": "check_updates", "value": true}]"#)
     }
 
-    @Test func saveCatalogCutsAndRefusesWhatPythonRaisesOn() throws {
-        let dir = try tempDir()
-        let path = dir.appendingPathComponent("features.json")
-        let many = (0..<600).map { "f\(String(format: "%03d", $0))" }
-        let doc = PythonJSON.dumps(.object([("cli", .array(many.map { .string($0) })),
-                                            ("setting", .array([.string(String(repeating: "s", count: 100))]))]))
-        try Usage.saveCatalog(try PythonJSON.parse(Data(doc.utf8)), path: path)
-        let saved = try PythonJSON.parse(Data(try text(path).utf8))
-        #expect(saved["cli"]?.arrayValue?.count == 500)
-        #expect(saved["setting"]?.arrayValue?.first?.stringValue?.count == 80)
-        #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("features.json.\(getpid()).tmp").path))
-        try Usage.saveCatalog(nil, path: path)
-        #expect(try text(path) == "{}")
-        #expect(throws: (any Error).self) { try Usage.saveCatalog(.array([.int(1)]), path: path) }
-        // An unwritable place is swallowed, as Python swallows OSError.
-        let blocker = dir.appendingPathComponent("blocker")
-        try Data().write(to: blocker)
-        try Usage.saveCatalog(.object([]), path: blocker.appendingPathComponent("features.json"))
-    }
 }

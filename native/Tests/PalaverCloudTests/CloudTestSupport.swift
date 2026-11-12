@@ -162,6 +162,7 @@ final class StubServer: @unchecked Sendable {
         if got.method != "HEAD" { out.append(a.body.prefix(a.sendOnly ?? a.body.count)) }  // a HEAD's answer has no body
         _ = out.withUnsafeBytes { write(c, $0.baseAddress!, out.count) }
         if let stall = a.stall { _ = stall.wait(timeout: .now() + 10) }
+        if a.sendOnly != nil { Thread.sleep(forTimeInterval: 0.3) }  // a cut: the client reads what came before it ends
         // A graceful close: what was written arrives before the end (an abrupt one may reset it away).
         shutdown(c, SHUT_WR)
         var wait = timeval(tv_sec: 2, tv_usec: 0)

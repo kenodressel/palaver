@@ -100,9 +100,14 @@ public final class VoiceActivity {
     private var decided: [Question] = []
     private var seen: Set<Double> = []
 
-    public init(start: Double = 0.0) {
+    /// The talk share's window and how long turns are kept (the defaults; tests take shorter ones).
+    let window: Double, keep: Double
+
+    public init(start: Double = 0.0, window: Double = WINDOW_SECONDS, keep: Double = KEEP_SECONDS) {
         t = start
         self.start = start
+        self.window = window
+        self.keep = keep
     }
 
     // MARK: frames
@@ -223,8 +228,8 @@ public final class VoiceActivity {
             longest = max(longest, s.end - s.start)
         }
         if Int((t / Self.FRAME_SECONDS).rounded()) % 100 == 0 {
-            me.prune(before: t - Self.KEEP_SECONDS)
-            others.prune(before: t - Self.KEEP_SECONDS)
+            me.prune(before: t - keep)
+            others.prune(before: t - keep)
         }
     }
 
@@ -247,12 +252,12 @@ public final class VoiceActivity {
             if q.answered || q.keptTalking {
                 decided.append(q)
                 if decided.count > Self.QUESTIONS_KEPT { decided.removeFirst() }
-            } else if t - at <= Self.KEEP_SECONDS {
+            } else if t - at <= keep {
                 still.append(at)
             }
         }
         waitingQuestions = still
-        seen = seen.filter { t - $0 <= 2 * Self.KEEP_SECONDS }.union(waitingQuestions)
+        seen = seen.filter { t - $0 <= 2 * keep }.union(waitingQuestions)
     }
 
     private func question(_ at: Double) -> Question {
@@ -275,7 +280,7 @@ public final class VoiceActivity {
     /// Who talks and for how long (the status's `talk`, voice_activity.py's keys).
     public func snapshot() -> JSONValue {
         let now = t
-        let since = max(start, now - Self.WINDOW_SECONDS)
+        let since = max(start, now - window)
         let mySeconds = me.seconds(since: since), theirSeconds = others.seconds(since: since)
         let speaking: JSONValue
         switch (me.talking, others.talking) {

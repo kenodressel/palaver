@@ -1,5 +1,5 @@
-// The goldens the Python app's tools/parity/goldens.py wrote (Goldens/<section>.json, or <section>.json.gz past
-// 100 KB); frozen since the Python app left the repository (0.6.0: git history has the script). A golden is compared as text: PythonJSON.dumps of both sides, byte for byte, so key order and 1 vs
+// Frozen fixtures (Goldens/<section>.json, or <section>.json.gz past 100 KB): exports and an undo folder earlier
+// releases wrote, the reference tokenizer's ids. A golden is compared as text: PythonJSON.dumps of both sides, byte for byte, so key order and 1 vs
 // 1.0 count. Never `JSONValue ==`.
 import Foundation
 import PalaverCore

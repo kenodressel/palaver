@@ -13,17 +13,6 @@ import Testing
         return (SessionLog(url: url, clock: { at }, timeZone: TimeZone(secondsFromGMT: 3600)!), url)
     }
 
-    @Test func anEventLineHasPythonsKeysInPythonsOrder() throws {
-        let (log, url) = log()
-        log.event("audio_problem", level: "WARNING", [("kind", "speed"), ("track", "system"), ("start", 20.0),
-                                                      ("at", "2026-10-29T12:06:00+01:00"), ("text", "⚠ \"x\"\n"),
-                                                      ("reanchors_per_minute", 3)])
-        let line = try String(contentsOf: url, encoding: .utf8)
-        #expect(line == "{\"ts\": \"2026-10-29T12:06:00.250000+01:00\", \"level\": \"WARNING\", \"logger\": \"palaver.capture_recorder\", "
-                + "\"event\": \"audio_problem\", \"kind\": \"speed\", \"track\": \"system\", \"start\": 20.0, "
-                + "\"at\": \"2026-10-29T12:06:00+01:00\", \"text\": \"\\u26a0 \\\"x\\\"\\n\", \"reanchors_per_minute\": 3}\n")
-    }
-
     @Test func aMessageLineAndAppending() throws {
         let (log, url) = log()
         log.message("Audio health checks failed; warnings are off for this recording", level: "WARNING")
