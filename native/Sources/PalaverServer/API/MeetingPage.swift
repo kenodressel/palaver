@@ -72,7 +72,8 @@ extension MeetingsAPI {
                 ("track", .string(u.heardAs?.track ?? (l == nil ? "mic" : "others"))),
             ])
         }
-        var page = PyDict<JSONValue>([
+        // A typed literal: untyped, the type checker gives up on a slower Mac (CI).
+        let fields: [(String, JSONValue)] = [
             ("id", .string(id)),
             ("title", .str(title)),
             ("title_from", .str(titleFrom)),
@@ -87,7 +88,7 @@ extension MeetingsAPI {
             // Not transcribed (failed.json): why, for Transcribe Again; "failure" below is the log's, for a report.
             ("untranscribed", exists(paths.transcriptJson) ? .null : ProcessState.read(paths) ?? .null),
             // The notes model wrote from the transcript as heard: spell names right.
-            ("notes", notes.map { $0.truthy ? glossary.applyTo(Notes.withNames($0, display)) : .null } ?? .null),
+            ("notes", notes.map { n -> JSONValue in n.truthy ? glossary.applyTo(Notes.withNames(n, display)) : .null } ?? .null),
             ("notes_stale", .bool(stale != nil)),
             ("notes_stale_reason", .str(stale)),
             // Written with the user's own notes in the prompt (#44): an export asks before they go (#58).
@@ -107,11 +108,12 @@ extension MeetingsAPI {
             ("silence", status == "ready" ? .array(try Cutting.suggestTrim(paths)) : .array([])),
             ("shared", shared(app, paths, event)),
             ("shared_suggestion", try SharedMic.suggestion(paths, event: event, userName: userName)
-                .map { .object([("why", .string($0))]) } ?? .null),
-            ("removed", .array(Speakers.loadIgnored(paths).map {
-                .object([("label", .string($0)), ("display", .string(labelDisplay($0)))])
+                .map { why -> JSONValue in .object([("why", .string(why))]) } ?? .null),
+            ("removed", .array(Speakers.loadIgnored(paths).map { label -> JSONValue in
+                .object([("label", .string(label)), ("display", .string(labelDisplay(label)))])
             })),
-        ])
+        ]
+        var page = PyDict<JSONValue>(fields)
         for (k, v) in try recorded(paths, meta) { page[k] = v }
         for (k, v) in try meetingProjects(app, id) { page[k] = v }
         return page

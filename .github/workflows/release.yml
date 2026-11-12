@@ -117,6 +117,7 @@ jobs:
           xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
           sudo xcode-select -s "$xcode"
           xcodebuild -version
+          echo "SWIFT_TOOLCHAIN=$(swift --version 2>&1 | head -1 | tr -c 'A-Za-z0-9.' '-')" >> "$GITHUB_ENV"
 
       - name: Metal toolchain (MLX's shaders in palaver-lm)
         # make lm compiles them with xcodebuild; newer Xcodes ship the Metal compiler as a separate download.
@@ -127,6 +128,23 @@ jobs:
 
       - name: Install the developer tooling (the release build; .venv's Python runs the old releases' updaters)
         run: uv sync --python 3.13 --extra dev
+
+      - name: Restore the release build
+        # Made by ci.yml's release-build on master (a tag's run may restore master's caches): the release compiles
+        # only what changed since. Restore only: a tag's own cache would serve no later run.
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            native/vendor
+            native/.build/checkouts
+            native/.build/repositories
+            native/.build/release
+            native/.build/arm64-apple-macosx
+            native/.build/out
+            native/.build/xcode
+          key: release-build-${{ runner.os }}-${{ runner.arch }}-${{ env.SWIFT_TOOLCHAIN }}-${{ hashFiles('Makefile', 'native/Package.swift', 'native/Package.resolved', 'tools/fetch_nemo.sh', 'tools/patch_fluidaudio.py') }}-${{ github.sha }}
+          restore-keys: |
+            release-build-${{ runner.os }}-${{ runner.arch }}-${{ env.SWIFT_TOOLCHAIN }}-${{ hashFiles('Makefile', 'native/Package.swift', 'native/Package.resolved', 'tools/fetch_nemo.sh', 'tools/patch_fluidaudio.py') }}-
 
       - name: Import the signing certificate into a temporary keychain
         # tools/release_keychain.sh prints no secret (no set -x here); it puts the keychain on the search list,

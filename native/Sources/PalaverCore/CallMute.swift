@@ -192,13 +192,15 @@ public enum TeamsMuteLog {
 
     /// The log Teams writes now: the newest by name (its date), then by modification time.
     public static func current(in dir: URL, fm: FileManager = .default) throws -> URL? {
-        let names = try fm.contentsOfDirectory(atPath: dir.path)
-            .filter { $0.hasPrefix(filePrefix) && $0.hasSuffix(".log") }
+        let all: [String] = try fm.contentsOfDirectory(atPath: dir.path)
+        let names: [String] = all.filter { (n: String) -> Bool in n.hasPrefix(filePrefix) && n.hasSuffix(".log") }
         func mtime(_ n: String) -> Date {
-            (try? fm.attributesOfItem(atPath: dir.appendingPathComponent(n).path)[.modificationDate] as? Date) ?? .distantPast
+            let attributes = try? fm.attributesOfItem(atPath: dir.appendingPathComponent(n).path)
+            return (attributes?[.modificationDate] as? Date) ?? .distantPast
         }
-        let newest = names.map { ($0, mtime($0)) }.max { a, b in a.0 != b.0 ? a.0 < b.0 : a.1 < b.1 }
-        return newest.map { dir.appendingPathComponent($0.0) }
+        let dated: [(name: String, time: Date)] = names.map { (n: String) -> (name: String, time: Date) in (n, mtime(n)) }
+        let newest = dated.max { (a, b) -> Bool in a.name != b.name ? a.name < b.name : a.time < b.time }
+        return newest.map { dir.appendingPathComponent($0.name) }
     }
 }
 

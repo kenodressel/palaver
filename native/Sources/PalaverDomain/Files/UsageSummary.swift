@@ -91,38 +91,47 @@ extension Usage {
             }
         }.reduce(0, +) / 60
         let names = features.keys.sorted()
-        return .object([
+        // In typed parts: one literal of all of it is more than the type checker manages on a slower Mac (CI).
+        let since: JSONValue = times.min().map { JSONValue.string(iso($0)) } ?? .null
+        let featureFields: [(String, JSONValue)] = names.map { n -> (String, JSONValue) in
+            let c = features[n]!
+            return (n, .object([("7d", .int(c.week)), ("30d", .int(c.month)), ("all", .int(c.all))]))
+        }
+        let triggers: [String] = stops.map { text($0["trigger"]) ?? "unknown" }
+        let recordings: [(String, JSONValue)] = [
+            ("count", .int(stops.count)),
+            ("minutes", .double(Py.round(minutes, 1))),
+            ("by_trigger", counts(triggers)),
+        ]
+        let models: [String] = notes.map { n -> String in "\(text(n["engine"]) ?? "?") \(text(n["model"]) ?? "?")" }
+        let notesFields: [(String, JSONValue)] = [
+            ("runs", .int(notes.count)),
+            ("ok", .int(notes.filter(ok).count)),
+            ("failed", .int(notes.filter { !ok($0) }.count)),
+            ("median_seconds", median(seconds(notes))),
+            ("by_model", counts(models)),
+        ]
+        let processFields: [(String, JSONValue)] = [
+            ("runs", .int(process.count)),
+            ("ok", .int(process.filter(ok).count)),
+            ("failed", .int(process.filter { !ok($0) }.count)),
+            ("median_seconds", median(seconds(process))),
+        ]
+        let lastErrors: [JSONValue] = errors.suffix(20).map { e -> JSONValue in
+            .object([("ts", e["ts"] ?? .null), ("text", e["text"] ?? .null)])
+        }
+        let fields: [(String, JSONValue)] = [
             ("generated", .string(iso(now))),
             ("events", .int(events.count)),
-            ("since", times.min().map { .string(iso($0)) } ?? .null),
-            ("features", .object(names.map { n in
-                let c = features[n]!
-                return (n, .object([("7d", .int(c.week)), ("30d", .int(c.month)), ("all", .int(c.all))]))
-            })),
+            ("since", since),
+            ("features", .object(featureFields)),
             ("never_used", .strings(known.subtracting(names).sorted())),
             ("unused_30d", .strings(known.subtracting(names.filter { features[$0]!.month > 0 }).sorted())),
-            ("recordings", .object([("30d", .object([
-                ("count", .int(stops.count)),
-                ("minutes", .double(Py.round(minutes, 1))),
-                ("by_trigger", counts(stops.map { text($0["trigger"]) ?? "unknown" })),
-            ]))])),
-            ("notes", .object([("30d", .object([
-                ("runs", .int(notes.count)),
-                ("ok", .int(notes.filter(ok).count)),
-                ("failed", .int(notes.filter { !ok($0) }.count)),
-                ("median_seconds", median(seconds(notes))),
-                ("by_model", counts(notes.map { "\(text($0["engine"]) ?? "?") \(text($0["model"]) ?? "?")" })),
-            ]))])),
-            ("process", .object([("30d", .object([
-                ("runs", .int(process.count)),
-                ("ok", .int(process.filter(ok).count)),
-                ("failed", .int(process.filter { !ok($0) }.count)),
-                ("median_seconds", median(seconds(process))),
-            ]))])),
-            ("errors", .object([("30d", .int(errors.count)),
-                                ("last", .array(errors.suffix(20).map { e in
-                                    .object([("ts", e["ts"] ?? .null), ("text", e["text"] ?? .null)])
-                                }))])),
-        ])
+            ("recordings", .object([("30d", .object(recordings))])),
+            ("notes", .object([("30d", .object(notesFields))])),
+            ("process", .object([("30d", .object(processFields))])),
+            ("errors", .object([("30d", .int(errors.count)), ("last", .array(lastErrors))])),
+        ]
+        return .object(fields)
     }
 }

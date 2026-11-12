@@ -224,39 +224,48 @@ public enum Coach {
         ])
         let fillerSum = tics.reduce(0) { $0 + $1.1 }
         let all = me + others
-        return .object([
+        // In typed parts: one literal of all of it is more than the type checker manages on a slower Mac (CI).
+        let wpm: JSONValue = minutes >= 1 && !atMic ? .int(try roundInt(Double(words) / minutes)) : .null
+        let fastestAt: JSONValue = fastest.map { f -> JSONValue in
+            .object([("start", .double(f.start)), ("wpm", .int(f.wpm))])
+        } ?? .null
+        let pace: JSONValue = .object([("wpm", wpm), ("fastest", fastestAt)])
+        let perMinute: JSONValue = minutes >= 1 && !atMic ? rounded(Double(fillerSum) / minutes, 2) : .null
+        let top: [JSONValue] = tics.filter { $0.1 != 0 }.prefix(5).map { t -> JSONValue in
+            .object([("word", .string(t.0)), ("count", .int(t.1))])
+        }
+        let hesitations: JSONValue = hesitationCount.map { JSONValue.int($0) } ?? .null
+        let fillers: JSONValue = .object([("per_minute", perMinute), ("top", .array(top)), ("hesitations", hesitations)])
+        let perHour: JSONValue = all >= 600 ? rounded(Double(questions.count) / (all / 3600), 1) : .null
+        let wait: JSONValue = PyStatistics.median(waits).map { rounded($0, 1) } ?? .null
+        let list: [JSONValue] = questions.map { q -> JSONValue in
+            let qWait: JSONValue = q.wait.map { JSONValue.double($0) } ?? .null
+            return .object([("start", .double(q.start)), ("text", .string(q.text)), ("open", .bool(q.open)),
+                            ("kept_talking", .bool(q.keptTalking)), ("wait", qWait)])
+        }
+        let questionFields: [(String, JSONValue)] = [
+            ("count", .int(questions.count)), ("open", .int(questions.filter(\.open).count)),
+            ("per_hour", perHour), ("wait", wait),
+            ("kept_talking", .int(questions.filter(\.keptTalking).count)), ("list", .array(list)),
+        ]
+        let interruptions: [(String, JSONValue)] = [
+            ("by_me", .int(byMe.count)), ("of_me", .int(ofMe.count)),
+            ("by_me_at", .array(Array(byMe.prefix(5)))), ("of_me_at", .array(Array(ofMe.prefix(5)))),
+        ]
+        let german: Int = GERMAN.reduce(0) { $0 + count(text, $1) }
+        let english: Int = ENGLISH.reduce(0) { $0 + count(text, $1) }
+        let fields: [(String, JSONValue)] = [
             ("talk", talk),
             ("monologues", .array(monologues)),
-            ("pace", .object([
-                ("wpm", minutes >= 1 && !atMic ? .int(try roundInt(Double(words) / minutes)) : .null),
-                ("fastest", fastest.map { .object([("start", .double($0.start)), ("wpm", .int($0.wpm))]) } ?? .null),
-            ])),
-            ("fillers", .object([
-                ("per_minute", minutes >= 1 && !atMic ? rounded(Double(fillerSum) / minutes, 2) : .null),
-                ("top", .array(tics.filter { $0.1 != 0 }.prefix(5).map {
-                    .object([("word", .string($0.0)), ("count", .int($0.1))])
-                })),
-                ("hesitations", hesitationCount.map { .int($0) } ?? .null),
-            ])),
-            ("questions", .object([
-                ("count", .int(questions.count)), ("open", .int(questions.filter(\.open).count)),
-                ("per_hour", all >= 600 ? rounded(Double(questions.count) / (all / 3600), 1) : .null),
-                ("wait", PyStatistics.median(waits).map { rounded($0, 1) } ?? .null),
-                ("kept_talking", .int(questions.filter(\.keptTalking).count)),
-                ("list", .array(questions.map { q in
-                    .object([("start", .double(q.start)), ("text", .string(q.text)), ("open", .bool(q.open)),
-                             ("kept_talking", .bool(q.keptTalking)), ("wait", q.wait.map { .double($0) } ?? .null)])
-                })),
-            ])),
-            ("interruptions", .object([
-                ("by_me", .int(byMe.count)), ("of_me", .int(ofMe.count)),
-                ("by_me_at", .array(Array(byMe.prefix(5)))), ("of_me_at", .array(Array(ofMe.prefix(5)))),
-            ])),
-            ("language", .string(GERMAN.reduce(0) { $0 + count(text, $1) } >= ENGLISH.reduce(0) { $0 + count(text, $1) }
-                ? "de" : "en")),
+            ("pace", pace),
+            ("fillers", fillers),
+            ("questions", .object(questionFields)),
+            ("interruptions", .object(interruptions)),
+            ("language", .string(german >= english ? "de" : "en")),
             ("quiet_invitees", .array(quiet)),
             ("minutes_talked", rounded(minutes, 1)),
-        ])
+        ]
+        return .object(fields)
     }
 
     // MARK: - over meetings

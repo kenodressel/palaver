@@ -91,3 +91,66 @@ jobs:
 
       - name: Run every test, the long ones too
         run: make test-long
+
+  release-build:
+    # The release build (make app: the Swift programs in release and palaver-lm by xcodebuild), unsigned, so a
+    # tagged release (release.yml) starts from it and compiles only what changed. Caches made on master are the
+    # ones a tag's run may restore. Runs beside the tests, only on pushes to master.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Select the newest Xcode
+        run: |
+          xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+          echo "SWIFT_TOOLCHAIN=$(swift --version 2>&1 | head -1 | tr -c 'A-Za-z0-9.' '-')" >> "$GITHUB_ENV"
+
+      - name: Metal toolchain (MLX's shaders in palaver-lm)
+        run: xcrun --find metal >/dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install the release tooling
+        run: uv sync --python 3.13 --extra dev
+
+      - name: Restore the release build
+        id: release-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            native/vendor
+            native/.build/checkouts
+            native/.build/repositories
+            native/.build/release
+            native/.build/arm64-apple-macosx
+            native/.build/out
+            native/.build/xcode
+          key: release-build-${{ runner.os }}-${{ runner.arch }}-${{ env.SWIFT_TOOLCHAIN }}-${{ hashFiles('Makefile', 'native/Package.swift', 'native/Package.resolved', 'tools/fetch_nemo.sh', 'tools/patch_fluidaudio.py') }}-${{ github.sha }}
+          restore-keys: |
+            release-build-${{ runner.os }}-${{ runner.arch }}-${{ env.SWIFT_TOOLCHAIN }}-${{ hashFiles('Makefile', 'native/Package.swift', 'native/Package.resolved', 'tools/fetch_nemo.sh', 'tools/patch_fluidaudio.py') }}-
+
+      - name: Build the app (unsigned)
+        run: make app
+
+      - name: Save the release build
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            native/vendor
+            native/.build/checkouts
+            native/.build/repositories
+            native/.build/release
+            native/.build/arm64-apple-macosx
+            native/.build/out
+            native/.build/xcode
+          key: ${{ steps.release-cache.outputs.cache-primary-key }}
