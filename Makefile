@@ -54,8 +54,14 @@ app-swift: $(VENDOR)/.patched ## Build the Swift app (native/.build/release/Pala
 # The window's server and the pipeline's worker (phase 3): Contents/MacOS/palaver-server and palaver-worker.
 # A release program must not carry this Mac's paths (the checkout, the home folder: the builder's user name),
 # e.g. from a #filePath outside #if DEBUG.
+# On GitHub Actions the paths are the runner's (/Users/runner/…), which name nobody: nothing to check there, and a
+# prebuilt dependency (NemoTextProcessing's Rust crates) carries /Users/runner/.cargo paths of its own build.
+ifeq ($(GITHUB_ACTIONS),true)
+no-build-paths = @echo "(GitHub Actions: the build's paths are the runner's; $(notdir $(1)) not checked for them)"
+else
 no-build-paths = @if strings $(1) | grep -F -e "$(CURDIR)" -e "$$HOME/" >/dev/null; then \
 	echo "✗ $(1) contains this Mac's paths:"; strings $(1) | grep -F -e "$(CURDIR)" -e "$$HOME/" | head -5; exit 1; fi
+endif
 
 server: $(VENDOR)/.patched ## Build the window's server (native/.build/release/palaver-server)
 	swift build -c release --package-path $(ENGINE_DIR) --product palaver-server
