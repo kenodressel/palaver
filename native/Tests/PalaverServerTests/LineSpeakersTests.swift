@@ -261,15 +261,20 @@ private func fixedValue(_ was: String, _ from: String?) -> JSONValue { .object([
         // api.py holds _PROJECTS_LOCK around it: while the projects lock is held elsewhere, the line waits.
         let f = try Fixture()
         let done = Latch()
+        final class Failure: @unchecked Sendable { var error: Error? }
+        let failure = Failure()
         f.app.projectsLock.lock()
-        DispatchQueue.global().async {
-            _ = try? f.set(16.0, me)
+        // A thread of its own, as the server answers each request. GCD starts a global queue's block only while fewer
+        // of its threads than cores are busy: on CI's 3 cores the busy tests beside this one kept it waiting past 60 s.
+        Thread {
+            do { _ = try f.set(16.0, me) } catch { failure.error = error }
             done.open()
-        }
+        }.start()
         usleep(300_000)
         let waited = !exists(f.paths.speakersLines) && !done.opened
         f.app.projectsLock.unlock()
-        done.wait(60)  // under the whole module's load the change may take longer than Latch's default 5 s
+        done.wait(60)
+        #expect(done.opened && failure.error == nil, "\(String(describing: failure.error))")
         #expect(waited && exists(f.paths.speakersLines))
     }
 

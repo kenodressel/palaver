@@ -161,7 +161,18 @@ FAKE_CLAUDE = Path(__file__).with_name("fake_claude.py")
 
 class FakeRecording:
     """The menu bar app's running recording, as the server sees it: the
-    question whether to stop it (issue #52), and the answers given."""
+    question whether to stop it (issue #52), and the answers given.
+
+    A test that changes it (``asked``, ``recording``, ``live_coach``, ...) has daemon.json written at once
+    (``on_change``: the fake app's): a page opened right after reads the change, not the tick before it. The page
+    asks again only every 10 s, longer than a test waits."""
+
+    on_change = None
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if name != "on_change" and self.on_change is not None:
+            self.on_change()
 
     def __init__(self):
         self.asked: dict | None = None
@@ -674,7 +685,9 @@ class Guard:
 
 @pytest.fixture
 def page(browser, request):
-    context = browser.new_context(viewport={"width": 1280, "height": 860})
+    # The page's clock in the suite's zone (tests/conftest.py): WebKit's page process does not take TZ from the
+    # environment but the Mac's zone, UTC on CI.
+    context = browser.new_context(viewport={"width": 1280, "height": 860}, timezone_id=os.environ["TZ"])
     context.add_init_script(PAGE_SETUP)
     page = context.new_page()
     page.set_default_timeout(10_000)

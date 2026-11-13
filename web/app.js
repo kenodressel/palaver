@@ -1,7 +1,7 @@
 // Meetings: list, notes, transcript and speakers of every recording.
 
-import { $, h, toast, remember, history as undoHistory, commands, isEditable, busy, leave, flash, menu, moreButton, play,
-  usage, tracked } from "./ui.js";
+import { $, h, toast, remember, history as undoHistory, commands, isEditable, busy, leave, flash, menu, menuOpen, moreButton,
+  play, usage, tracked } from "./ui.js";
 import { meetingCommands, nextAfter, laneCommands, laneLines, linesText, namingText, withName, clock, roomText, roomNameText,
   unknownText,
   lineCommands, lineMarks, fixableWord, lineBefore, lineEditedText, cutKind,
@@ -2020,7 +2020,7 @@ function renderStreamTail() {
   const following = main.scrollHeight - main.scrollTop - main.clientHeight < 120;
   tail.replaceChildren(...rows);
   if (state.stream?.stream) $("#main .live-tail")?.remove();
-  if (following) main.scrollTop = main.scrollHeight;
+  if (following && !menuOpen()) main.scrollTop = main.scrollHeight;  // an open menu would close
 }
 
 // Once a second while a recording is open: what the stream has beyond the block text. While a stream starts
@@ -6666,7 +6666,7 @@ async function refreshLive() {
     return;
   }
   renderMeeting();
-  if (following) main.scrollTop = main.scrollHeight;
+  if (following && !menuOpen()) main.scrollTop = main.scrollHeight;  // an open menu would close
 }
 setInterval(() => { if (state.view !== "review") loadReview(); }, 30000);
 setInterval(refreshMcp, 10000);

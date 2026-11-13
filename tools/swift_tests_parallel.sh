@@ -38,6 +38,9 @@ dev=$(xcode-select -p)
 helper=$(dirname "$(xcrun --find swift)")/../libexec/swift/pm/swiftpm-testing-helper
 platform="$dev/Platforms/MacOSX.platform/Developer"
 nice_level=${PALAVER_TEST_NICE:-10}
+# Meeting ids are local times and the fixtures are written in CET (+01:00): the tests run in that zone everywhere,
+# CI's UTC included (as pytest's, tests/conftest.py). A test about another zone passes its TimeZone.
+export TZ=Europe/Berlin
 if [[ ! -x $helper || ! -d $platform/Library/Frameworks ]]; then
   # The Command Line Tools alone: no helper, swift test runs the bundles one after another.
   echo "no Xcode testing helper: swift test runs the bundles one after another" >&2

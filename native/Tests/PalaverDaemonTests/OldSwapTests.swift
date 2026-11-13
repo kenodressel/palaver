@@ -6,6 +6,8 @@
 // Swift side's two defences: started-ok is written from the bundle's version even when Python never
 // answers, and an app whose bundle was put aside quits. Hermetic: a temp folder, a fake `open`, a
 // fake `sleep` on PATH that makes the script's 0.2 s waits short and a `pgrep` that looks for the started app only.
+// The script's wait for started-ok starts counting once the app ticked (`ticked`): 50 short waits are 10 s on a
+// Mac and half a second here, less than a busy machine may take to schedule the test's first tick.
 import Darwin
 import Foundation
 import Testing
@@ -56,6 +58,8 @@ private struct OldSwap {
     var ok: URL { support.appendingPathComponent("started-ok") }
     var status: URL { support.appendingPathComponent("update.json") }
     var appPid: URL { root.appendingPathComponent("app.pid") }
+    /// Written after the app's first tick; the fake `sleep` waits for it.
+    var ticked: URL { root.appendingPathComponent("ticked") }
 
     static let template: String = {
         let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()  // native/Tests/PalaverDaemonTests
@@ -84,8 +88,9 @@ private struct OldSwap {
             fi
 
             """)
-        // The script's `sleep 0.2` (looked up on PATH), 20 times shorter.
-        executable(root.appendingPathComponent("fastbin/sleep"), "#!/bin/sh\nexec /bin/sleep 0.01\n")
+        // The script's `sleep 0.2` (looked up on PATH), 20 times shorter, from the app's first tick on.
+        executable(root.appendingPathComponent("fastbin/sleep"),
+                   "#!/bin/sh\nwhile [ ! -e \(sh(ticked.path)) ]; do /bin/sleep 0.01; done\nexec /bin/sleep 0.01\n")
         // Its `pgrep -f "$target/Contents/MacOS/"`: the app `open` started, while it runs. The real one reads every
         // process of the Mac, 150 times in the wait for a new app that never started: 10 to 20 s on a busy Mac.
         executable(root.appendingPathComponent("fastbin/pgrep"),
@@ -163,6 +168,7 @@ private final class SilentBackend: UpdateBackend, @unchecked Sendable {
         let ticker = AppTicker(.init(daemonTick: {}, started: { updates.started() }, startedDone: { updates.startedDone },
                                      refresh: {}, calendarRetry: {}, housekeeping: {}, updates: { false }, quit: {}))
         ticker.tick()  // the first tick
+        touch(swap.ticked)
         process.waitUntilExit()
         #expect(process.terminationStatus == 0)
         #expect(swap.version(swap.target) == "0.5.0")  // the new app stays
@@ -185,9 +191,12 @@ private final class SilentBackend: UpdateBackend, @unchecked Sendable {
                                      housekeeping: {}, updates: { false },
                                      quit: { quit.at = Date(); quit.wasAlive = isRunning(pid); kill(pid, SIGTERM) },
                                      bundleReplaced: { watch.replaced() }))
-        let end = Date().addingTimeInterval(30)
+        // Until the script ends: its waits are 200 starts of `sleep` (50 for started-ok, 150 for the app to go), a few
+        // seconds on a Mac, far longer when every core is busy.
+        let end = Date().addingTimeInterval(180)
         while process.isRunning && Date() < end {
             ticker.tick()
+            touch(swap.ticked)
             usleep(20_000)
         }
         #expect(!process.isRunning)

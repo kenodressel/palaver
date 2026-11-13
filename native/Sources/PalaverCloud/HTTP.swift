@@ -218,15 +218,19 @@ private final class ResultBox<T>: @unchecked Sendable {
     var result: Result<T, Error>?
 }
 
-/// The executor of `runBlocking`'s work: a concurrent dispatch queue (GCD adds threads when its threads block), so the
-/// work and what it awaits (URLSession's answers, sleeps) never wait for a cooperative pool that blocked callers hold.
+/// The executor of `runBlocking`'s work: each job on a thread of its own, so the work and what it awaits (URLSession's
+/// answers, sleeps) never wait for a cooperative pool that blocked callers hold, nor for GCD's: a concurrent queue's
+/// block starts only while fewer of GCD's threads than cores are busy, and while a transcription (or a test run on a
+/// 3-core CI runner) keeps them busy the work did not start at all and a `timeout` passed without it.
 public final class BlockingWorkExecutor: TaskExecutor, @unchecked Sendable {
     public static let shared = BlockingWorkExecutor()
-    private let queue = DispatchQueue(label: "palaver.run-blocking", qos: .userInitiated, attributes: .concurrent)
 
     public func enqueue(_ job: consuming ExecutorJob) {
         let job = UnownedJob(job)
         let executor = asUnownedTaskExecutor()
-        queue.async { job.runSynchronously(on: executor) }
+        let thread = Thread { job.runSynchronously(on: executor) }
+        thread.name = "palaver-run-blocking"
+        thread.qualityOfService = .userInitiated
+        thread.start()
     }
 }

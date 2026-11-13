@@ -1,6 +1,7 @@
 """The meeting's ⋯ menu, the list's right-click menu and their keys: trash,
 join, change the event, review again; each undone."""
 
+import json
 import re
 
 import pytest
@@ -11,7 +12,7 @@ from .helpers import (  # noqa: E402
     cmd, expect_toast, goto, hash_of, heading, list_ids, list_item, menu_item, more, open_meeting,
     run_from_menu, toast, undo_in_toast, unfocus,
 )
-from .recordings import A, B, C, LIVE  # noqa: E402
+from .recordings import A, B, C, LIVE, write_stream  # noqa: E402
 from .stores import ERROR, MODELS, RecordingPaths, mark_failed  # noqa: E402
 
 pytestmark = pytest.mark.e2e
@@ -171,6 +172,26 @@ def test_cancel_the_event_picker(page, shared_server):
     box.get_by_role("button", name="Cancel").click()
     expect(box).to_have_count(0)
     expect(heading(page)).to_have_text("Team standup")
+
+
+def test_a_live_meetings_menu_stays_open_while_its_transcript_follows(page, app_server):
+    # Near its end the page follows the live text as it comes; that scroll closed an open menu.
+    paths = RecordingPaths(app_server.root / LIVE)
+    write_stream(paths)
+    page.set_viewport_size({"width": 1280, "height": 820})  # a little lower than the page
+    goto(page, app_server, f"#/{LIVE}")
+    tail = page.locator("#main .stream-tail")
+    expect(tail).to_contain_text("und dann noch")
+    main = page.locator("#main")
+    main.evaluate("m => { m.scrollTop = 0; }")
+    assert 0 < main.evaluate("m => m.scrollHeight - m.clientHeight") < 120  # near the end: it follows
+    more(page).click()
+    expect(menu_item(page, "Rename…")).to_be_visible()
+    stream = json.loads(paths.stream.read_text())
+    paths.stream.write_text(json.dumps({**stream, "draft": {"system": "und dann noch die Kosten", "mic": ""}}))
+    expect(tail).to_contain_text("und dann noch die Kosten")  # within a second
+    expect(menu_item(page, "Rename…")).to_be_visible()
+    page.keyboard.press("Escape")
 
 
 def test_a_live_meeting_has_move_to_trash_disabled(page, app_server):

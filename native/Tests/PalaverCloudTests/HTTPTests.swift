@@ -152,18 +152,20 @@ private func request(_ url: String = "https://api.example.com/v1/x", timeout: Do
 /// runBlocking from a thread that waits for it (a request's thread in palaver-server) must not need the cooperative pool:
 /// in a busy process (the parallel test run: synchronous tests blocking pool threads) its work would wait for a free one,
 /// and a provider's Test button took 10+ s (ProviderRoutesInProcessTests.test_http_language_model, a recurring flake).
+/// Nor GCD's pool: a global or concurrent queue's block waits while as many of its threads as there are cores are busy
+/// (CI's 3 cores: app.sock's handlers ran one after the other, and a timeout passed before the work started).
 @Suite struct RunBlockingTests {
-    /// The label of the dispatch queue the calling code runs on.
-    static func queueLabel() -> String { String(cString: __dispatch_queue_get_label(nil)) }
+    /// The name of the thread the calling code runs on.
+    static func threadName() -> String { Thread.current.name ?? "" }
 
-    @Test func itsWorkAndWhatItAwaitsRunOnItsOwnQueueNotTheCooperativePool() throws {
-        // Checked by where the work runs rather than by starving the pool, which would slow every other test of this
+    @Test func itsWorkAndWhatItAwaitsRunOnThreadsOfTheirOwn() throws {
+        // Checked by where the work runs rather than by starving the pools, which would slow every other test of this
         // process down while it runs.
-        let labels = try runBlocking(timeout: 10) { () -> [String] in
-            let before = RunBlockingTests.queueLabel()
+        let names = try runBlocking(timeout: 10) { () -> [String] in
+            let before = RunBlockingTests.threadName()
             try await Task.sleep(nanoseconds: 10_000_000)  // resumed on runBlocking's executor too
-            return [before, RunBlockingTests.queueLabel()]
+            return [before, RunBlockingTests.threadName()]
         }
-        #expect(labels == ["palaver.run-blocking", "palaver.run-blocking"])
+        #expect(names == ["palaver-run-blocking", "palaver-run-blocking"])
     }
 }

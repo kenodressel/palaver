@@ -94,28 +94,25 @@ def _recording_view(served, **extra) -> dict:
 
 
 def test_while_muted_in_teams_the_recording_says_its_mic_is_not_recorded(page, app_server):
-    view = _recording_view(app_server, muted="teams")
+    _recording_view(app_server, muted="teams")
     goto(page, app_server, f"#/{LIVE}")
     pill = page.locator("#main .head .muted-pill")
     expect(pill).to_have_text("Your mic is muted in Teams: not recorded")
     expect(pill).to_have_attribute("role", "status")
-    view["muted"] = None  # unmuted
-    page.wait_for_timeout(300)  # the fake app writes daemon.json every 0.1 s
+    _recording_view(app_server, muted=None)  # unmuted: in daemon.json at once
     page.evaluate("window.palaver.poll()")
     expect(pill).to_have_count(0)
-    view["muted"] = "teams"
-    page.wait_for_timeout(300)
+    _recording_view(app_server, muted="teams")
     page.evaluate("window.palaver.poll()")
     expect(pill).to_be_visible()
 
 
 def test_todays_live_card_says_so_too(page, app_server):
-    view = _recording_view(app_server, muted="teams")
+    _recording_view(app_server, muted="teams")
     goto(page, app_server, "#/today")
     pill = page.locator("#main .today .live-now .muted-pill")
     expect(pill).to_have_text("Your mic is muted in Teams: not recorded")
-    view["muted"] = None
-    page.wait_for_timeout(300)
+    _recording_view(app_server, muted=None)
     page.evaluate("window.palaver.poll()")
     expect(pill).to_have_count(0)
     expect(page.locator("#main .today .live-now")).to_be_visible()

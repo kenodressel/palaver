@@ -216,7 +216,7 @@ import Testing
         let out = try s.export("x.zip", confirmLocal: true)
         #expect(try Self.doc(out, "meeting/meta.json")["kept_on_this_mac"] == .bool(true))
         let mine = s.t.url.appendingPathComponent("timo", isDirectory: true)
-        try Exchange.importPackage(mine, out, userName: "Timo", stores: s.stores)
+        try Exchange.importPackage(mine, out, userName: "Timo", stores: s.stores, timeZone: TimeZone(identifier: "Europe/Berlin")!)
         let here = mine.appendingPathComponent(Self.ID, isDirectory: true)
         #expect(LocalOnly.isLocalOnly(here))
         try LocalOnly.set(here, on: false)

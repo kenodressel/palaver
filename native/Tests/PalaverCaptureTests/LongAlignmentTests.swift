@@ -209,6 +209,9 @@ private let longTests = ProcessInfo.processInfo.environment["PALAVER_LONG_TESTS"
         #expect((r.micErrors + r.systemErrors).allSatisfy { abs($0) <= 0.020 })
         #expect(abs(Double(r.micFrames) / 16_000 - 3_600) <= 0.05)
         #expect(abs(Double(r.systemFrames) / 16_000 - 3_600) <= 0.05)
-        #expect(r.rssGrowthMB < 100)
+        // RSS is the whole process's: alone this run adds nothing (+0 MB), but on CI every bundle's tests share the
+        // process and their allocations showed as +109 MB once. What the bound is for: an aligner that kept the hour
+        // would add 230 MB (its 16 kHz output) to 1.4 GB (the input).
+        #expect(r.rssGrowthMB < 200)
     }
 }

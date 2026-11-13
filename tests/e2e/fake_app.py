@@ -300,6 +300,8 @@ class FakeApp:
         self._stop = threading.Event()
         self._state_lock = threading.Lock()
         self.write_state()
+        if hasattr(recording, "on_change"):  # a test's change is in daemon.json before its next step
+            recording.on_change = self.write_state
         self._writer = threading.Thread(target=self._tick, name="fake-daemon-json", daemon=True)
         self._writer.start()
         self.server = serve(socket, self.calls())

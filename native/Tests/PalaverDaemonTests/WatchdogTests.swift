@@ -120,17 +120,18 @@ private func fakeTaskpolicy() throws -> String {
         let log = FileManager.default.temporaryDirectory.appendingPathComponent("palaver-wd-\(UUID().uuidString)/daemon.log")
         let p = try spawnWorker(["/bin/sh", "-c", "sleep 30 & echo $!; wait"], qos: .utility, log: log,
                                 taskpolicy: try fakeTaskpolicy())
+        // Until the shell said its helper's pid: two programs start first, seconds on a busy Mac.
         var helper: Int32?
-        for _ in 0..<100 where helper == nil {
+        _ = await waitFor(60) {
             helper = (try? String(contentsOf: log, encoding: .utf8)).flatMap { Int32($0.split(separator: "\n").last ?? "") }
-            if helper == nil { try await Task.sleep(nanoseconds: 50_000_000) }
+            return helper != nil
         }
         let pid = try #require(helper)
         #expect(MemoryMeasure.footprint(pid) != nil)
         p.signalGroup(SIGTERM)
         #expect(p.waitUntilExit() != 0)
-        for _ in 0..<100 where MemoryMeasure.footprint(pid) != nil { try await Task.sleep(nanoseconds: 50_000_000) }
-        #expect(MemoryMeasure.footprint(pid) == nil)  // the helper went with it
+        // The helper went with it (launchd reaps the orphan, later on a busy Mac).
+        #expect(await waitFor(60) { MemoryMeasure.footprint(pid) == nil })
     }
 
     @Test func signalGroupFallsBackToTheProcessItself() {

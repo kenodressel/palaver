@@ -50,7 +50,9 @@ private func fakeTaskpolicy() throws -> String {
 
 @Test func theRealTaskpolicyRunsTheCommand() throws {
     let log = tempLog()
-    let p = try spawnWorker(["/bin/echo", "hello"], qos: .background, log: log)
+    // utility, not background: a background process gets no CPU while every core is busy (minutes under a loaded
+    // test run), and the command line is the same.
+    let p = try spawnWorker(["/bin/echo", "hello"], qos: .utility, log: log)
     #expect(p.waitUntilExit() == 0)
     #expect(try String(contentsOf: log, encoding: .utf8) == "hello\n")
 }
@@ -71,8 +73,9 @@ private func fakeTaskpolicy() throws -> String {
 
 @Test func spawnWorkerReapsWithoutAWaiter() throws {
     let p = try spawnWorker(["/bin/sh", "-c", "exit 5"], qos: .utility, log: tempLog(), taskpolicy: try fakeTaskpolicy())
-    var waited = 0
-    while p.exitCode == nil && waited < 500 { usleep(10_000); waited += 1 }
+    // Nobody waits: the reaper thread alone records the exit (a sh start may take seconds on a busy Mac).
+    let end = Date().addingTimeInterval(60)
+    while p.exitCode == nil && Date() < end { usleep(10_000) }
     #expect(p.exitCode == 5)
     errno = 0
     #expect(waitpid(p.pid, nil, WNOHANG) == -1 && errno == ECHILD)  // already reaped: no zombie

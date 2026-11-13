@@ -300,6 +300,10 @@ function closeMenu() {
   openMenu?.close();
 }
 
+// Whether a menu is open: a scroll closes it, so what scrolls on its own (a live transcript following its end)
+// waits until it is gone.
+export const menuOpen = () => openMenu !== null;
+
 // A popover menu below the anchor's right edge, or at a point (right-click).
 // items: {label, icon?, shortcut?, danger?, disabled?, run} or null for a
 // separator; the caller puts dangerous items last, after a null.
