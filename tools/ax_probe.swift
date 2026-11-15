@@ -200,11 +200,11 @@ while Date().timeIntervalSince(started) < minutes * 60 {
         area = found
         areaFound = Date().timeIntervalSince(started)
     }
-    guard let area else {
+    guard let current = area else {
         Thread.sleep(forTimeInterval: 2)
         continue
     }
-    let nodes = read(area)
+    let nodes = read(current)
     if nodes.count <= 1 {  // the call window closed: look again
         area = nil
         areaFound = -100
