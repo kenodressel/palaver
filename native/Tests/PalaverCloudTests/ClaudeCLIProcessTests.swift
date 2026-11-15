@@ -58,6 +58,42 @@ func waitFor(_ file: URL, seconds: Double = 10) -> String? {
         #expect(!LiveHelpers.pids.contains(pid))
     }
 
+    @Test func theCLIAnswersWhileGCDsThreadsAreAllBusy() throws {
+        // A transcription (or a 3-core CI runner) keeps GCD's threads busy; a block on its global queue then never
+        // started, the prompt was never written, and a CLI waiting for its stdin to close ran into the time limit.
+        let dir = tempFolder("claude-busy")
+        let claude = fakeClaude(dir, "cat > /dev/null\necho '{\"is_error\": false, \"structured_output\": {\"reply\": \"Hallo\"}}'\n")
+        // Busy computing, not blocked: GCD adds threads for blocks that wait, not for ones that spin.
+        final class Flag: @unchecked Sendable {
+            private let lock = NSLock()
+            private var done = false
+            var isSet: Bool { lock.withLock { done } }
+            func set() { lock.withLock { done = true } }
+        }
+        let stop = Flag()
+        let giveUp = Date().addingTimeInterval(30)  // never spin for good, whatever happens below
+        for _ in 0..<ProcessInfo.processInfo.activeProcessorCount * 2 {
+            DispatchQueue.global().async { while !stop.isSet && Date() < giveUp {} }
+        }
+        defer { stop.set() }
+        var runner = ClaudeCLIRunner(claude: claude, model: "sonnet")
+        runner.timeout = 10
+        final class Outcome: @unchecked Sendable { var out: JSONValue?, error: Error? }
+        let outcome = Outcome()
+        let done = DispatchSemaphore(value: 0)
+        Thread.detachNewThread {
+            do { outcome.out = try runner.run("hello", schema: TINY_SCHEMA) } catch { outcome.error = error }
+            done.signal()
+        }
+        // Without threads of its own the run never ends while GCD is busy: its time limit passes, then it waits for
+        // readers that never started.
+        let ended = done.wait(timeout: .now() + 15) == .success
+        stop.set()
+        if !ended { _ = done.wait(timeout: .now() + 30) }  // the stuck run ends once GCD's threads are free
+        #expect(ended)
+        #expect(outcome.out?["reply"] == .string("Hallo"))
+    }
+
     @Test func aCLIThatQuitsWithoutReadingThePromptIsAnErrorWithWhatItSaid() throws {
         let dir = tempFolder("claude-quits")
         let claude = fakeClaude(dir, "echo 'Invalid API key · Please run /login' >&2\nexit 1\n")

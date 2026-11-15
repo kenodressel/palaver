@@ -492,9 +492,11 @@ public struct McpSetup: @unchecked Sendable {
         p.standardInput = FileHandle.nullDevice
         do { try p.run() } catch { throw Failed("cannot start \(executable): \(error.localizedDescription)") }
         let group = DispatchGroup()
-        var outData = Data(), errData = Data()
-        DispatchQueue.global().async(group: group) { outData = out.fileHandleForReading.readDataToEndOfFile() }
-        DispatchQueue.global().async(group: group) { errData = err.fileHandleForReading.readDataToEndOfFile() }
+        final class Bytes: @unchecked Sendable { var out = Data(), err = Data() }
+        let bytes = Bytes()
+        let outHandle = out.fileHandleForReading, errHandle = err.fileHandleForReading
+        onOwnThread(group, name: "palaver-mcp-stdout") { bytes.out = outHandle.readDataToEndOfFile() }
+        onOwnThread(group, name: "palaver-mcp-stderr") { bytes.err = errHandle.readDataToEndOfFile() }
         let ended = DispatchSemaphore(value: 0)
         p.terminationHandler = { _ in ended.signal() }
         if ended.wait(timeout: .now() + timeout) == .timedOut {
@@ -509,8 +511,8 @@ public struct McpSetup: @unchecked Sendable {
                          + "took longer than \(Int(timeout)) s")
         }
         group.wait()
-        return Ran(status: p.terminationStatus, out: String(decoding: outData, as: UTF8.self),
-                   err: String(decoding: errData, as: UTF8.self))
+        return Ran(status: p.terminationStatus, out: String(decoding: bytes.out, as: UTF8.self),
+                   err: String(decoding: bytes.err, as: UTF8.self))
     }
 }
 

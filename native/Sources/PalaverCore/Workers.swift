@@ -226,3 +226,18 @@ public final class Process: WorkerProcess, @unchecked Sendable {
         _ = Darwin.kill(pid, sig)
     }
 }
+
+/// Runs `body` on a thread of its own, counted in `group` (entered now, left when `body` returns). For a child's pipe
+/// readers and writers, which must start at once: a block on GCD's global queue starts only while fewer of its threads
+/// than cores are busy, and while a transcription (or a test run on a 3-core CI runner) keeps them busy a child waited
+/// for its stdin to close, or blocked on a full pipe, until its time limit passed.
+public func onOwnThread(_ group: DispatchGroup, name: String, _ body: @escaping @Sendable () -> Void) {
+    group.enter()
+    let thread = Thread {
+        body()
+        group.leave()
+    }
+    thread.name = name
+    thread.qualityOfService = .userInitiated
+    thread.start()
+}

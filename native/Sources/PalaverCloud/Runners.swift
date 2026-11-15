@@ -234,10 +234,10 @@ public struct ClaudeCLIRunner {
         let bytes = Bytes()
         let readers = DispatchGroup()
         let outFD = output[0], errFD = errors[0]
-        DispatchQueue.global().async(group: readers) {
+        onOwnThread(readers, name: "palaver-claude-stdout") {
             bytes.out = FileHandle(fileDescriptor: outFD, closeOnDealloc: true).readDataToEndOfFile()
         }
-        DispatchQueue.global().async(group: readers) {
+        onOwnThread(readers, name: "palaver-claude-stderr") {
             bytes.err = FileHandle(fileDescriptor: errFD, closeOnDealloc: true).readDataToEndOfFile()
         }
         // The prompt goes in on a thread of its own, so the time limit counts from the start: a CLI that never reads a
@@ -245,7 +245,7 @@ public struct ClaudeCLIRunner {
         final class Unread: @unchecked Sendable { var value = false }
         let unread = Unread()
         let inFD = input[1], prompt = Data(prompt.utf8)
-        DispatchQueue.global().async(group: readers) {
+        onOwnThread(readers, name: "palaver-claude-stdin") {
             unread.value = Self.write(prompt, to: inFD)  // a CLI that quit first: EPIPE, never SIGPIPE
             close(inFD)
         }
