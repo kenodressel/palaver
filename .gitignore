@@ -12,3 +12,6 @@ build/
 # Swift engine
 /native/.build/
 /native/vendor/
+
+# Implementation plans stay local (old ones: ~/.config/palaver-dev/plans)
+docs/superpowers/plans/
