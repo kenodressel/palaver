@@ -34,7 +34,7 @@ import Testing
         #expect(done.wait(timeout: .now() + 5) == .success)
     }
 
-    @Test func test_voices_lock_is_beside_the_folder() throws {
+    @Test func test_voices_lock_is_beside_the_folder_and_a_meetings_lock_hidden_in_it() throws {
         let dir = temp()
         defer { try? FileManager.default.removeItem(at: dir) }
         let voices = dir.appendingPathComponent("voices", isDirectory: true)
@@ -45,19 +45,17 @@ import Testing
         var st = stat()
         #expect(stat(lock.path, &st) == 0)
         #expect(Int(st.st_mode) & 0o777 == 0o644)  // umask 022
+        // A meeting's lock is hidden in its folder.
+        let meeting = dir.appendingPathComponent("2026-10-20T14-35-17", isDirectory: true)
+        try FileManager.default.createDirectory(at: meeting, withIntermediateDirectories: true)
+        try StoreLock.meeting(RecordingPaths(meeting)) {}
+        #expect(FileManager.default.fileExists(atPath: meeting.appendingPathComponent(".speakers.lock").path))
     }
 
     @Test func test_an_unopenable_lock_throws_and_the_body_never_runs() {
         var ran = false
         #expect(throws: POSIXError.self) { try StoreLock.with(URL(fileURLWithPath: "/dev/null/x/store.json")) { ran = true } }
         #expect(!ran)
-    }
-
-    @Test func test_meeting_lock_is_hidden() throws {
-        let dir = temp()
-        defer { try? FileManager.default.removeItem(at: dir) }
-        try StoreLock.meeting(RecordingPaths(dir)) {}
-        #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent(".speakers.lock").path))
     }
 
     /// `/var/…` → `/private/var/…` (the folder under the symlinked /var, spelled through the link's target).
@@ -89,5 +87,16 @@ import Testing
             }
             #expect(depth == 3)
         }
+    }
+
+    /// A folder deleted while its lock is held (a test's teardown under a background job) keeps the lock's key:
+    /// it resolves through the nearest folder that is still there.
+    @Test func aLockWhoseFolderIsGoneKeepsItsSpelling() throws {
+        let dir = temp()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let gone = dir.appendingPathComponent("gone/config", isDirectory: true).appendingPathComponent("projects.json.lock")
+        let key = StoreLock.canonicalPath(privateSpelling(gone))
+        #expect(StoreLock.canonicalPath(plainSpelling(gone)) == key)
+        #expect(key.hasPrefix("/private/var/") && key.hasSuffix("/gone/config/projects.json.lock"))
     }
 }

@@ -22,7 +22,6 @@ import re
 import selectors
 import shutil
 import subprocess
-import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -98,24 +97,56 @@ def _unavailable(reason: str):
     pytest.skip(reason)
 
 
-@pytest.fixture(scope="module")
-def browser():
-    """WebKit for one module's tests. Not for the whole session: while
-    Playwright's sync API runs, asyncio.run() refuses to start (other tests use it)."""
-    if not HAS_PLAYWRIGHT:
-        _unavailable("Playwright is not installed (the dev extra has it)")
-    from playwright.sync_api import Error, sync_playwright
+class _WebKit:
+    """One WebKit per test process (an xdist worker), started when a test first needs it: a module's tests can then
+    spread over the workers without each starting its own. Playwright's sync API runs only once per thread (a second
+    one, or asyncio.run(), refuses while it runs): a pytester session in this process (test_guard.py) shares it."""
 
-    pw = sync_playwright().start()
-    try:
-        webkit = pw.webkit.launch()
-    except Error as exc:
-        pw.stop()
-        _unavailable(f"Playwright's WebKit is not installed (python -m playwright install webkit): "
-                     f"{str(exc).splitlines()[0]}")
-    yield webkit
-    webkit.close()
-    pw.stop()
+    def __init__(self):
+        self._pw = None
+        self._webkit = None
+
+    def get(self):
+        if self._webkit is not None and self._webkit.is_connected():
+            return self._webkit
+        self.stop()  # one that crashed: a new one
+        if not HAS_PLAYWRIGHT:
+            _unavailable("Playwright is not installed (the dev extra has it)")
+        from playwright.sync_api import Error, sync_playwright
+
+        self._pw = sync_playwright().start()
+        try:
+            self._webkit = self._pw.webkit.launch()
+        except Error as exc:
+            self.stop()
+            _unavailable(f"Playwright's WebKit is not installed (python -m playwright install webkit): "
+                         f"{str(exc).splitlines()[0]}")
+        return self._webkit
+
+    def stop(self):
+        webkit, pw, self._webkit, self._pw = self._webkit, self._pw, None, None
+        if webkit is not None:
+            try:
+                webkit.close()
+            except Exception:  # gone already
+                pass
+        if pw is not None:
+            pw.stop()
+
+
+_WEBKIT = _WebKit()
+
+
+@pytest.fixture(scope="session")
+def _webkit():
+    yield _WEBKIT
+    _WEBKIT.stop()
+
+
+@pytest.fixture
+def browser(_webkit):
+    """WebKit, shared by every test of this process (see _WebKit)."""
+    return _webkit.get()
 
 
 _audio_decodes: list[bool] = []  # the probe's answer, once per session
@@ -125,7 +156,7 @@ _audio_decodes: list[bool] = []  # the probe's answer, once per session
 def audio_decoding(browser, tmp_path_factory):
     """For a test that needs the audio to load and play: skipped where WebKit
     cannot decode the synthetic WAV (a headless CI runner may have no decoder).
-    Probed once, with the module's browser."""
+    Probed once, with this process's browser."""
     if not _audio_decodes:
         from playwright.sync_api import Error
 
@@ -406,7 +437,7 @@ class SwiftServed(_Api):
 
     # The server takes a .part file not written to for a minute (MeetingStatus.livePartSeconds) for a recording that
     # ended: the recorder writes to it every few hundred ms. Gone (the test ended the call): left gone.
-    PART_EVERY_S = 5.0
+    PART_EVERY_S = 1.0
 
     def _keep_recording(self) -> None:
         part = live_part(self.root / LIVE)
@@ -551,7 +582,7 @@ def _serve_swift(root: Path, key: str | None, config_home: Path, *, recordings: 
                       "[calendar]\nenabled = false\n")
     worker = None
     if recordings:
-        worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(3600)"])
+        worker = subprocess.Popen(["/bin/sleep", "3600"])  # a running process: no Python to start
         build_recordings(root, live_pid=worker.pid)
     else:
         root.mkdir(parents=True, exist_ok=True)

@@ -262,6 +262,7 @@ public final class Daemon {
         watchSilentCall()
         watchAudio()
         pumpProcessing()
+        session?.noteMute()
         writeState()
         levels?.update(recording: session != nil ? folder : nil)
     }

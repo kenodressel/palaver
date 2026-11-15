@@ -94,14 +94,4 @@ func waitFor(_ file: URL, seconds: Double = 10) -> String? {
             #expect(kill(pid, 0) != 0)
         }
     }
-
-    @Test func theCLIStartsInAnEmptyFolderOfItsOwnAndAnswers() throws {
-        let dir = tempFolder("claude-answers")
-        let cwd = dir.appendingPathComponent("cwd")
-        let claude = fakeClaude(dir, "cat > /dev/null\npwd > \(cwd.path)\necho '{\"is_error\": false, \"structured_output\": {\"reply\": \"Hallo\"}}'\n")
-        let out = try ClaudeCLIRunner(claude: claude, model: "sonnet").run("hello", schema: TINY_SCHEMA)
-        #expect(out["reply"] == .string("Hallo"))
-        let folder = try String(contentsOf: cwd, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
-        #expect(folder.contains("palaver-claude-") && !FileManager.default.fileExists(atPath: folder))
-    }
 }

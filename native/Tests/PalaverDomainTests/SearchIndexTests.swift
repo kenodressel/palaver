@@ -95,7 +95,7 @@ private final class FakeEncoder: MeaningEncoder {
 
     // MARK: - test_semantic.py
 
-    @Test func test_a_meeting_is_cut_into_notes_pieces_and_runs_of_one_speaker() throws {
+    @Test func test_a_meeting_is_cut_into_notes_pieces_and_runs_of_one_speaker_and_long_runs_are_split() throws {
         let t = TempFolder("semantic"); defer { t.remove() }
         let chunks = try SearchIndex.chunks(try meeting(t.url))
         #expect(Array(chunks.prefix(3)).map { $0["kind"]?.stringValue } == ["summary", "decision", "step"])
@@ -104,19 +104,16 @@ private final class FakeEncoder: MeaningEncoder {
         #expect(lines.map { PythonJSON.dumps($0, ensureAscii: false) } == [
             #"{"kind": "line", "speaker": "SPEAKER_00", "start": 16.0, "text": "Die Kosten für das Angebot sind noch zu hoch für den Kunden. Das müssen wir mit dem Einkauf klären, bevor wir zusagen."}"#,
         ])
-    }
-
-    @Test func test_long_runs_are_split() throws {
-        let t = TempFolder("semantic"); defer { t.remove() }
+        // Long runs are split.
         let paths = try meeting(t.url)
         let letters = Array("abcdefghijklmnopqrstuvwxyz")
         var words: [String] = []
         for j in 0..<30 { words.append("w\(letters[j % 26])\(letters[j / 26])") }
         let text = words.joined(separator: " ") + "."
-        let lines: [Utterance] = (0..<10).map { (i: Int) -> Utterance in
+        let long: [Utterance] = (0..<10).map { (i: Int) -> Utterance in
             Utterance(speaker: "Timo", start: Double(i), end: Double(i) + 1, text: text)
         }
-        try PythonJSON.write(.array(lines.map { $0.json }), to: paths.transcriptJson, indent: nil, ensureAscii: true)
+        try PythonJSON.write(.array(long.map { $0.json }), to: paths.transcriptJson, indent: nil, ensureAscii: true)
         let runs = try SearchIndex.chunks(paths).filter { $0["kind"]?.stringValue == "line" }
         // two lines of 30 words, never over CHUNK_WORDS
         #expect(runs.map { $0["start"]?.doubleValue } == [0.0, 2.0, 4.0, 6.0, 8.0])
@@ -136,6 +133,7 @@ private final class FakeEncoder: MeaningEncoder {
         #expect(try Npy.read(npy).rows == 4)
         setMtime(paths.notes, mtime(paths.notes) + 1_000_000_000)  // new notes
         #expect(SearchIndex.stale(outputDir: t.url) == [paths])
+        #expect(try searcher(root: t.url).search("pricing", in: [paths]).isEmpty)  // a stale index is not used
     }
 
     @Test func test_meetings_still_recorded_or_processed_are_not_indexed() throws {
@@ -154,7 +152,7 @@ private final class FakeEncoder: MeaningEncoder {
         #expect(made.value == 0)  // nothing to do: no model loaded
     }
 
-    @Test func test_the_searcher_finds_by_meaning_and_lets_the_model_go() throws {
+    @Test func test_the_searcher_finds_by_meaning_keeps_to_one_speaker_and_lets_the_model_go() throws {
         let t = TempFolder("semantic"); defer { t.remove() }
         let paths = try meeting(t.url)
         _ = try index(t.url)
@@ -176,6 +174,11 @@ private final class FakeEncoder: MeaningEncoder {
         #expect(!s.loaded)
         _ = try s.search("pricing", in: [paths])
         #expect(loads.value == 2)
+        // It keeps to one speaker; the output dir's meetings when none are named.
+        let one = searcher(root: t.url)
+        #expect(try one.search("pricing", in: [paths], kinds: ["line"]) { _, label in label == "SPEAKER_01" }.isEmpty)
+        #expect(try !one.search("pricing", in: [paths], kinds: ["line"]) { _, label in label == "SPEAKER_00" }.isEmpty)
+        #expect(try one.search("pricing").keys == [Self.MEETING])
     }
 
     /// A timer may run its release at once (Task 44): the searcher never holds its lock while it starts one.
@@ -195,17 +198,6 @@ private final class FakeEncoder: MeaningEncoder {
         #expect(!s.loaded)
     }
 
-    @Test func test_the_searcher_keeps_to_one_speaker() throws {
-        let t = TempFolder("semantic"); defer { t.remove() }
-        let paths = try meeting(t.url)
-        _ = try index(t.url)
-        let s = searcher(root: t.url)
-        #expect(try s.search("pricing", in: [paths], kinds: ["line"]) { _, label in label == "SPEAKER_01" }.isEmpty)
-        #expect(try !s.search("pricing", in: [paths], kinds: ["line"]) { _, label in label == "SPEAKER_00" }.isEmpty)
-        // the output dir's meetings when none are named
-        #expect(try s.search("pricing").keys == [Self.MEETING])
-    }
-
     /// Year 3000 does not fit an Int's nanoseconds (APFS clamps it to Int.max; other file systems may not, see
     /// FileTimesTests); Python's int has no limit. No trap, and the meeting is indexed again for it.
     private func farFuture(_ url: URL) {
@@ -213,7 +205,7 @@ private final class FakeEncoder: MeaningEncoder {
         #expect(utimensat(AT_FDCWD, url.path, [t, t], 0) == 0)
     }
 
-    @Test func test_a_file_time_beyond_int_nanoseconds_makes_the_meeting_stale_without_trapping() throws {
+    @Test func test_a_file_time_beyond_int_nanoseconds_makes_the_meeting_stale_and_its_index_still_used_without_trapping() throws {
         let t = TempFolder("semantic"); defer { t.remove() }
         let paths = try meeting(t.url)
         #expect(try index(t.url) == 1)
@@ -221,24 +213,11 @@ private final class FakeEncoder: MeaningEncoder {
         #expect(SearchIndex.stale(outputDir: t.url) == [paths])
         #expect(try index(t.url) == 1)
         #expect(SearchIndex.stale(outputDir: t.url).isEmpty)  // APFS stores Int.max, which fits
-    }
-
-    @Test func test_an_index_signature_with_a_time_beyond_int_nanoseconds_is_still_used_by_the_searcher() throws {
-        let t = TempFolder("semantic"); defer { t.remove() }
-        let paths = try meeting(t.url)
-        _ = try index(t.url)
+        // An index signature with such a time is still used by the searcher.
         farFuture(paths.folder.appendingPathComponent(SearchIndex.INDEX_SIG))
         let s = searcher(root: t.url)
         #expect(try s.search("pricing", in: [paths])[Self.MEETING]?.isEmpty == false)
         #expect(try s.search("pricing", in: [paths])[Self.MEETING]?.isEmpty == false)
-    }
-
-    @Test func test_a_stale_index_is_not_used() throws {
-        let t = TempFolder("semantic"); defer { t.remove() }
-        let paths = try meeting(t.url)
-        _ = try index(t.url)
-        setMtime(paths.transcriptJson, mtime(paths.transcriptJson) + 1_000_000_000)
-        #expect(try searcher(root: t.url).search("pricing", in: [paths]).isEmpty)
     }
 
     @Test func test_without_the_model_nothing_is_loaded() throws {

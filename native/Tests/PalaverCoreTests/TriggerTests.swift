@@ -17,26 +17,19 @@ private func runApps(_ t: inout Trigger, _ timeline: [(Double, CallApp?)]) -> [S
     return out
 }
 
-@Test func triggerStartsAfterDebounceAndStopsAfterGrace() {
-    var t = Trigger(startAfter: 4, grace: 10, maxSession: 4 * 3600)
-    #expect(run(&t, [(0, true), (2, true), (4, true), (6, true), (8, false), (16, false), (18, false)])
-            == ["4.0 start", "18.0 stop"])
-}
-
-@Test func briefMicUseDoesNotStart() {
-    var t = Trigger(startAfter: 4, grace: 10, maxSession: 3600)
-    #expect(run(&t, [(0, true), (2, true), (3, false), (5, true), (7, false)]).isEmpty)
-}
-
-@Test func shortReleaseWithinGraceKeepsRecording() {
-    var t = Trigger(startAfter: 4, grace: 10, maxSession: 3600)
-    #expect(run(&t, [(0, true), (4, true), (10, false), (14, false), (16, true), (30, true)]) == ["4.0 start"])
-}
-
-@Test func maxDurationStopsAndWaitsForRelease() {
-    var t = Trigger(startAfter: 0, grace: 10, maxSession: 100)
-    #expect(run(&t, [(0, true), (50, true), (100, true), (150, true), (160, false), (170, true)])
-            == ["0.0 start", "100.0 stop", "170.0 start"])
+@Test(arguments: [
+    // starts after the debounce and stops after the grace
+    (4, 4 * 3600, [(0, true), (2, true), (4, true), (6, true), (8, false), (16, false), (18, false)], ["4.0 start", "18.0 stop"]),
+    // brief mic use does not start
+    (4, 3600, [(0, true), (2, true), (3, false), (5, true), (7, false)], []),
+    // a short release within the grace keeps recording
+    (4, 3600, [(0, true), (4, true), (10, false), (14, false), (16, true), (30, true)], ["4.0 start"]),
+    // the maximum duration stops and waits for a release
+    (0, 100, [(0, true), (50, true), (100, true), (150, true), (160, false), (170, true)], ["0.0 start", "100.0 stop", "170.0 start"]),
+] as [(Double, Double, [(Double, Bool)], [String])])
+func triggerTimeline(startAfter: Double, maxSession: Double, timeline: [(Double, Bool)], expected: [String]) {
+    var t = Trigger(startAfter: startAfter, grace: 10, maxSession: maxSession)
+    #expect(run(&t, timeline) == expected)
 }
 
 @Test func maxDurationBlocksWhileActiveAndIdlesWhenReleased() {

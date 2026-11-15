@@ -41,7 +41,8 @@ class StubHub:
         self._servers = [ThreadingHTTPServer(("127.0.0.1", 0), Handler) for _ in range(2)]
         for server in self._servers:
             server.daemon_threads = True
-            threading.Thread(target=server.serve_forever, name="stub-hub", daemon=True).start()
+            threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, name="stub-hub",
+                             daemon=True).start()
         self.url = f"http://127.0.0.1:{self._servers[0].server_address[1]}"
         self.cdn_url = f"http://127.0.0.1:{self._servers[1].server_address[1]}"
         self._cdn_port = self._servers[1].server_address[1]

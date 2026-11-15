@@ -12,7 +12,7 @@ import Testing
     private func unit(_ v: Double...) -> [Double] { VoiceMath.unit(v) }
     private func approx(_ a: Double, _ b: Double, _ tolerance: Double = 1e-6) -> Bool { abs(a - b) <= tolerance }
 
-    @Test func test_bank_lives_in_config_dir_one_file_per_person() throws {
+    @Test func test_bank_lives_in_config_dir_one_file_per_person_and_ignores_a_duplicate_source() throws {
         let t = folder(); defer { t.remove() }
         let stores = StorePaths.current(env: ["XDG_CONFIG_HOME": t.url.path, "PALAVER_HOME": t.url.appendingPathComponent("home").path])
         let bank = VoiceBank(directory: stores.voices)
@@ -24,14 +24,8 @@ import Testing
         #expect(data["name"]?.stringValue == "Anna Müller")
         #expect(data["samples"]?.arrayValue?.first?["source"]?.stringValue == "2026-10-20T14-35-17:SPEAKER_00")
         #expect(try VoiceBank(directory: stores.voices).names() == PyDict([("Anna Müller", 1)]))
-    }
-
-    @Test func test_add_ignores_duplicate_source() throws {
-        let t = folder(); defer { t.remove() }
-        let bank = bank(t)
-        try bank.add("Anna", unit(1, 0, 0), source: "m1:SPEAKER_00")
-        try bank.add("Anna", unit(1, 0, 0), source: "m1:SPEAKER_00")
-        #expect(try bank.names() == PyDict([("Anna", 1)]))
+        try bank.add("Anna Müller", unit(1, 0, 0), source: "2026-10-20T14-35-17:SPEAKER_00")  // a duplicate source: ignored
+        #expect(try bank.names() == PyDict([("Anna Müller", 1)]))
     }
 
     @Test func test_match_requires_threshold_and_margin() throws {
@@ -109,7 +103,7 @@ import Testing
         #expect(try !bank.removeSource("m1:SPEAKER_00"))
     }
 
-    @Test func test_recognize_among_invitees_is_less_strict() throws {
+    @Test func test_recognize_among_invitees_is_less_strict_and_falls_back_to_everyone() throws {
         let t = folder(); defer { t.remove() }
         let bank = bank(t)
         try bank.add("Anna", unit(1, 0, 0), source: "a")
@@ -120,16 +114,10 @@ import Testing
         let found = try Voices.recognize(nearAnna, talk: talk, bank: bank, invited: ["Anna"])
         #expect(found["SPEAKER_00"]?.0 == "Anna")  // only Anna was invited
         #expect(try Voices.recognize(nearAnna, talk: talk, bank: bank, invited: ["Anna", "Ben"]).isEmpty)  // margin
-    }
-
-    @Test func test_recognize_falls_back_to_everyone_when_no_invitee_matches() throws {
-        let t = folder(); defer { t.remove() }
-        let bank = bank(t)
-        try bank.add("Anna", unit(1, 0, 0), source: "a")
-        try bank.add("Ben", unit(0, 1, 0), source: "b")
-        let found = try Voices.recognize(PyDict([("SPEAKER_00", unit(0, 1, 0.05))]), talk: PyDict([("SPEAKER_00", 60.0)]),
+        // Falls back to everyone when no invitee matches.
+        let ben = try Voices.recognize(PyDict([("SPEAKER_00", unit(0, 1, 0.05))]), talk: PyDict([("SPEAKER_00", 60.0)]),
                                          bank: bank, invited: ["Anna"])
-        #expect(found["SPEAKER_00"]?.0 == "Ben")  // uninvited, but unmistakable
+        #expect(ben["SPEAKER_00"]?.0 == "Ben")  // uninvited, but unmistakable
     }
 
     @Test func test_every_bank_writer_waits_for_the_voices_lock() throws {

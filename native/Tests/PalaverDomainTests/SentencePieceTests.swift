@@ -43,12 +43,10 @@ import Testing
         }
     }
 
-    @Test func idsMatchSentencepieceOnTheTinyModels() throws {
-        try Self.idsMatch(["bert", "xlm-roberta"])
-    }
-
-    @Test func idsMatchSentencepieceOnTheConstructedModels() throws {
-        try Self.idsMatch(["nfkc", "raw", "suffix"])
+    /// The two tiny embedder models, and the three constructed ones.
+    @Test(arguments: [["bert", "xlm-roberta"], ["nfkc", "raw", "suffix"]])
+    func idsMatchSentencepiece(models: [String]) throws {
+        try Self.idsMatch(models)
     }
 
     @Test func encodeIsTheSameOnEveryCall() throws {

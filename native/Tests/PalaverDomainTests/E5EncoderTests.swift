@@ -57,25 +57,6 @@ import Testing
         #expect(Self.maxDifference(try encoder.query("hello world"), want[0]) < 1e-4)
     }
 
-    @Test func test_the_encoder_maps_its_weights_instead_of_reading_them() throws {
-        let folder = try Self.tempDir()
-        defer { try? FileManager.default.removeItem(at: folder) }
-        _ = try Self.tinyModel(folder)
-        let weights = try Safetensors(url: folder.appendingPathComponent("model.safetensors"))
-        #expect(!weights.names.isEmpty)
-        for name in weights.names {
-            let tensor = try weights.tensor(name)
-            // The F32 numbers are read where the file's bytes are mapped: no copy is made or kept.
-            let inMap = try tensor.withFloat32 { floats in
-                tensor.map.data.withUnsafeBytes { all in
-                    UnsafeRawPointer(floats.baseAddress!) == all.baseAddress! + tensor.offset
-                }
-            }
-            #expect(inMap, "\(name)")
-            #expect(!tensor.isConverted)
-        }
-    }
-
     @Test func test_prefixes_go_in_front_of_queries_and_passages() throws {
         let folder = try Self.tempDir()
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -132,6 +113,21 @@ import Testing
         let vectors: [[Float]] = try encoder.passages(["hello world", "cost"])
         let query: [Float] = try encoder.query("cost")
         #expect(vectors.count == 2 && query.count == encoder.dimension)
+
+        // The encoder maps its weights instead of reading them.
+        let mapped = try Safetensors(url: folder.appendingPathComponent("model.safetensors"))
+        #expect(!mapped.names.isEmpty)
+        for name in mapped.names {
+            let tensor = try mapped.tensor(name)
+            // The F32 numbers are read where the file's bytes are mapped: no copy is made or kept.
+            let inMap = try tensor.withFloat32 { floats in
+                tensor.map.data.withUnsafeBytes { all in
+                    UnsafeRawPointer(floats.baseAddress!) == all.baseAddress! + tensor.offset
+                }
+            }
+            #expect(inMap, "\(name)")
+            #expect(!tensor.isConverted)
+        }
 
         #if arch(arm64)
         let half = try Self.tempDir()

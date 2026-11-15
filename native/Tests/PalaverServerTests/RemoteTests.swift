@@ -125,14 +125,11 @@ private func expectRefused(_ text: String, _ body: () throws -> Any) {
     @Test func test_answer_goes_to_the_recording_process() throws {
         let f = AppFolder()
         let app = f.serve { _, _ in .ok(.bool(true)) }
-        defer { app.stop() }
         #expect(try f.remote().answer(choice: "stop", meeting: MEETING))
         #expect(app.calls.map(\.0) == ["answer"])
         #expect(app.calls.first?.1 == .object([("choice", .string("stop")), ("meeting", .string(MEETING))]))
-    }
-
-    @Test func test_answer_without_a_recording_process_is_refused_with_a_reason() {
-        let f = AppFolder()
+        app.stop()
+        // Without a recording process it is refused with a reason.
         expectRefused("did not answer") { try f.remote().answer(choice: "stop", meeting: MEETING) }
     }
 
@@ -152,20 +149,18 @@ private func expectRefused(_ text: String, _ body: () throws -> Any) {
     @Test func test_watch_and_switched_off_go_to_the_recording_process() {
         let f = AppFolder()
         let app = f.serve { _, _ in .ok(.null) }
-        defer { app.stop() }
         let r = f.remote()
         r.watch(folder: URL(fileURLWithPath: FOLDER), pid: 4242)
         r.switchedOff(app: "slack")
         #expect(app.calls.map { "\($0.0) \(PythonJSON.dumps($0.1))" } == [
             #"watch {"folder": "/m/2026-10-27T16-03-07", "pid": 4242}"#, #"switched_off {"app": "slack"}"#])
-    }
+        app.stop()
 
-    @Test func test_watch_and_switched_off_without_a_recording_process_change_nothing() {
-        let f = AppFolder()
+        // Without a recording process they change nothing.
         var logged: [String] = []
-        let r = Remote(statePath: f.state, socketPath: f.socket, log: { logged.append($0) })
-        r.watch(folder: URL(fileURLWithPath: FOLDER), pid: 4242)  // no error: the helper runs unwatched
-        r.switchedOff(app: "teams")
+        let gone = Remote(statePath: f.state, socketPath: f.socket, log: { logged.append($0) })
+        gone.watch(folder: URL(fileURLWithPath: FOLDER), pid: 4242)  // no error: the helper runs unwatched
+        gone.switchedOff(app: "teams")
         #expect(logged == ["the helper 4242 runs without the memory watchdog: the app did not answer",
                            "the app did not answer the record switch teams"])
     }
@@ -173,37 +168,34 @@ private func expectRefused(_ text: String, _ body: () throws -> Any) {
     @Test func test_the_setup_test_recording_goes_to_the_recording_process() throws {
         let f = AppFolder()
         let app = f.serve { _, args in .ok(.object([("state", .string(args["action"] == .string("start") ? "recording" : "idle"))])) }
-        defer { app.stop() }
         let t = RemoteTest(f.remote())
         #expect(try t.start(busy: { false }, mode: .object([("transcribe", .string("local"))])) == .object([("state", .string("recording"))]))
         #expect(t.status() == .object([("state", .string("idle"))]))
         #expect(PythonJSON.dumps(app.calls[0].1) == #"{"action": "start", "mode": {"transcribe": "local"}}"#)
         expectRefused("meeting is being recorded") { try t.start(busy: { true }) }
+        app.stop()
+
+        // Without a recording process the setup page still shows.
+        let gone = RemoteTest(f.remote())
+        #expect(gone.status()["state"] == .string("idle"))
+        #expect(gone.status()["max_seconds"] == .double(20.0))
+        expectRefused("did not answer") { try gone.start(busy: { false }) }
+        #expect(gone.stop()["state"] == .string("idle"))
     }
 
     @Test func test_the_calendar_is_asked_for_by_the_recording_process() throws {
         let f = AppFolder()
         let app = f.serve { _, args in .ok(.object([("state", .string(args.truthy ? "granted" : "not_asked"))])) }
-        defer { app.stop() }
         let r = f.remote()
         #expect(r.calendarStatus() == .object([("state", .string("not_asked"))]))
         #expect(try r.calendarConnect() == .object([("state", .string("granted"))]))
         #expect(app.calls.map { PythonJSON.dumps($0.1) } == ["{}", #"{"action": "connect"}"#])
-    }
+        app.stop()
 
-    @Test func test_the_calendar_without_a_recording_process() {
-        let f = AppFolder()
-        let r = f.remote(localCalendar: { .object([("state", .string("granted")), ("detail", .string("here"))]) })
-        #expect(r.calendarStatus()["state"] == .string("granted"))  // the page still shows what this process sees
-        expectRefused("did not answer") { try r.calendarConnect() }
-    }
-
-    @Test func test_the_setup_test_without_a_recording_process() {
-        let t = RemoteTest(AppFolder().remote())
-        #expect(t.status()["state"] == .string("idle"))  // the setup page still shows
-        #expect(t.status()["max_seconds"] == .double(20.0))
-        expectRefused("did not answer") { try t.start(busy: { false }) }
-        #expect(t.stop()["state"] == .string("idle"))
+        // Without a recording process the page still shows what this process sees.
+        let gone = f.remote(localCalendar: { .object([("state", .string("granted")), ("detail", .string("here"))]) })
+        #expect(gone.calendarStatus()["state"] == .string("granted"))
+        expectRefused("did not answer") { try gone.calendarConnect() }
     }
 
     @Test func test_start_helper_goes_to_the_app() throws {

@@ -127,15 +127,20 @@ import Testing
         #expect(Notes.meetingLanguage([u("Timo", 0, 1, "Hi.")]) == nil)
     }
 
-    @Test func test_name_from_a_garbled_first_line_is_not_backed() {
+    @Test func test_a_name_from_a_garbled_first_line_or_not_like_a_name_is_not_backed() {
         let us = [u("Timo", 0, 2, "Servus, schön dass ihr da seid."),
                   u("SPEAKER_03", 2.5, 6, "Hallo, ich bin Moritz Dings Kaufmann äh wegen dem Angebot."), u("Timo", 7, 9, "Genau, das Angebot.")]
         #expect(backed([guess("SPEAKER_03", "Moritz Dings Kaufmann")], us).isEmpty)
         let plain = [u("SPEAKER_03", 0, 2, "Hi, this is Anna Huber from sales.")]
         #expect(backed([guess("SPEAKER_03", "Anna")], plain) == ["SPEAKER_03/Anna"])
+        // A name guess has to look like a name.
+        let labels = [u("SPEAKER_02", 0, 2, "Hallo, ich bin Speaker 3 und das ist SPEAKER_03."), u("SPEAKER_03", 3, 4, "Hi, this is Anna.")]
+        for (label, name) in [("SPEAKER_02", "Speaker 3"), ("SPEAKER_03", "anna")] {
+            #expect(backed([guess(label, name)], labels).isEmpty)
+        }
     }
 
-    @Test func test_names_followed_by_german_nouns_are_backed() {
+    @Test func test_names_followed_by_german_nouns_or_named_in_a_handover_are_backed() {
         let cases: [([(String, String)], String)] = [
             ([("SPEAKER_02", "Hallo, ich bin Anna Huber Projektleiterin bei Kloud.")], "Anna Huber"),
             ([("SPEAKER_02", "ich bin Anna Huber äh Projektleiterin")], "Anna Huber"),
@@ -145,20 +150,11 @@ import Testing
             let us = lines.enumerated().map { u($1.0, Double($0), Double($0) + 0.9, $1.1) }
             #expect(backed([guess("SPEAKER_02", name)], us) == ["SPEAKER_02/\(name)"], "\(lines)")
         }
-    }
-
-    @Test func test_a_handover_names_the_next_speaker() {
+        // A handover names the next speaker.
         for handover in ["I finished the migration, over to you Bob.", "That's it from me, back to you Bob",
                          "Damit übergebe ich an Bob.", "Gut, weiter an Bob."] {
             let us = [u("Timo", 0, 2, handover), u("SPEAKER_01", 2.5, 4, "Thanks, so on my side …")]
             #expect(backed([guess("SPEAKER_01", "Bob")], us) == ["SPEAKER_01/Bob"], "\(handover)")
-        }
-    }
-
-    @Test func test_a_name_guess_has_to_look_like_a_name() {
-        let us = [u("SPEAKER_02", 0, 2, "Hallo, ich bin Speaker 3 und das ist SPEAKER_03."), u("SPEAKER_03", 3, 4, "Hi, this is Anna.")]
-        for (label, name) in [("SPEAKER_02", "Speaker 3"), ("SPEAKER_03", "anna")] {
-            #expect(backed([guess(label, name)], us).isEmpty)
         }
     }
 

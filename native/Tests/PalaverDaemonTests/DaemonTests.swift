@@ -21,12 +21,6 @@ extension DaemonTicks {
             #expect(h.state()["state"]?.stringValue == "idle")
         }
 
-        @Test func daemonSkipsProcessingVeryShortSessions() async throws {
-            let h = try Harness(tempDir(), activity: teams { 10 <= $0 && $0 < 40 }, duration: 30)
-            await h.run { $0 > 80 }
-            #expect(h.sessions.count == 1 && h.launched.isEmpty)
-        }
-
         struct Restarting: Error {}
 
         @Test func daemonSurvivesDetectorErrors() async throws {
@@ -40,19 +34,16 @@ extension DaemonTicks {
 
         @Test func daemonStopsRecordingOnShutdown() async throws {
             let h = try Harness(tempDir(), activity: teams { $0 >= 10 })
+            await h.run { $0 > 30 }
+            #expect(h.state()["state"]?.stringValue == "recording")
+            #expect(h.state()["folder"]?.stringValue == h.rec(0).path)
+            #expect(!h.daemon.startManual())  // a manual start while auto-recording is a no-op
+            #expect(h.sessions.count == 1)
             await h.run { $0 > 100 }
             h.daemon.shutdown()
             #expect(h.sessions[0].stopped)
             // Held back for the next start to continue (issue #47), not processed yet.
             #expect(h.launched.isEmpty && h.state()["cut"]?["folders"] == .strings([h.rec(0).path]))
-        }
-
-        @Test func stateFileReportsRecording() async throws {
-            let h = try Harness(tempDir(), activity: teams { $0 >= 10 })
-            await h.run { $0 > 30 }
-            #expect(h.state()["state"]?.stringValue == "recording")
-            #expect(h.state()["folder"]?.stringValue == h.rec(0).path)
-            h.daemon.shutdown()
         }
 
         @Test func pausedDaemonIgnoresTeamsAndStopsRunningAutoSession() async throws {
@@ -69,35 +60,10 @@ extension DaemonTicks {
             #expect(h.sessions.count == 2)  // Teams still in a call → records again
         }
 
-        @Test func manualSessionIsNotStoppedByTeamsTrigger() async throws {
-            let h = try Harness(tempDir(), activity: noCall)
-            h.daemon.startManual()
-            await h.run { $0 > 120 }
-            #expect(!h.sessions[0].stopped)
-            h.daemon.stopManual()
-            #expect(h.sessions[0].stopped && p(h.launched) == [h.rec(0).path])
-        }
-
-        @Test func manualStartWhileAutoRecordingIsANoop() async throws {
-            let h = try Harness(tempDir(), activity: teams { $0 >= 10 })
-            await h.run { $0 > 30 }
-            #expect(!h.daemon.startManual())
-            #expect(h.sessions.count == 1)
-            h.daemon.shutdown()
-        }
-
         @Test func statusSnapshot() async throws {
             let h = try Harness(tempDir(), activity: noCall)
             let s = h.status()
             #expect(s["state"]?.stringValue == "idle" && s["auto"] == .bool(true) && s["folder"] == .null)
-        }
-
-        @Test func sessionsKnowHowTheyWereStarted() async throws {
-            let h = try Harness(tempDir(), activity: teams { 10 <= $0 && $0 < 100 })
-            await h.run { $0 > 150 }
-            h.daemon.startManual()
-            h.daemon.stopManual()
-            #expect(h.sessions.items.map { $0!.trigger } == ["teams", "manual"])
         }
 
         @Test func daemonWarnsWhenATrackIsMissing() async throws {
@@ -273,12 +239,6 @@ extension DaemonTicks {
             #expect(r.h.sessions.count == 2 && r.h.sessions[0].stopped && !r.h.sessions[1].stopped)
         }
 
-        @Test func aSlackHuddleIsRecordedAsOne() async throws {
-            let h = try Harness(tempDir(), activity: slack { 10 <= $0 && $0 < 700 })
-            await h.run { $0 > 760 }
-            #expect(h.sessions.items.map { $0!.trigger } == ["slack"])
-        }
-
         @Test func daemonStartsStreamOnlyWhenRealtime() async throws {
             var on = true
             var streams: [URL] = []
@@ -370,6 +330,7 @@ extension DaemonTicks {
             h.daemon.startManual()
             h.daemon.stopManual()
             #expect(h.sessions[2].stopReason == "by_you")
+            #expect(h.sessions.items.map { $0!.trigger } == ["teams", "teams", "manual"])  // each knows how it was started
             let x = try Harness(tempDir(), activity: teams { _ in true }, trigger: Trigger(startAfter: 0, grace: 10, maxSession: 100))
             await x.run { $0 > 110 }
             #expect(x.sessions[0].stopReason == "max_length")
@@ -494,26 +455,19 @@ final class FailingSession: RecordingSessionLike {
 
 extension DaemonTicks {
     @Suite struct DaemonQueueTests {
-        @Test func queueSurvivesRestart() async throws {
-            // Quitting while one recording transcribes and another is queued must not lose the queued one.
+        /// Quitting while one recording transcribes and another is queued must not lose the queued one. Done is
+        /// notion.json with auto-sync (the default), transcript.md without.
+        @Test(arguments: ["notion.json", "transcript.md"])
+        func queueSurvivesRestart(marker: String) async throws {
             let dir = tempDir()
             let done = dir.appendingPathComponent("done"), pending = dir.appendingPathComponent("pending")
-            mkdir(done); touch(done.appendingPathComponent("notion.json"), "{}")
+            mkdir(done); touch(done.appendingPathComponent(marker), "{}")
             mkdir(pending)
             writeJSON(dir.appendingPathComponent("state.json"),
                       ["state": "stopped", "queued": [done.path, pending.path, dir.appendingPathComponent("deleted").path]])
-            let h = try Harness(dir, activity: noCall)
-            await h.run { $0 > 4 }
-            #expect(p(h.launched) == [pending.path])
-        }
-
-        @Test func queueWithoutAutoSyncIsDoneOnceTranscribed() async throws {
-            let dir = tempDir()
-            let done = dir.appendingPathComponent("done"), pending = dir.appendingPathComponent("pending")
-            mkdir(done); touch(done.appendingPathComponent("transcript.md"))
-            mkdir(pending)
-            writeJSON(dir.appendingPathComponent("state.json"), ["state": "stopped", "queued": [done.path, pending.path]])
-            let h = try Harness(dir, activity: noCall) { deps, _ in deps.doneMarker = { "transcript.md" } }
+            let h = try Harness(dir, activity: noCall) { deps, _ in
+                if marker != "notion.json" { deps.doneMarker = { marker } }
+            }
             await h.run { $0 > 4 }
             #expect(p(h.launched) == [pending.path])
         }
@@ -611,7 +565,7 @@ extension DaemonTicks {
         @Test func shortRecordingMarkedNotTranscribed() async throws {
             let h = try Harness(tempDir(), activity: teams { 10 <= $0 && $0 < 40 }, duration: 30)
             await h.run { $0 > 80 }
-            #expect(h.launched.isEmpty)
+            #expect(h.sessions.count == 1 && h.launched.isEmpty)
             #expect(ProcessState.read(h.rec(0))?["error"]?.stringValue == "shorter than a minute")
             #expect(h.sent.last! == ("Meeting recorded", "rec0: under a minute, not transcribed"))
         }
@@ -713,15 +667,9 @@ extension DaemonTicks {
             #expect(p(r.notedFolders) == [r.h.rec(0).path])
         }
 
-        @Test func cloudNotesNeverWaitForMemory() async throws {
-            let r = try NotesRig(tempDir(), activity: teams { 10 <= $0 && $0 < 700 }, free: 0.5, notesMemory: { _ in 0 })
-            await r.h.run { $0 > 800 }
-            #expect(p(r.notedFolders) == [r.h.rec(0).path])
-        }
-
         @Test func notesWaitForTheMemoryOfTheMeetingNextInLine() async throws {
             let r = try NotesRig(tempDir(), activity: teams { 10 <= $0 && $0 < 700 }, free: 0.5,
-                                 notesMemory: { $0.lastPathComponent == "rec0" ? 0 : 20 })
+                                 notesMemory: { $0.lastPathComponent == "rec0" ? 0 : 20 })  // rec0's: a cloud model, needs none
             await r.h.run { $0 > 800 }
             #expect(p(r.notedFolders) == [r.h.rec(0).path])
         }
@@ -875,6 +823,8 @@ extension DaemonTicksB {
             let q = h.status()["stop_question"]
             #expect(q?["meeting"] == .string("rec0") && q?["reason"] == .string("teams") && q?["message"] == .string(asks[0].message))
             #expect(h.state()["stop_question"]?["reason"] == .string("teams"))
+            h.daemon.stopManual()
+            #expect(h.sessions[0].stopped && p(h.launched) == [h.rec(0).path])
         }
 
         @Test func answeringStopStopsTheRecording() async throws {

@@ -107,6 +107,9 @@ private let MEETING = "2026-10-27T16-03-07"
         }.resume()
         done.wait(10)
         #expect(box.status == 200 && String(decoding: box.body, as: UTF8.self) == #"{"ok": true}"#)
+        // The shipped page has its Settings entry (test_index_has_settings_entry).
+        let index = s.get("/")
+        #expect(index.status == 200 && index.text.contains(#"aria-label="Settings""#))
     }
 
     @Test func jsonAnswersKeepUnicodeAsIs() throws {
@@ -162,22 +165,7 @@ private let MEETING = "2026-10-27T16-03-07"
 
     // MARK: - bodies
 
-    @Test func test_http_bodies_are_capped_before_they_are_read() throws {
-        let s = try TestServer()
-        defer { s.stop() }
-        for (target, size) in [("/api/meetings/\(MEETING)/my-notes", 3 * 1024 * 1024),
-                               ("/api/meetings/\(MEETING)/my-notes/images", 40 * 1024 * 1024),
-                               ("/api/upcoming/x/my-notes/images", 40 * 1024 * 1024)] {
-            let head = "POST \(target) HTTP/1.1\r\nHost: 127.0.0.1:\(s.port)\r\nContent-Type: application/json\r\nContent-Length: \(size)\r\n\r\n{}"
-            let r = Wire.send(port: s.port, Data(head.utf8))
-            #expect(r.status == 413 && r.error == "too large")
-        }
-        #expect(Router.bodyLimit("/api/meetings/x/my-notes") == 2 * 1024 * 1024)
-        #expect(Router.bodyLimit("/api/meetings/x/my-notes/images") == 35 * 1024 * 1024)
-        #expect(Router.bodyLimit("/api/meetings/x/my-notes/images?x=1") == 2 * 1024 * 1024)  // server.py matches self.path
-    }
-
-    @Test func aBodyWithoutALengthIsCappedAsItArrives() throws {
+    @Test func bodiesAreCappedAndABodyThatIsNoJSONIsABadRequest() throws {
         let s = try TestServer { r, _ in r.post("/api/echo") { req, _ in .json(req.json) } }
         defer { s.stop() }
         func chunked(_ target: String, _ payload: Data, chunk: Int) -> Data {
@@ -196,11 +184,20 @@ private let MEETING = "2026-10-27T16-03-07"
         let r = Wire.send(port: s.port, big)
         #expect(r.status == 413 && r.error == "too large")
         #expect(s.get("/api/ping").status == 200)
-    }
 
-    @Test func aBodyThatIsNoJSONIsABadRequest() throws {
-        let s = try TestServer { r, _ in r.post("/api/echo") { req, _ in .json(req.json) } }
-        defer { s.stop() }
+        // A body with a length is capped before it is read.
+        for (target, size) in [("/api/meetings/\(MEETING)/my-notes", 3 * 1024 * 1024),
+                               ("/api/meetings/\(MEETING)/my-notes/images", 40 * 1024 * 1024),
+                               ("/api/upcoming/x/my-notes/images", 40 * 1024 * 1024)] {
+            let head = "POST \(target) HTTP/1.1\r\nHost: 127.0.0.1:\(s.port)\r\nContent-Type: application/json\r\nContent-Length: \(size)\r\n\r\n{}"
+            let capped = Wire.send(port: s.port, Data(head.utf8))
+            #expect(capped.status == 413 && capped.error == "too large")
+        }
+        #expect(Router.bodyLimit("/api/meetings/x/my-notes") == 2 * 1024 * 1024)
+        #expect(Router.bodyLimit("/api/meetings/x/my-notes/images") == 35 * 1024 * 1024)
+        #expect(Router.bodyLimit("/api/meetings/x/my-notes/images?x=1") == 2 * 1024 * 1024)  // server.py matches self.path
+
+        // A body that is no JSON is a bad request; an empty one is an empty object.
         #expect(Wire.send(port: s.port, Wire.request("POST", "/api/echo", headers: [s.host, ("Content-Type", "application/json")])).text == "{}")
         let bad = Wire.send(port: s.port, Wire.request("POST", "/api/echo", headers: [s.host, ("Content-Type", "application/json")],
                                                       body: Data("{nope".utf8)))
@@ -275,13 +272,6 @@ private let MEETING = "2026-10-27T16-03-07"
         }
         #expect(Static.serve("/app.js\0.js", staticDir: site).status == 404)
         #expect(!s.log.contains("failed"))
-    }
-
-    @Test func test_index_has_settings_entry() throws {
-        let s = try TestServer()
-        defer { s.stop() }
-        let r = s.get("/")
-        #expect(r.status == 200 && r.text.contains(#"aria-label="Settings""#))
     }
 
     // MARK: - errors and collaborators

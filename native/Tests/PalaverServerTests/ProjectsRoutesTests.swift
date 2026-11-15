@@ -132,7 +132,12 @@ private final class Fixture {
         #expect(status == 200 && runs.args == [["--no-wait", "suggest"]])
         #expect(post(s, "/api/projects/zz/delete").0 == 404)
         (status, answer) = post(s, "/api/projects/\(pid)/delete")
-        #expect(status == 200 && answer["projects"] == .array([]))
+        #expect(status == 200 && answer["projects"] == .array([]) && answer["undo"]?.stringValue?.isEmpty == false)
+        // The delete can be undone, with the project's meetings.
+        #expect(post(s, "/api/undo", .object([("token", answer["undo"] ?? .null)])).0 == 200)
+        let after = projects(s)
+        #expect(after.map { $0["name"]?.stringValue } == ["Recruiting"])
+        #expect(after.first?["meetings"]?.list.map { $0["id"]?.stringValue } == [MEETING])
     }
 
     @Test func test_upcoming_meetings_can_be_prepared() throws {
@@ -162,19 +167,6 @@ private final class Fixture {
         #expect(s.get("/api/upcoming/x%7C2026-10-28").status == 404)
     }
 
-    @Test func test_http_project_delete_can_be_undone() throws {
-        let s = try TestServer(meetings: { try pageMeeting($0) })
-        defer { s.stop() }
-        let pid = created(s)
-        _ = post(s, "/api/meetings/\(MEETING)/projects", .object([("project", .string(pid))]))
-        let (status, answer) = post(s, "/api/projects/\(pid)/delete")
-        #expect(status == 200 && answer["projects"] == .array([]) && answer["undo"]?.stringValue?.isEmpty == false)
-        #expect(post(s, "/api/undo", .object([("token", answer["undo"] ?? .null)])).0 == 200)
-        let after = projects(s)
-        #expect(after.map { $0["name"]?.stringValue } == ["Hiring"])
-        #expect(after.first?["meetings"]?.list.map { $0["id"]?.stringValue } == [MEETING])
-    }
-
     @Test func test_http_adding_a_suggested_project_undone_leaves_it_suggested() throws {
         let s = try TestServer(meetings: { try pageMeeting($0); try pageMeeting($0, OTHER) })
         defer { s.stop() }
@@ -187,7 +179,7 @@ private final class Fixture {
         #expect(projectOf(s) == ProjectOf(inIt: [], suggested: ["Hiring"], all: ["Hiring"]))  // not rejected
     }
 
-    @Test func test_http_removing_an_unsure_project_undone_brings_it_back_unsure() throws {
+    @Test func test_http_removing_or_confirming_an_unsure_project_undone_leaves_it_unsure() throws {
         let s = try TestServer(meetings: { try pageMeeting($0) })
         defer { s.stop() }
         let pid = created(s)
@@ -195,6 +187,11 @@ private final class Fixture {
         let (_, answer) = post(s, "/api/meetings/\(MEETING)/projects", .object([("project", .string(pid)), ("remove", .bool(true))]))
         #expect(answer["projects"] == .array([]))
         undo(s, answer)
+        #expect(projectOf(s).inIt == ["Hiring model"])
+        // Confirming it, undone, leaves it unsure.
+        let (_, confirmed) = post(s, "/api/meetings/\(MEETING)/projects", .object([("project", .string(pid))]))
+        #expect((confirmed["projects"]?.list ?? []).map { [$0["name"], $0["by"]] } == [[.string("Hiring"), .string("you")]])
+        undo(s, confirmed)
         #expect(projectOf(s).inIt == ["Hiring model"])
     }
 
@@ -206,17 +203,6 @@ private final class Fixture {
         undo(s, answer)
         #expect(projectOf(s) == ProjectOf(inIt: [], suggested: [], all: []))
         #expect(projects(s).isEmpty)
-    }
-
-    @Test func test_http_confirming_a_project_undone_leaves_it_unsure() throws {
-        let s = try TestServer(meetings: { try pageMeeting($0) })
-        defer { s.stop() }
-        let pid = created(s)
-        try unsure(s, pid)
-        let (_, answer) = post(s, "/api/meetings/\(MEETING)/projects", .object([("project", .string(pid))]))
-        #expect((answer["projects"]?.list ?? []).map { [$0["name"], $0["by"]] } == [[.string("Hiring"), .string("you")]])
-        undo(s, answer)
-        #expect(projectOf(s).inIt == ["Hiring model"])
     }
 
     @Test func test_http_chip_undo_refused_after_a_project_rename() throws {
@@ -242,23 +228,17 @@ private final class Fixture {
         #expect(projectOf(s).inIt == [])
     }
 
-    @Test func test_http_project_rename_can_be_undone() throws {
+    @Test func test_http_project_rename_and_description_can_be_undone() throws {
         let s = try TestServer(meetings: { try pageMeeting($0) })
         defer { s.stop() }
-        let pid = created(s)
+        let pid = created(s, description: "Old words.")
         let (status, answer) = post(s, "/api/projects/\(pid)", .object([("name", .string("Recruiting"))]))
         #expect(status == 200 && answer["projects"]?[0]?["name"] == .string("Recruiting"))
         undo(s, answer)
         #expect(projects(s).first?["name"] == .string("Hiring"))
-    }
-
-    @Test func test_http_project_description_can_be_undone() throws {
-        let s = try TestServer(meetings: { try pageMeeting($0) })
-        defer { s.stop() }
-        let pid = created(s, description: "Old words.")
-        let (status, answer) = post(s, "/api/projects/\(pid)", .object([("description", .string("New words."))]))
-        #expect(status == 200 && answer["projects"]?[0]?["description"] == .string("New words."))
-        undo(s, answer)
+        let (described, words) = post(s, "/api/projects/\(pid)", .object([("description", .string("New words."))]))
+        #expect(described == 200 && words["projects"]?[0]?["description"] == .string("New words."))
+        undo(s, words)
         #expect(projects(s).first?["description"] == .string("Old words."))
     }
 }

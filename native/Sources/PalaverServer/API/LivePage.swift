@@ -81,12 +81,13 @@ public enum LivePage {
                 ("text", .string(u.text)), ("glossed", MeetingsAPI.glossed(u)),
             ])
         }
+        let start = try MeetingsAPI.start(paths, try MeetingsAPI.meta(paths))
         var page = PyDict<JSONValue>([
             ("id", .string(paths.id)),
             ("title", .str(title)),
             ("title_from", .str(titleFrom)),
             ("calendar", try MeetingsAPI.calendar(app, event, used: Set(names.values.map(ScalarKey.init)), link: nil)),
-            ("start", try MeetingsAPI.start(paths, try MeetingsAPI.meta(paths))),
+            ("start", start),
             ("duration", .null),
             ("status", .string("recording")),
             ("live", .object([("until", live["until"] ?? .int(0))])),
@@ -96,6 +97,7 @@ public enum LivePage {
             ("my_notes_revision", .string(MyNotes.revision(paths.folder))),
             ("speakers", .array(speakers)),
             ("transcript", .array(transcript)),
+            ("muted", try MeetingsAPI.muted(paths, start: start, recording: true)),  // where the mic is not kept so far
             ("has_audio", .bool(false)),
         ])
         for (k, v) in try MeetingsAPI.meetingProjects(app, paths.id) { page[k] = v }

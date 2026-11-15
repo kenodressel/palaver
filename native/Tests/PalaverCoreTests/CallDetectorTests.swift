@@ -76,9 +76,7 @@ let teamsId = "com.microsoft.teams2.helper"
     #expect(det(slack, s: false) == nil)
     #expect(det(teams + slack, t: false) == .slack)
     #expect(det(teams) == .teams)
-}
-
-@Test func theSwitchesAreAskedOnEveryCall() {
+    // The switches are asked on every call.
     let on = Cell(true)
     let l = FakeLister(); l.list = [proc(teamsId, true)]
     let d = CallDetector(lister: l, teams: { on.value })

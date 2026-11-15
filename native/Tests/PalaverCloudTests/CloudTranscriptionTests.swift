@@ -116,6 +116,8 @@ private let SONIOX = "https://api.eu.soniox.com"
         let fake = soniox(tokens: #"{"tokens": [{"text": "Hm", "start_ms": 0, "end_ms": 100}]}"#)
         let answer = try await CloudTranscription.test("soniox", settings: home.settings, http: fake.client)
         #expect(answer["usd_per_hour"] == .double(0.10) && answer["heard"] == .string("Hm") && answer["seconds"]?.doubleValue != nil)
+        let tone = multipartFields(fake.requests[0])["file"]?.first as? (String, String, Data)
+        #expect(tone?.2.prefix(4) == Data("fLaC".utf8) && (tone?.2.count ?? 0) > 1000)  // two seconds of FLAC
         let log = AccessLog.recent(nil, stores: home.stores)
         #expect(log.first?["feature"] == .string("test") && log.first?["meetings"] == .array([]) && log.first?["audio_seconds"] == .double(2.0))
         let e = await thrown { try await CloudTranscription.test("anthropic", settings: home.settings, http: fake.client) }

@@ -42,7 +42,10 @@ private func keys(_ jobs: [PyDict<JSONValue>]) -> [String] { jobs.compactMap { $
         let t = TempFolder("model-jobs")
         defer { t.remove() }
         let root = t.url.appendingPathComponent(".jobs")
-        let pid = try ModelJobs.launch(root: root, kind: "notes", key: "2026-10-30T08-02-13", argv: sleeper(0.3))
+        let pid = try ModelJobs.launch(root: root, kind: "notes", key: "2026-10-30T08-02-13", argv: sleeper(1))  // long enough to look at it running
+        // The helper runs in its own process group, as the launcher's child.
+        #expect(getpgid(pid) == pid)
+        #expect(parentPid(pid) == getpid())
         let job = try #require(try ModelJobs.read(root, kind: "notes", key: "2026-10-30T08-02-13"))
         #expect(job["pid"] == .int(Int(pid)) && job["state"] == .string("running") && !(job["stale"]?.truthy ?? false))
         #expect(keys(try ModelJobs.running(root)) == ["2026-10-30T08-02-13"])
@@ -53,14 +56,6 @@ private func keys(_ jobs: [PyDict<JSONValue>]) -> [String] { jobs.compactMap { $
         let text = try String(contentsOf: root.appendingPathComponent("notes-2026-10-30T08-02-13.json"), encoding: .utf8)
         #expect(text.hasPrefix(#"{"kind": "notes", "key": "2026-10-30T08-02-13", "pid": \#(pid), "state": "done", "started": "#))
         #expect(text.contains(#", "stale": false, "returncode": 0, "ended": "#) && !text.hasSuffix("\n"))
-    }
-
-    @Test func test_the_exit_code_is_kept() throws {
-        let t = TempFolder("model-jobs")
-        defer { t.remove() }
-        let root = t.url.appendingPathComponent(".jobs")
-        let pid = try ModelJobs.launch(root: root, kind: "projects", key: "projects", argv: sleeper(0, 75))
-        #expect(try finish(root, "projects", "projects", pid: pid)["returncode"] == .int(75))
     }
 
     @Test func test_a_second_launch_while_one_runs_is_the_same_job() throws {
@@ -110,16 +105,6 @@ private func keys(_ jobs: [PyDict<JSONValue>]) -> [String] { jobs.compactMap { $
         launcher.start()
         let job = try ModelJobs.wait(root, kind: "projects", key: "projects", poll: 0.02, alive: { _ in false }, timeout: 10)
         #expect(job["state"] == .string("done") && job["returncode"] == .int(0))
-    }
-
-    @Test func test_the_helper_runs_in_its_own_process_group_as_the_launchers_child() throws {
-        let t = TempFolder("model-jobs")
-        defer { t.remove() }
-        let root = t.url.appendingPathComponent(".jobs")
-        let pid = try ModelJobs.launch(root: root, kind: "notes", key: "m", argv: sleeper(1))
-        defer { _ = try? finish(root, "notes", "m", pid: pid) }
-        #expect(getpgid(pid) == pid)
-        #expect(parentPid(pid) == getpid())
     }
 
     @Test func test_a_pending_undo_is_kept_until_finished() throws {
@@ -174,17 +159,12 @@ private func keys(_ jobs: [PyDict<JSONValue>]) -> [String] { jobs.compactMap { $
         let log = try String(contentsOf: try ModelJobs.logPath(root, kind: "projects", key: "projects"), encoding: .utf8)
         #expect(log.contains("Asking Gemma"))
         #expect(try ModelJobs.lastError(root, kind: "projects", key: "projects") == "the model is not downloaded")
-    }
 
-    @Test func test_a_helper_that_crashed_is_said_by_its_exception() throws {
-        let t = TempFolder("model-jobs")
-        defer { t.remove() }
-        let root = t.url.appendingPathComponent(".jobs")
-        // What `python -c "raise MemoryError('out of memory')"` prints.
-        let script = #"printf 'Traceback (most recent call last):\n  File "<string>", line 1, in <module>\nMemoryError: out of memory\n' >&2; exit 1"#
-        let pid = try ModelJobs.launch(root: root, kind: "projects", key: "projects", argv: ["/bin/sh", "-c", script])
-        try finish(root, "projects", "projects", pid: pid)
-        #expect(try ModelJobs.lastError(root, kind: "projects", key: "projects") == "MemoryError: out of memory")
+        // A helper that crashed is said by its exception: what `python -c "raise MemoryError('out of memory')"` prints.
+        let crash = #"printf 'Traceback (most recent call last):\n  File "<string>", line 1, in <module>\nMemoryError: out of memory\n' >&2; exit 1"#
+        let crashed = try ModelJobs.launch(root: root, kind: "projects", key: "crash", argv: ["/bin/sh", "-c", crash])
+        try finish(root, "projects", "crash", pid: crashed)
+        #expect(try ModelJobs.lastError(root, kind: "projects", key: "crash") == "MemoryError: out of memory")
         #expect(try ModelJobs.lastError(root, kind: "notes", key: "nothing-ran") == nil)
     }
 

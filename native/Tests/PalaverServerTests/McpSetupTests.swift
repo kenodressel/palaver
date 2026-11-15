@@ -353,6 +353,7 @@ private func entry(_ command: String, _ args: [String], extra: String = "") -> S
 
     // MARK: - the window's install (POST /api/mcp/install)
 
+    /// Also: the server (ServeMain.makeApp) starts Claude's entries with its own options.
     @Test func theWindowAddsPalaverToClaudeCodeAndDesktopInItsOwnProcess() throws {
         let h = Home()
         let s = try TestServer()
@@ -380,11 +381,8 @@ private func entry(_ command: String, _ args: [String], extra: String = "") -> S
         try write(stores.claudeDesktopConfig, "{not json")
         r = s.post("/api/mcp/install", .object([("target", .string("desktop"))]))
         #expect(r.status == 500 && r.error == "\(stores.claudeDesktopConfig.path) is not valid JSON; not changed")
-    }
 
-    @Test func theServerStartsClaudesEntriesWithItsOwnOptions() throws {
-        let s = try TestServer()
-        defer { s.stop() }
+        // The server starts Claude's entries with its own options.
         let config = s.dir.appendingPathComponent("config.toml")
         try write(config, "[recording]\noutput_dir = \"\(s.app.outputDir.path)\"\n[calendar]\nenabled = false\n")
         let env = ["PALAVER_HOME": s.dir.appendingPathComponent("home").path, "XDG_CONFIG_HOME": s.dir.appendingPathComponent("config").path,

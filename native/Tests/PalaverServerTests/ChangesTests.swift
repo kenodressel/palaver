@@ -266,6 +266,8 @@ private func withEvents(_ f: Fixture) throws -> (CalendarEvent, CalendarEvent, C
         #expect(MyNotes.load(prepared) == [MyNotes.Paragraph(text: "Ask about the salary band")])  // waiting again
     }
 
+    /// Python counts the calls of `refresh_recognition` and `assign_by_rules`; here their effect on the page: the
+    /// event's invitees are offered for the speakers, and its undo asks the question again.
     @Test func test_the_meeting_shows_the_event_link_and_the_question() throws {
         let f = try Fixture()
         let (planned, adhoc, _) = try withEvents(f)
@@ -280,8 +282,12 @@ private func withEvents(_ f: Fixture) throws -> (CalendarEvent, CalendarEvent, C
         let m = try f.page()
         #expect(m["event_question"] == .null)
         #expect(m["calendar"]?["link"]?["label"] == .string("Event: Northwind (you)") && m["calendar"]?["link"]?["unsure"] == .bool(false))
+        #expect(m["calendar"]?["invited"] == .strings(["Anna"]))  // its invitees are offered for the speakers now
         _ = try f.undo(token)
         #expect(try f.page()["event_question"] != .null)
+        #expect(CalendarEvents.loadQuestion(f.paths) != nil && CalendarEvents.load(f.paths) == nil)
+        try ChangesAPI.setMeetingEvent(f.app, id: MEETING, key: nil)  // none of these: the same
+        #expect(CalendarEvents.dismissed(f.paths))
     }
 
     @Test func test_confirming_an_unsure_event_makes_it_the_users() throws {
@@ -305,20 +311,6 @@ private func withEvents(_ f: Fixture) throws -> (CalendarEvent, CalendarEvent, C
         #expect(Evidence(path: f.stores.attributions).eventRejections(planned) == 0)
         try ChangesAPI.setMeetingEvent(app, id: MEETING, key: nil)  // none of these
         #expect(Evidence(path: f.stores.attributions).eventRejections(planned) == 1)
-    }
-
-    /// Python counts the calls of `refresh_recognition` and `assign_by_rules`; here their effect on the page: the
-    /// event's invitees are offered for the speakers, and its undo asks the question again.
-    @Test func test_answering_the_question_catches_up_on_what_processing_skipped() throws {
-        let f = try Fixture()
-        let (planned, adhoc, _) = try withEvents(f)
-        try CalendarEvents.ask(f.paths, [planned, adhoc])
-        let token = try ChangesAPI.setMeetingEvent(f.app, id: MEETING, key: planned.key)
-        #expect(try f.page()["calendar"]?["invited"] == .strings(["Anna"]))  // its invitees are offered for the speakers now
-        _ = try f.undo(token)
-        #expect(CalendarEvents.loadQuestion(f.paths) != nil && CalendarEvents.load(f.paths) == nil)
-        try ChangesAPI.setMeetingEvent(f.app, id: MEETING, key: nil)  // none of these: the same
-        #expect(CalendarEvents.dismissed(f.paths))
     }
 
     /// #31: the answer does not wait for every meeting. The meeting's voices are recognized with the new invitees
@@ -403,14 +395,6 @@ private func withEvents(_ f: Fixture) throws -> (CalendarEvent, CalendarEvent, C
         #expect(snapshots(f.out).isEmpty)
     }
 
-    @Test func test_http_trash() throws {
-        let s = try TestServer(meetings: { try pageMeeting($0) })
-        defer { s.stop() }
-        let (status, answer) = post(s, "/api/meetings/\(MEETING)/trash")
-        #expect(status == 200 && answer == .object([("trashed", .string(MEETING)), ("undo", answer["undo"] ?? .null)]))
-        #expect(answer["undo"]?.stringValue?.count == 32)
-    }
-
     @Test func test_a_failed_meeting_can_go_to_the_trash() throws {
         let f = try Fixture()  // It was "processing" for ever before: nothing could be done with it.
         try FileManager.default.removeItem(at: f.paths.transcriptJson)
@@ -454,11 +438,17 @@ private func withEvents(_ f: Fixture) throws -> (CalendarEvent, CalendarEvent, C
         #expect(until { s.app.inflight.count == 0 })
     }
 
+    /// The trash's answer and its undo; an unknown or made-up token is a 404.
     @Test func test_http_trash_can_be_undone() throws {
         let s = try TestServer(meetings: { try pageMeeting($0) })
         defer { s.stop() }
+        let (status404, error) = post(s, "/api/undo", .object([("token", .string(String(repeating: "0", count: 32)))]))
+        #expect(status404 == 404 && error["error"]?.stringValue?.contains("can't undo") == true)
+        #expect(post(s, "/api/undo", .object([("token", .string("../../x"))])).0 == 404)
+        #expect(post(s, "/api/undo").1 == .object([("error", .string("bad request: 'token'"))]))
         let (status, answer) = post(s, "/api/meetings/\(MEETING)/trash")
-        #expect(status == 200 && answer["undo"] != nil)
+        #expect(status == 200 && answer == .object([("trashed", .string(MEETING)), ("undo", answer["undo"] ?? .null)]))
+        #expect(answer["undo"]?.stringValue?.count == 32)
         #expect(s.get("/api/meetings/\(MEETING)").status == 404)
         let (st, restored) = post(s, "/api/undo", .object([("token", answer["undo"]!)]))
         #expect(st == 200 && restored == .object([("restored", .strings([MEETING]))]))
@@ -488,15 +478,6 @@ private func withEvents(_ f: Fixture) throws -> (CalendarEvent, CalendarEvent, C
 
     // MARK: - undo
 
-    @Test func test_http_undo_unknown_token_is_404() throws {
-        let s = try TestServer(meetings: { try pageMeeting($0) })
-        defer { s.stop() }
-        let (status, error) = post(s, "/api/undo", .object([("token", .string(String(repeating: "0", count: 32)))]))
-        #expect(status == 404 && error["error"]?.stringValue?.contains("can't undo") == true)
-        #expect(post(s, "/api/undo", .object([("token", .string("../../x"))])).0 == 404)
-        #expect(post(s, "/api/undo").1 == .object([("error", .string("bad request: 'token'"))]))
-    }
-
     @Test func test_http_undo_refused_after_the_meeting_changed() throws {
         let s = try TestServer(meetings: { try pageMeeting($0) })
         defer { s.stop() }
@@ -504,14 +485,6 @@ private func withEvents(_ f: Fixture) throws -> (CalendarEvent, CalendarEvent, C
         _ = post(s, "/api/meetings/\(MEETING)/speakers", .object([("label", .string("SPEAKER_00")), ("name", .string("Ana"))]))
         let (status, error) = post(s, "/api/undo", .object([("token", answer["undo"] ?? .null)]))
         #expect(status == 409 && error["error"]?.stringValue?.contains("changed") == true)
-    }
-
-    @Test func test_http_failed_change_leaves_no_snapshot() throws {
-        let s = try TestServer(meetings: { try pageMeeting($0) })
-        defer { s.stop() }
-        let (status, error) = post(s, "/api/meetings/\(MEETING)/split", .object([("at", .int(500))]))
-        #expect(status >= 400 && error["error"] == .string("bad request: cut between 0:01 and 0:19"))
-        #expect(snapshots(s.app.outputDir).isEmpty)
     }
 
     @Test func test_http_change_failing_half_way_is_rolled_back() throws {
@@ -531,17 +504,6 @@ private func withEvents(_ f: Fixture) throws -> (CalendarEvent, CalendarEvent, C
         #expect(try Data(contentsOf: folder.appendingPathComponent("system_turns.json")) == before)
         #expect(try frames(folder.appendingPathComponent("system.wav")) == SR * 20)
         #expect(snapshots(s.app.outputDir).isEmpty)
-    }
-
-    @Test func test_http_failed_rollback_keeps_the_snapshot() throws {
-        struct Nope: Error {}
-        let s = try TestServer(meetings: { try pageMeeting($0) }, routes: { _, app in
-            app.changeOps.split = { _, _ in throw Nope() }
-            app.changeOps.restore = { _, _, _ in throw Nope() }
-        })
-        defer { s.stop() }
-        #expect(post(s, "/api/meetings/\(MEETING)/split", .object([("at", .int(10))])).0 == 500)
-        #expect(snapshots(s.app.outputDir).count == 1)
     }
 
     /// The rollback runs holding the projects lock, as api.py's `with _PROJECTS_LOCK, _undoable(...)` rolls back before
@@ -600,6 +562,7 @@ private func withEvents(_ f: Fixture) throws -> (CalendarEvent, CalendarEvent, C
         #expect(snapshots(s.app.outputDir).count == 1)  // the trash's own
     }
 
+    /// A failed rollback keeps the snapshot and says so in daemon.log.
     @Test func aFailedRollbackSaysSoInDaemonLog() throws {
         struct Nope: Error, CustomStringConvertible { var description: String { "nope" } }
         let s = try TestServer(meetings: { try pageMeeting($0) }, routes: { _, app in
@@ -608,6 +571,7 @@ private func withEvents(_ f: Fixture) throws -> (CalendarEvent, CalendarEvent, C
         })
         defer { s.stop() }
         #expect(post(s, "/api/meetings/\(MEETING)/split", .object([("at", .int(10))])).0 == 500)
+        #expect(snapshots(s.app.outputDir).count == 1)
         let token = try #require(snapshots(s.app.outputDir).first)
         #expect(until { s.log.contains("rolling back split failed; the snapshot \(token) is kept: nope") })
     }
@@ -648,30 +612,25 @@ private func withEvents(_ f: Fixture) throws -> (CalendarEvent, CalendarEvent, C
         }
     }
 
+    /// A failed split leaves no snapshot; a split can be undone, also after a later split of it was undone.
     @Test func test_http_split_can_be_undone() throws {
         let s = try TestServer(meetings: { try pageMeeting($0) })
         defer { s.stop() }
         let out = s.app.outputDir
+        let (failed, error) = post(s, "/api/meetings/\(MEETING)/split", .object([("at", .int(500))]))
+        #expect(failed >= 400 && error["error"] == .string("bad request: cut between 0:01 and 0:19"))
+        #expect(snapshots(out).isEmpty)
         let (status, answer) = post(s, "/api/meetings/\(MEETING)/split", .object([("at", .int(10))]))
         let rest = try #require(answer["rest"]?.stringValue)
         #expect(status == 200 && answer["undo"] != nil && ids(s).contains(rest))
         #expect(try frames(out.appendingPathComponent("\(MEETING)/system.wav")) == SR * 10)
+        let (st, second) = post(s, "/api/meetings/\(MEETING)/split", .object([("at", .int(5)), ("join_next", .bool(true))]))
+        #expect(st == 200 && second["joined"] == .bool(true))
+        #expect(post(s, "/api/undo", .object([("token", second["undo"] ?? .null)])).0 == 200)
         #expect(post(s, "/api/undo", .object([("token", answer["undo"]!)])).0 == 200)
         #expect(ids(s) == [MEETING])
         #expect(try frames(out.appendingPathComponent("\(MEETING)/system.wav")) == SR * 20)
         #expect(read(out.appendingPathComponent("\(MEETING)/meta.json"))?["duration_seconds"] == .int(20))
-    }
-
-    @Test func test_http_older_split_undo_works_after_a_later_split_was_undone() throws {
-        let s = try TestServer(meetings: { try pageMeeting($0) })
-        defer { s.stop() }
-        let (_, first) = post(s, "/api/meetings/\(MEETING)/split", .object([("at", .int(10))]))
-        let (status, second) = post(s, "/api/meetings/\(MEETING)/split", .object([("at", .int(5)), ("join_next", .bool(true))]))
-        #expect(status == 200 && second["joined"] == .bool(true))
-        #expect(post(s, "/api/undo", .object([("token", second["undo"] ?? .null)])).0 == 200)
-        #expect(post(s, "/api/undo", .object([("token", first["undo"] ?? .null)])).0 == 200)
-        #expect(ids(s) == [MEETING])
-        #expect(try frames(s.app.outputDir.appendingPathComponent("\(MEETING)/system.wav")) == SR * 20)
     }
 
     @Test(arguments: [(20, "following"), (3, "tail")])
@@ -730,14 +689,6 @@ private func withEvents(_ f: Fixture) throws -> (CalendarEvent, CalendarEvent, C
         let first = try f.page(a.id)
         #expect(first["transcript"]?.arrayValue?.map { $0["speaker"] } == [.string("Speaker 1")])
         #expect(first["duration"] == .int(40))
-    }
-
-    @Test func test_discard_from_the_window() throws {
-        let f = try Fixture(meeting: false)
-        let a = try recording(f.out, C0, 60, [("SPEAKER_00", 1, 30, ANNA), ("SPEAKER_01", 41, 59, BEN)])
-        let result = try ChangesAPI.splitMeeting(f.app, id: a.id, at: 40, joinNext: false, discard: "after")
-        #expect(result["discarded"] == .string("after"))
-        #expect(try f.page(a.id)["duration"] == .int(40))
     }
 
     @Test func test_the_window_offers_the_silence_and_removing_it_keeps_the_meeting() throws {
@@ -810,9 +761,16 @@ private func withEvents(_ f: Fixture) throws -> (CalendarEvent, CalendarEvent, C
         #expect(try MeetingsAPI.listMeetings(app: f.app)[0]["title_from"] == .string("notes"))
     }
 
+    /// Only text is taken (nothing snapshotted for the rest); it is stripped, capped and can be undone; undone after
+    /// the meeting went to the trash, it brings nothing back.
     @Test func test_http_rename_strips_caps_and_can_be_undone() throws {
         let s = try TestServer(meetings: { try pageMeeting($0) })
         defer { s.stop() }
+        for bad: JSONValue in [.object([("title", .null)]), .object([("title", .int(7))]), .object([("title", .strings(["Rico"]))]), .object([])] {
+            #expect(post(s, "/api/meetings/\(MEETING)/title", bad).0 == 400, "\(bad)")
+        }
+        #expect(post(s, "/api/meetings/2026-01-01T00-00-00/title", .object([("title", .string("x"))])).0 == 404)
+        #expect(snapshots(s.app.outputDir).isEmpty)
         let (status, answer) = post(s, "/api/meetings/\(MEETING)/title", .object([("title", .string("  Offer for Rico  "))]))
         #expect(status == 200 && answer["title"] == .string("Offer for Rico") && answer["title_from"] == .string("you") && answer["undo"] != nil)
         let (st, second) = post(s, "/api/meetings/\(MEETING)/title", .object([("title", .string(String(repeating: "y", count: 300)))]))
@@ -824,24 +782,9 @@ private func withEvents(_ f: Fixture) throws -> (CalendarEvent, CalendarEvent, C
         let m = s.get("/api/meetings/\(MEETING)").json
         #expect(m?["title"] == .string("Hiring debrief") && m?["title_from"] == .string("notes"))
         #expect(!exists(s.app.outputDir.appendingPathComponent("\(MEETING)/title.json")))
-    }
-
-    @Test func test_http_rename_takes_only_text() throws {
-        let s = try TestServer(meetings: { try pageMeeting($0) })
-        defer { s.stop() }
-        for bad: JSONValue in [.object([("title", .null)]), .object([("title", .int(7))]), .object([("title", .strings(["Rico"]))]), .object([])] {
-            #expect(post(s, "/api/meetings/\(MEETING)/title", bad).0 == 400, "\(bad)")
-        }
-        #expect(post(s, "/api/meetings/2026-01-01T00-00-00/title", .object([("title", .string("x"))])).0 == 404)
-        #expect(snapshots(s.app.outputDir).isEmpty)
-    }
-
-    @Test func test_http_rename_undone_after_the_meeting_went_to_the_trash_brings_nothing_back() throws {
-        let s = try TestServer(meetings: { try pageMeeting($0) })
-        defer { s.stop() }
-        let (_, answer) = post(s, "/api/meetings/\(MEETING)/title", .object([("title", .string("Offer for Rico"))]))
+        let (_, third) = post(s, "/api/meetings/\(MEETING)/title", .object([("title", .string("Offer for Rico"))]))
         _ = post(s, "/api/meetings/\(MEETING)/trash")
-        #expect(post(s, "/api/undo", .object([("token", answer["undo"] ?? .null)])).0 == 409)
+        #expect(post(s, "/api/undo", .object([("token", third["undo"] ?? .null)])).0 == 409)
         #expect(!exists(s.app.outputDir.appendingPathComponent(MEETING)))  // no folder made for the title alone
     }
 
@@ -921,21 +864,15 @@ private func withEvents(_ f: Fixture) throws -> (CalendarEvent, CalendarEvent, C
         #expect(again == 400 && error["error"] == .string("bad request: only a transcribed meeting's audio can be deleted"))
     }
 
-    @Test func test_meeting_can_be_kept_on_this_mac() throws {
-        let f = try Fixture()
-        #expect(try f.page()["local_only"] == .bool(false))
-        try ChangesAPI.setLocalOnly(f.app, id: MEETING, on: true)
-        #expect(try f.page()["local_only"] == .bool(true))
-        #expect(exists(f.paths.localOnly))
-        try ChangesAPI.setLocalOnly(f.app, id: MEETING, on: false)
-        #expect(try f.page()["local_only"] == .bool(false))
-    }
-
     @Test func keptOnThisMacOverHTTPIsOnUnlessSaidOtherwise() throws {
         let s = try TestServer(meetings: { try pageMeeting($0) })
         defer { s.stop() }
+        #expect(s.get("/api/meetings/\(MEETING)").json?["local_only"] == .bool(false))
         #expect(post(s, "/api/meetings/\(MEETING)/local-only").1["local_only"] == .bool(true))
+        #expect(s.get("/api/meetings/\(MEETING)").json?["local_only"] == .bool(true))
+        #expect(exists(RecordingPaths(s.app.outputDir.appendingPathComponent(MEETING, isDirectory: true)).localOnly))
         #expect(post(s, "/api/meetings/\(MEETING)/local-only", .object([("on", .bool(false))])).1["local_only"] == .bool(false))
+        #expect(s.get("/api/meetings/\(MEETING)").json?["local_only"] == .bool(false))
         #expect(post(s, "/api/meetings/nope/local-only").0 == 404)
     }
 

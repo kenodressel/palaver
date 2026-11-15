@@ -101,22 +101,21 @@ import Testing
         [{"speaker": "A", "start": 0, "end": 1, "text": "bei Cloud", "unsure": ["Cloud"]}, {"speaker": "B", "start": 1, "end": 2, "text": "ja", "heard": "jo", "unsure": ["jo"]}]
         """#.write(to: folder.appendingPathComponent("transcript.json"), atomically: false, encoding: .utf8)
         #expect(GlossarySuggest.unsureWords(outputDir: t.url) == PyDict([("cloud", 1)]))
-    }
 
-    // MARK: - beyond the Python tests
-
-    @Test func unsureWordsStripPunctuationAndSkipFoldersThatAreNoRecordings() throws {
-        let t = TempFolder("glossary-unsure"); defer { t.remove() }
+        // Beyond the Python tests: punctuation is stripped, folders that are no recordings are skipped.
+        let other = TempFolder("glossary-unsure"); defer { other.remove() }
         for (name, json) in [("2026-10-27T16-03-07", #"[{"text": "a", "unsure": ["Cloud,", "cloud?", "...", "KLOUD"]}]"#),
                              ("2026-10-28T09-00-00", "not json"),
                              ("notes", #"[{"text": "a", "unsure": ["Cloud"]}]"#)] {
-            let folder = t.url.appendingPathComponent(name)
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            try json.write(to: folder.appendingPathComponent("transcript.json"), atomically: false, encoding: .utf8)
+            let recording = other.url.appendingPathComponent(name)
+            try FileManager.default.createDirectory(at: recording, withIntermediateDirectories: true)
+            try json.write(to: recording.appendingPathComponent("transcript.json"), atomically: false, encoding: .utf8)
         }
-        #expect(GlossarySuggest.unsureWords(outputDir: t.url) == PyDict([("cloud", 2), ("", 1), ("kloud", 1)]))
-        #expect(GlossarySuggest.unsureWords(outputDir: t.url.appendingPathComponent("missing")).isEmpty)
+        #expect(GlossarySuggest.unsureWords(outputDir: other.url) == PyDict([("cloud", 2), ("", 1), ("kloud", 1)]))
+        #expect(GlossarySuggest.unsureWords(outputDir: other.url.appendingPathComponent("missing")).isEmpty)
     }
+
+    // MARK: - beyond the Python tests
 
     @Test func occurrencesCountRareWordsWithAnExamplePerMeeting() {
         let tr = PyDict<[(Double, String)]>([

@@ -216,12 +216,20 @@ public final class KeychainStore: KeyStore, @unchecked Sendable {
     /// The Python app's item, when there is one, gets the new value too if that needs nobody (a new value is not a read:
     /// measured silent), so the developer fallback's Python stays in step; its access list stays as it is.
     public func write(_ account: String, _ value: String) throws {
-        let deleted = SecItemDelete(query(service, account) as CFDictionary)
-        guard deleted == errSecSuccess || deleted == errSecItemNotFound, add(account, Data(value.utf8), plainIfRefused: true) else {
-            throw KeychainError("could not save \(account) in the Keychain")
+        let data = Data(value.utf8)
+        let existing = attributes(service, account)
+        let updated = existing.map {
+            !Self.isRemoved($0) && ($0[kSecAttrGeneric] as? Data) == Self.MARKER
+                && updateQuietly(query(service, account) as CFDictionary, [kSecValueData: data] as CFDictionary) == errSecSuccess
+        } ?? false
+        if !updated {
+            let deleted = SecItemDelete(query(service, account) as CFDictionary)
+            guard deleted == errSecSuccess || deleted == errSecItemNotFound, add(account, data, plainIfRefused: true) else {
+                throw KeychainError("could not save \(account) in the Keychain")
+            }
         }
         guard let python = legacyServices.first, attributes(python, account) != nil else { return }
-        let status = updateQuietly(query(python, account) as CFDictionary, [kSecValueData: Data(value.utf8)] as CFDictionary)
+        let status = updateQuietly(query(python, account) as CFDictionary, [kSecValueData: data] as CFDictionary)
         if status != errSecSuccess {
             log("Keychain: \(account) in the Python app's item (\(python)) keeps its old value (\(status))")
         }

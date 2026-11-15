@@ -107,9 +107,17 @@ private func namesIn(_ file: URL) throws -> Set<String> {
 @Suite struct ExchangeRoutesTests {
     // MARK: - HTTP
 
+    /// Also test_exchange.py `test_leftovers_of_imports_are_swept_at_start_and_of_exports_on_the_next_export`, its export
+    /// half (`Exchange.sweep` itself is ExchangeExportTests'): an export sweeps what an export cut short left in Downloads.
     @Test func test_http_export_saves_to_downloads() throws {
         let s = try server()
         defer { s.stop() }
+        let old = s.app.downloads.appendingPathComponent(".palaver-export-x1", isDirectory: true)
+        let other = s.app.downloads.appendingPathComponent("keep.zip")
+        try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
+        try Data("mine".utf8).write(to: other)
+        let hoursAgo = Date(timeIntervalSinceNow: -2 * 3600)
+        for url in [old, other] { try FileManager.default.setAttributes([.modificationDate: hoursAgo], ofItemAtPath: url.path) }
         let (status, answer) = call(s, "/api/meetings/\(ID)/export", .object([("notes", .bool(false)), ("voices", .bool(true))]))
         #expect(status == 200 && answer["name"] == .string("2026-10-29 Budget review.zip") && answer["folder"] == .string("Downloads"))
         let saved = s.app.downloads.appendingPathComponent(answer["name"]?.stringValue ?? "")
@@ -117,6 +125,7 @@ private func namesIn(_ file: URL) throws -> Set<String> {
         let names = try namesIn(saved)
         #expect(!names.contains("meeting/notes.json") && names.contains("voices/SPEAKER_00.json"))
         #expect(answer["bytes"] == .int(try FileManager.default.attributesOfItem(atPath: saved.path)[.size] as? Int ?? -1))
+        #expect(!exists(old) && exists(other))
         let again = call(s, "/api/meetings/\(ID)/export", .object([])).1
         #expect(again["name"] == .string("2026-10-29 Budget review 2.zip"))  // never over an earlier one
     }
@@ -132,23 +141,14 @@ private func namesIn(_ file: URL) throws -> Set<String> {
         #expect(status2 == 200 && answer2["name"]?.stringValue?.hasSuffix(".zip") == true)
     }
 
-    @Test func test_mcp_says_a_meeting_was_imported_and_from_whom() throws {
-        let s = try server()
-        defer { s.stop() }
-        let (status, answer) = try importing(s, try export(s), path: "/api/import?separate=1")
-        let imported = try #require(answer["imported"]?.stringValue)
-        #expect(status == 200)
-        let m = McpTools(app: s.app, userName: "Timo")  // the Swift `palaver mcp`'s tools (phase 4 batch 6)
-        var listed: [String: JSONValue] = [:]
-        for brief in try m.listMeetings().arrayValue ?? [] { listed[brief["id"]?.stringValue ?? ""] = brief }
-        #expect(listed[imported]?["imported_from"] == .string(SENDER) && listed[ID]?["imported_from"] == nil)
-        let got = try m.getMeeting(meetingId: imported)
-        #expect(got["imported_from"] == .string(SENDER) && got["note"]?.stringValue?.hasPrefix("Imported from \(SENDER)") == true)
-    }
-
+    /// It refuses JSON and says why a file is rejected; it asks before going beside my own recording; the MCP tools
+    /// say a meeting was imported and from whom.
     @Test func test_http_import_asks_before_going_beside_my_own_recording() throws {
         let s = try server()
         defer { s.stop() }
+        #expect(call(s, "/api/import", .object([("file", .string("x"))])).0 == 415)
+        let (rejected, why) = call(s, "/api/import", raw: Data("not a zip".utf8), contentType: "application/octet-stream")
+        #expect(rejected == 400 && why["error"]?.stringValue?.hasPrefix("Not imported: This is not a zip") == true)
         let exported = try export(s)
         var (status, answer) = try importing(s, exported)
         #expect(status == 200 && answer["question"] == .string("collision") && answer["own"] == .bool(true))
@@ -159,16 +159,15 @@ private func namesIn(_ file: URL) throws -> Set<String> {
         (status, answer) = try importing(s, exported, path: "/api/import?separate=1")
         #expect(status == 200 && answer["imported"] == .string("\(ID)-2") && answer["beside"] == .string(ID) && answer["undo"]?.truthy == true)
         #expect(keys(answer) == ["imported", "from", "voices", "warnings", "beside", "undo"])
+        let imported = try #require(answer["imported"]?.stringValue)
+        let m = McpTools(app: s.app, userName: "Timo")  // the Swift `palaver mcp`'s tools (phase 4 batch 6)
+        var listed: [String: JSONValue] = [:]
+        for brief in try m.listMeetings().arrayValue ?? [] { listed[brief["id"]?.stringValue ?? ""] = brief }
+        #expect(listed[imported]?["imported_from"] == .string(SENDER) && listed[ID]?["imported_from"] == nil)
+        let got = try m.getMeeting(meetingId: imported)
+        #expect(got["imported_from"] == .string(SENDER) && got["note"]?.stringValue?.hasPrefix("Imported from \(SENDER)") == true)
         let (undone, _) = call(s, "/api/undo", .object([("token", answer["undo"] ?? .null)]))
         #expect(undone == 200 && !exists(s.app.outputDir.appendingPathComponent("\(ID)-2")))
-    }
-
-    @Test func test_http_import_refuses_json_and_says_why_a_file_is_rejected() throws {
-        let s = try server()
-        defer { s.stop() }
-        #expect(call(s, "/api/import", .object([("file", .string("x"))])).0 == 415)
-        let (status, answer) = call(s, "/api/import", raw: Data("not a zip".utf8), contentType: "application/octet-stream")
-        #expect(status == 400 && answer["error"]?.stringValue?.hasPrefix("Not imported: This is not a zip") == true)
     }
 
     @Test func test_http_voices_of_an_import_are_added_on_a_yes() throws {
@@ -191,47 +190,25 @@ private func namesIn(_ file: URL) throws -> Set<String> {
         #expect(dumps(.object(try bank.names().map { ($0.key, .int($0.value)) })) == dumps(.object(before.map { ($0.key, .int($0.value)) })))
     }
 
-    /// test_exchange.py `test_leftovers_of_imports_are_swept_at_start_and_of_exports_on_the_next_export`, its export half
-    /// (`Exchange.sweep` itself is ExchangeExportTests'): an export sweeps what an export cut short left in Downloads.
-    @Test func anExportSweepsWhatAnEarlierExportLeftInDownloads() throws {
-        let s = try server()
-        defer { s.stop() }
-        let old = s.app.downloads.appendingPathComponent(".palaver-export-x1", isDirectory: true)
-        let other = s.app.downloads.appendingPathComponent("keep.zip")
-        try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
-        try Data("mine".utf8).write(to: other)
-        let hoursAgo = Date(timeIntervalSinceNow: -2 * 3600)
-        for url in [old, other] { try FileManager.default.setAttributes([.modificationDate: hoursAgo], ofItemAtPath: url.path) }
-        #expect(call(s, "/api/meetings/\(ID)/export", .object([])).0 == 200)
-        #expect(!exists(old) && exists(other))
-    }
-
     @Test func test_the_web_route_takes_files_as_large_as_the_core_does() {
         #expect(Router.MAX_IMPORT_BODY == ExchangeZip.MAX_FILE_BYTES)
     }
 
     // MARK: - api.import_meeting
 
-    @Test func test_undoing_an_import_forgets_the_voices_it_taught() throws {
-        let s = try TestServer(userName: "Timo")
-        defer { s.stop() }
-        let out = try export(s, voices: true)
-        let answer = try ExchangeAPI.importMeeting(s.app, file: out)
-        let bank = VoiceBank(directory: s.app.stores.voices)
-        _ = try bank.add("Timo Strauß", vector(0), source: "\(ID):SPEAKER_00")  // learned from it meanwhile
-        _ = try bank.add("Zoe", vector(9), source: "2026-10-01T10-00-00:SPEAKER_00")
-        _ = try UndoRoute.undoChange(s.app, token: answer["undo"]?.stringValue ?? "")
-        #expect(try bank.names() == PyDict([("Zoe", 1)]))
-    }
-
+    /// Through the trash, forgetting the voices it taught.
     @Test func test_an_import_can_be_undone_through_the_trash() throws {
         let s = try TestServer(userName: "Timo")
         defer { s.stop() }
         let mine = s.app.outputDir
-        let answer = try ExchangeAPI.importMeeting(s.app, file: try export(s))
+        let answer = try ExchangeAPI.importMeeting(s.app, file: try export(s, voices: true))
         #expect(answer["imported"] == .string(ID) && MeetingsAPI.isDirectory(mine.appendingPathComponent(ID)))
+        let bank = VoiceBank(directory: s.app.stores.voices)
+        _ = try bank.add("Timo Strauß", vector(0), source: "\(ID):SPEAKER_00")  // learned from it meanwhile
+        _ = try bank.add("Zoe", vector(9), source: "2026-10-01T10-00-00:SPEAKER_00")
         let token = answer["undo"]?.stringValue ?? ""
         _ = try UndoRoute.undoChange(s.app, token: token)
+        #expect(try bank.names() == PyDict([("Zoe", 1)]))
         #expect(!exists(mine.appendingPathComponent(ID)))
         #expect(exists(mine.appendingPathComponent(".trash/\(ID)/transcript.json")))
         #expect(throws: UndoGone.self) { try Undo.restore(mine, token) }

@@ -111,37 +111,6 @@ private func usage(_ s: TestServer) -> String { (try? String(contentsOf: s.app.s
         #expect(usage(s).isEmpty)  // looking counts nothing
     }
 
-    @Test func test_set_key_never_comes_back_to_the_page() throws {
-        let settings = Settings()
-        let fake = FakeProvider(settings.answer)
-        let s = try TestServer(provider: fake)
-        defer { s.stop() }
-        var r = s.post("/api/language-model/key", .object([("provider", .string("anthropic")), ("key", .string(KEY))]))
-        #expect(r.status == 200 && settings.keys == ["anthropic": KEY])
-        #expect(fake.calls.last?.action == "set-key" && fake.calls.last?.body["key"]?.stringValue == KEY)
-        #expect(r.json?["providers"]?.arrayValue?.first?["key_set"] == .bool(true))
-        #expect(!r.text.contains(KEY) && !s.log.contains(KEY) && !usage(s).contains(KEY))
-        #expect(usage(s).contains(#""kind": "setting", "id": "key.anthropic", "removed": false"#))
-        r = s.post("/api/language-model/key", .object([("provider", .string("anthropic")), ("remove", .bool(true))]))
-        #expect(r.status == 200 && fake.calls.last?.action == "set-key")
-        #expect(usage(s).contains(#""id": "key.anthropic", "removed": true"#))
-    }
-
-    @Test func test_choosing_a_provider_needs_it_set_up() throws {
-        let settings = Settings()
-        let fake = FakeProvider(settings.answer)
-        let s = try TestServer(provider: fake)
-        defer { s.stop() }
-        var r = s.post("/api/language-model", .object([("use", .object([("notes", .string("anthropic"))]))]))
-        #expect(r.status == 400 && r.error == "Anthropic API: Add the API key")
-        #expect(usage(s).isEmpty)  // a change refused is no change
-        _ = s.post("/api/language-model/key", .object([("provider", .string("anthropic")), ("key", .string(KEY))]))
-        r = s.post("/api/language-model", .object([("use", .object([("notes", .string("anthropic"))]))]))
-        #expect(r.status == 200 && r.json?["features"]?.arrayValue?.first?["choice"] == .string("anthropic"))
-        #expect(fake.calls.map(\.action) == ["set-language-model", "set-key", "set-language-model"])
-        #expect(usage(s).contains(#""id": "use.notes", "value": "anthropic""#))
-    }
-
     @Test func test_provider_settings_and_the_local_model() throws {
         let fake = FakeProvider { action, body in
             if body["endpoint"]?.stringValue == "http://evil.example.com" { throw Refused("the endpoint must use https") }
@@ -160,54 +129,57 @@ private func usage(_ s: TestServer) -> String { (try? String(contentsOf: s.app.s
         #expect(fake.calls.allSatisfy { $0.action == "set-language-model" && $0.timeout == Providers.TIMEOUT })
     }
 
-    @Test func test_test_button() throws {
-        let fake = FakeProvider(Settings().answer)
-        let s = try TestServer(provider: fake)
-        defer { s.stop() }
-        let r = s.post("/api/language-model/test", .object([("provider", .string("anthropic"))]))
-        #expect(r.status == 200 && r.text == #"{"answer": "Hello there", "seconds": 0.4, "model": "claude-opus-5-5"}"#)
-        #expect(fake.calls.map(\.action) == ["test"] && fake.calls.first?.timeout == Providers.TEST_TIMEOUT)
-        #expect(usage(s).isEmpty)  // a test is no setting
-    }
-
+    /// The key never comes back to the page, a log or the usage count; a provider is chosen only once it is set up; the
+    /// Test button has its own budget and counts as no setting.
     @Test func test_http_language_model() throws {
         let settings = Settings()
-        let s = try TestServer(provider: FakeProvider(settings.answer))
+        let fake = FakeProvider(settings.answer)
+        let s = try TestServer(provider: fake)
         defer { s.stop() }
         var r = s.get("/api/language-model")
         #expect(r.status == 200 && r.json?["features"]?.arrayValue?.first?["choice"] == .string("local"))
+        #expect(dumps(fake.calls.first?.body) == "{}" && fake.calls.first?.timeout == Providers.TIMEOUT)
         r = s.post("/api/language-model", .object([("use", .object([("notes", .string("anthropic"))]))]))
-        #expect(r.status == 400 && (r.error ?? "").contains("API key"))
+        #expect(r.status == 400 && r.error == "Anthropic API: Add the API key")
+        #expect(usage(s).isEmpty)  // looking, and a change refused, count nothing
         r = s.post("/api/language-model/key", .object([("provider", .string("anthropic")), ("key", .string(KEY))]))
-        #expect(r.status == 200 && !r.text.contains(KEY) && settings.keys["anthropic"] == KEY)
+        #expect(r.status == 200 && settings.keys == ["anthropic": KEY])
+        #expect(fake.calls.last?.action == "set-key" && fake.calls.last?.body["key"]?.stringValue == KEY)
+        #expect(r.json?["providers"]?.arrayValue?.first?["key_set"] == .bool(true))
+        #expect(!r.text.contains(KEY) && !s.log.contains(KEY) && !usage(s).contains(KEY))
+        #expect(usage(s).contains(#""kind": "setting", "id": "key.anthropic", "removed": false"#))
         r = s.post("/api/language-model", .object([("use", .object([("notes", .string("anthropic"))]))]))
         #expect(r.status == 200 && r.json?["features"]?.arrayValue?.first?["choice"] == .string("anthropic"))
+        #expect(fake.calls.map(\.action) == ["language-model", "set-language-model", "set-key", "set-language-model"])
+        #expect(usage(s).contains(#""id": "use.notes", "value": "anthropic""#))
+        let counted = usage(s)
         r = s.post("/api/language-model/test", .object([("provider", .string("anthropic"))]))
-        #expect(r.status == 200 && r.json?["answer"] == .string("Hello there"))
+        #expect(r.status == 200 && r.text == #"{"answer": "Hello there", "seconds": 0.4, "model": "claude-opus-5-5"}"#)
+        #expect(fake.calls.last?.action == "test" && fake.calls.last?.timeout == Providers.TEST_TIMEOUT)
+        #expect(usage(s) == counted)  // a test is no setting
         settings.testFails = true
         r = s.post("/api/language-model/test", .object([("provider", .string("anthropic"))]))
         #expect(r.status == 502 && (r.error ?? "").contains("401") && !r.text.contains(KEY))
         r = s.get("/api/language-model")
         #expect(!r.text.contains(KEY) && !s.log.contains(KEY))
+        r = s.post("/api/language-model/key", .object([("provider", .string("anthropic")), ("remove", .bool(true))]))
+        #expect(r.status == 200 && fake.calls.last?.action == "set-key")
+        #expect(usage(s).contains(#""id": "key.anthropic", "removed": true"#))
     }
 
-    @Test func test_transcription_page_starts_local_and_says_what_goes_where() throws {
-        let fake = FakeProvider(Settings().answer)
-        let s = try TestServer(provider: fake)
-        defer { s.stop() }
-        let r = s.get("/api/transcription")
-        #expect(r.status == 200 && r.json?["feature"]?["choice"] == .string("local"))
-        #expect(r.json?["month"]?["seconds"] == .double(0.0))  // what was sent this month comes with it
-        #expect(fake.calls.map(\.action) == ["transcription"] && fake.calls.first?.timeout == Providers.TIMEOUT)
-    }
-
-    @Test func test_transcription_choice_key_region_and_test() throws {
+    @Test func test_http_transcription() throws {
         let settings = Settings()
         let fake = FakeProvider(settings.answer)
         let s = try TestServer(provider: fake)
         defer { s.stop() }
+        var r = s.get("/api/transcription")
+        #expect(r.status == 200 && r.json?["feature"]?["choice"] == .string("local"))
+        #expect(r.json?["month"]?["seconds"] == .double(0.0))  // what was sent this month comes with it
+        #expect(fake.calls.map(\.action) == ["transcription"] && fake.calls.first?.timeout == Providers.TIMEOUT)
+        r = s.post("/api/transcription", .object([("use", .string("soniox"))]))
+        #expect(r.status == 400 && (r.error ?? "").contains("API key"))
         #expect(s.post("/api/transcription", .object([("use", .string("assemblyai"))])).status == 400)
-        var r = s.post("/api/transcription/key", .object([("provider", .string("assemblyai")), ("key", .string(ASR_KEY))]))
+        r = s.post("/api/transcription/key", .object([("provider", .string("assemblyai")), ("key", .string(ASR_KEY))]))
         #expect(r.status == 200 && settings.keys == ["assemblyai": ASR_KEY] && !r.text.contains(ASR_KEY))
         r = s.post("/api/transcription", .object([("use", .string("assemblyai"))]))
         #expect(r.status == 200 && r.json?["feature"]?["choice"] == .string("assemblyai"))
@@ -215,26 +187,12 @@ private func usage(_ s: TestServer) -> String { (try? String(contentsOf: s.app.s
         #expect(s.post("/api/transcription", region).status == 200 && dumps(fake.calls.last?.body) == dumps(region))
         r = s.post("/api/transcription/test", .object([("provider", .string("assemblyai"))]))
         #expect(r.status == 200 && r.json?["usd_per_hour"] == .double(0.28))
-        #expect(fake.calls.map(\.action) == ["set-transcription", "set-transcription-key", "set-transcription", "set-transcription",
-                                             "test-transcription"])
+        #expect(fake.calls.map(\.action) == ["transcription", "set-transcription", "set-transcription", "set-transcription-key",
+                                             "set-transcription", "set-transcription", "test-transcription"])
         #expect(fake.calls.last?.timeout == Providers.TEST_TIMEOUT)
         let counted = usage(s)
         #expect(counted.contains(#""id": "key.assemblyai", "removed": false"#) && counted.contains(#""id": "use", "value": "assemblyai""#))
         #expect(counted.contains(#""id": "provider.assemblyai", "fields": ["model", "region"]"#) && !counted.contains(ASR_KEY))
-    }
-
-    @Test func test_http_transcription() throws {
-        let settings = Settings()
-        let s = try TestServer(provider: FakeProvider(settings.answer))
-        defer { s.stop() }
-        var r = s.get("/api/transcription")
-        #expect(r.status == 200 && r.json?["feature"]?["choice"] == .string("local"))
-        r = s.post("/api/transcription", .object([("use", .string("soniox"))]))
-        #expect(r.status == 400 && (r.error ?? "").contains("API key"))
-        r = s.post("/api/transcription/key", .object([("provider", .string("assemblyai")), ("key", .string(ASR_KEY))]))
-        #expect(r.status == 200 && !r.text.contains(ASR_KEY))
-        r = s.post("/api/transcription", .object([("use", .string("assemblyai"))]))
-        #expect(r.status == 200 && r.json?["feature"]?["choice"] == .string("assemblyai"))
         settings.testFails = true
         r = s.post("/api/transcription/test", .object([("provider", .string("assemblyai"))]))
         #expect(r.status == 502 && (r.error ?? "").contains("refused the API key") && !r.text.contains(ASR_KEY))
@@ -405,19 +363,6 @@ private final class StubAnthropic: @unchecked Sendable {
         #expect(lm?["local"]?["models"]?.arrayValue?.contains { $0["repo"] == .string("someone/else") } == true)  // shown though not listed
     }
 
-    @Test func test_http_a_bad_key_request_does_not_echo_it() throws {
-        let p = try InProcess()
-        defer { p.stop() }
-        for (provider, key, said) in [("claude-cli", KEY, "Claude Code CLI takes no API key"),
-                                      ("anthropic", "two\nlines " + KEY, "that is not an API key"),
-                                      ("anthropic", "sk-ant- " + KEY, "an API key has no spaces inside; copy it again without them"),
-                                      ("nope", KEY, "no provider 'nope'")] {
-            let r = p.server.post("/api/language-model/key", .object([("provider", .string(provider)), ("key", .string(key))]))
-            #expect(r.status == 400 && r.error == said && !r.text.contains(KEY))
-        }
-        #expect(p.keychain.isEmpty && !p.server.log.contains(KEY) && !usage(p.server).contains(KEY))
-    }
-
     @Test func test_provider_settings_are_checked() throws {
         let p = try InProcess()
         defer { p.stop() }
@@ -491,23 +436,31 @@ private final class StubAnthropic: @unchecked Sendable {
         #expect(!s.log.contains(ASR_KEY) && !usage(s).contains(ASR_KEY))
     }
 
-    @Test func nothingGoesToPython() {
-        // Every provider action is answered in this process; the shipped server starts no Python for them.
-        let p = try? InProcess()
-        defer { p?.stop() }
-        for action in ["language-model", "transcription", "registry"] {
-            #expect((try? p?.server.app.provider.call(action, body: .object([]), timeout: 5)) != nil, "\(action)")
-        }
-        #expect(p?.services.requests.isEmpty == true)
-    }
-
-    @Test func theSetupAssistantReadsTheRegistryInProcess() throws {
+    @Test func nothingGoesToPythonAndABadRequestIsRefusedWithoutEchoingTheKey() throws {
         let p = try InProcess()
         defer { p.stop() }
-        let r = p.server.get("/api/setup")
-        #expect(r.status == 200)
+        // Every provider action is answered in this process; the shipped server starts no Python for them.
+        for action in ["language-model", "transcription", "registry"] {
+            #expect((try? p.server.app.provider.call(action, body: .object([]), timeout: 5)) != nil, "\(action)")
+        }
+        #expect(p.services.requests.isEmpty)
+        // The setup assistant reads the registry in process.
+        #expect(p.server.get("/api/setup").status == 200)
         let reg = try p.server.app.provider.call("registry", body: .object([]), timeout: 1)
         #expect(reg["providers"]?.arrayValue?.count == ModelChoice.providers.count)
+
+        // A bad key request does not echo it.
+        for (provider, key, said) in [("claude-cli", KEY, "Claude Code CLI takes no API key"),
+                                      ("anthropic", "two\nlines " + KEY, "that is not an API key"),
+                                      ("anthropic", "sk-ant- " + KEY, "an API key has no spaces inside; copy it again without them"),
+                                      ("nope", KEY, "no provider 'nope'")] {
+            let r = p.server.post("/api/language-model/key", .object([("provider", .string(provider)), ("key", .string(key))]))
+            #expect(r.status == 400 && r.error == said && !r.text.contains(KEY))
+        }
+        #expect(p.keychain.isEmpty && !p.server.log.contains(KEY) && !usage(p.server).contains(KEY))
+        // A body that is no object is a bad request.
+        let notObject = p.server.post("/api/language-model", .array([]))
+        #expect(notObject.status == 400 && (notObject.error ?? "").hasPrefix("bad request"))
     }
 
     @Test func theTestButtonKeepsItsBudget() throws {
@@ -533,13 +486,6 @@ private final class StubAnthropic: @unchecked Sendable {
         do { _ = try providers.call("test", body: .object([("provider", .string("anthropic"))]), timeout: 1) } catch let e as BadGateway { said = e.text }
         #expect(said == "The test took longer than 1 seconds; it was stopped.")
         #expect(Date().timeIntervalSince(started) < 5)
-    }
-
-    @Test func aBodyThatIsNoObjectIsABadRequest() throws {
-        let p = try InProcess()
-        defer { p.stop() }
-        let r = p.server.post("/api/language-model", .array([]))
-        #expect(r.status == 400 && (r.error ?? "").hasPrefix("bad request"))
     }
 }
 

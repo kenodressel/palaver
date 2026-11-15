@@ -68,19 +68,8 @@ private func samples(_ n: Int, _ f: (Int) -> Int16) -> [Int16] { (0..<n).map(f) 
         #expect(try Wav16.info(tmp).frames == Wav16.info(f.paths.micWav).frames)
     }
 
-    @Test func test_http_audio_ranges() throws {
-        let s = try TestServer(meetings: { try pageMeeting($0) })
-        defer { s.stop() }
-        var r = s.get("/api/meetings/\(MEETING)/audio", headers: [("Range", "bytes=0-99")])
-        #expect(r.status == 206 && r.body.count == 100 && r.body.prefix(4) == Data("RIFF".utf8))
-        let total = Int(r.header("Content-Range")!.split(separator: "/")[1])!
-        #expect(total == 44 + 2 * SR * 20)
-        r = s.get("/api/meetings/\(MEETING)/audio?track=system", headers: [("Range", "bytes=100-")])
-        #expect(r.status == 206 && r.header("Content-Range")!.hasPrefix("bytes 100-"))
-        #expect(s.get("/api/meetings/\(MEETING)/audio", headers: [("Range", "bytes=\(total)-")]).status == 416)
-    }
-
-    /// A range past a slice: at most a slice from its start, and the last N bytes in full (read a slice at a time).
+    /// test_http_audio_ranges; a range past a slice: at most a slice from its start, and the last N bytes in full
+    /// (read a slice at a time).
     @Test func aLongTrackIsAnsweredASliceAtATime() throws {
         let f = try Fixture()
         let n = SR * 70  // 2.24 MB of samples: more than a slice
@@ -99,6 +88,13 @@ private func samples(_ n: Int, _ f: (Int) -> Int16) -> [Int16] { (0..<n).map(f) 
             try Wav16.write(system, rate: SR, to: paths.systemWav)
         })
         defer { s.stop() }
+        var r = s.get("/api/meetings/\(MEETING)/audio", headers: [("Range", "bytes=0-99")])
+        #expect(r.status == 206 && r.body.count == 100 && r.body.prefix(4) == Data("RIFF".utf8))
+        let total = Int(r.header("Content-Range")!.split(separator: "/")[1])!
+        #expect(total == src.size)
+        r = s.get("/api/meetings/\(MEETING)/audio?track=system", headers: [("Range", "bytes=100-")])
+        #expect(r.status == 206 && r.header("Content-Range")!.hasPrefix("bytes 100-"))
+        #expect(s.get("/api/meetings/\(MEETING)/audio", headers: [("Range", "bytes=\(total)-")]).status == 416)
         let slice = AudioSource.AUDIO_SLICE_BYTES
         let from = s.get("/api/meetings/\(MEETING)/audio", headers: [("Range", "bytes=1-")])
         #expect(from.header("Content-Range") == "bytes 1-\(slice)/\(src.size)" && from.body == whole.subdata(in: 1..<slice + 1))

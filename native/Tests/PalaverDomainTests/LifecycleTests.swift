@@ -23,6 +23,12 @@ private func obj(_ fields: [(String, JSONValue)]) -> JSONValue { .object(fields)
         #expect(Lifecycle.recordingText(obj([("trigger", .string("teams")), ("since", .string(start)), ("restarts", .int(1)),
                                              ("mic", obj([("device", .string("MacBook Pro Mic"))]))]), timeZone: tz)
                 == "Recording · Teams call since 12:06, continued after a Palaver restart · mic MacBook Pro Mic")
+        // The output device, when known (#50).
+        let withOutput = obj([("trigger", .string("teams")), ("since", .string(start)),
+                              ("mic", obj([("device", .string("AirPods Pro")), ("rate", .int(24000))])),
+                              ("system", obj([("device", .string("AirPods Pro")), ("rate", .int(24000)), ("source", .string("process-tap"))]))])
+        #expect(Lifecycle.recordingText(withOutput, timeZone: tz)
+                == "Recording · Teams call since 12:06 · mic AirPods Pro (24 kHz) · output AirPods Pro (24 kHz)")
     }
 
     @Test func test_stopped_text_names_the_reason() {
@@ -64,14 +70,6 @@ private func obj(_ fields: [(String, JSONValue)]) -> JSONValue { .object(fields)
     }
 
     // --- audio problems (issue #50) ---
-
-    @Test func test_recording_text_names_the_output_device_when_known() {
-        let why = obj([("trigger", .string("teams")), ("since", .string(start)),
-                       ("mic", obj([("device", .string("AirPods Pro")), ("rate", .int(24000))])),
-                       ("system", obj([("device", .string("AirPods Pro")), ("rate", .int(24000)), ("source", .string("process-tap"))]))])
-        #expect(Lifecycle.recordingText(why, timeZone: tz)
-                == "Recording · Teams call since 12:06 · mic AirPods Pro (24 kHz) · output AirPods Pro (24 kHz)")
-    }
 
     @Test func test_problem_warning_says_what_is_wrong_in_plain_words() {
         #expect(Lifecycle.problemWarning(kind: "speed", track: "system") == "System audio is playing at the wrong speed; Palaver is correcting it")

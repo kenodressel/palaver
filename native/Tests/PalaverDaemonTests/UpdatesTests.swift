@@ -107,8 +107,10 @@ final class Box<T>: @unchecked Sendable {
         #expect(said?.title == "Palaver is up to date" && said?.body == "Palaver 0.1.0 is the latest version.")
     }
 
+    /// update.json says what this version is right after the start, with its keys in order.
     @Test func statusKeepsUpdateJsonsKeysInOrder() {
         let r = Rig()
+        #expect(r.saved.last["current"] == .string("0.1.0") && r.saved.last["state"] == .string("idle"))
         guard case .object(let fields) = r.u.status() else { Issue.record("not an object"); return }
         #expect(fields.map(\.0) == ["state", "current", "available", "done_bytes", "waiting_for", "error",
                                     "check_error", "checked_at", "automatic", "announced"])
@@ -124,6 +126,9 @@ final class Box<T>: @unchecked Sendable {
         #expect(r.u.announce() == nil)
         let a = MenuText.announcement("0.2.0")
         #expect(a.title == "Palaver 0.2.0 is available" && a.body == "Click to see what's new and install it.")
+        let upToDate = Rig(latest: .success(.upToDate))
+        upToDate.u.runCheck()
+        #expect(upToDate.u.announce() == nil)  // nothing when up to date
     }
 
     @Test func anAnnouncedReleaseStaysAnnouncedAfterARestartAndANewerOneIsNew() {
@@ -133,13 +138,6 @@ final class Box<T>: @unchecked Sendable {
         r.backend.latest = .success(.plan(UpdatePlan(version: "0.3.0", downloadBytes: 5)))
         r.u.runCheck()
         #expect(r.u.announce() == "0.3.0")
-    }
-
-    @Test func nothingIsAnnouncedWhenUpToDateOrFromACheckout() {
-        let r = Rig(latest: .success(.upToDate))
-        r.u.runCheck()
-        #expect(r.u.announce() == nil)
-        #expect(Rig(installed: nil).u.announce() == nil)
     }
 
     @Test func theNotificationIsTheAnnouncementOnceAndAClickOpensSettingsUpdate() {
@@ -175,12 +173,13 @@ final class Box<T>: @unchecked Sendable {
         #expect(!r.u.due())
         r.clock.t += 1
         #expect(r.u.due())
-    }
-
-    @Test func nothingIsDueBeforeTheInstalledReleaseIsKnown() {
-        let backend = FakeUpdateBackend()
-        let u = Updates(.init(backend: backend, startedOk: tempDir().appendingPathComponent("ok")))
-        #expect(!u.due())
+        // Automatic checks can be turned off; "Check now" still works.
+        r.enabled.value = false
+        #expect(!r.u.due())
+        #expect(r.u.runCheck()["state"] == .string("available"))
+        // Nothing is due before the installed release is known.
+        let unknown = Updates(.init(backend: FakeUpdateBackend(), startedOk: tempDir().appendingPathComponent("ok")))
+        #expect(!unknown.due())
     }
 
     @Test func openingTheWindowChecksUnlessACheckWasJustMade() {
@@ -193,13 +192,6 @@ final class Box<T>: @unchecked Sendable {
         #expect(r.u.due(every: Updates.windowCheckAfter) && !r.u.due())  // the hourly one is not due yet
         r.u.windowOpened()
         #expect(r.backend.checks == 2)
-    }
-
-    @Test func automaticChecksCanBeTurnedOff() {
-        let r = Rig()
-        r.enabled.value = false
-        #expect(!r.u.due())
-        #expect(r.u.runCheck()["state"] == .string("available"))  // "Check now" still works
     }
 
     @Test func aFailedCheckChangesNothingAndIsTriedAgainInAnHour() {
@@ -283,6 +275,11 @@ final class Box<T>: @unchecked Sendable {
         r.u.check()
         #expect(r.backend.checks == 0)
         #expect(MenuText.updateTitle(r.u.status()) == nil)
+        #expect(r.u.announce() == nil)
+        // A checkout (a development build) writes no started-ok, and needs none.
+        r.u.started()
+        r.u.started()
+        #expect(!exists(r.startedOk) && r.u.startedDone)
     }
 
     @Test func nothingHappensWithoutTheUsersClick() {
@@ -300,34 +297,14 @@ final class Box<T>: @unchecked Sendable {
         #expect(r.u.runCheck()["state"] == .string("failed"))  // the same release: the error stays until the user tries again
         #expect(r.u.status()["error"] == .string(message))
         #expect(r.u.request() && r.u.status()["error"] == .null)
-    }
-
-    @Test func anUpdateThatDidNotFailLeavesNoErrorAfterTheRestart() {
-        let r = Rig(previous: .object([("state", .string("installing")), ("available", .object([("version", .string("0.2.0"))]))]))
-        #expect(r.state == "idle" && r.u.status()["error"] == .null)
-    }
-
-    @Test func updateJsonSaysWhatThisVersionIsRightAfterStart() {
-        let r = Rig()
-        #expect(r.saved.last["current"] == .string("0.1.0") && r.saved.last["state"] == .string("idle"))
+        // An update that did not fail leaves no error after the restart.
+        let fine = Rig(previous: .object([("state", .string("installing")), ("available", .object([("version", .string("0.2.0"))]))]))
+        #expect(fine.state == "idle" && fine.u.status()["error"] == .null)
     }
 
     // MARK: started-ok, uninstall, the main tick
 
-    @Test func startedOkIsTheVersionOnceTheFirstTickRan() throws {
-        let r = Rig()
-        #expect(!exists(r.startedOk))
-        r.u.started()
-        #expect(try String(contentsOf: r.startedOk, encoding: .utf8) == "0.1.0")
-    }
-
-    @Test func aCheckoutWritesNoStartedOk() {
-        let r = Rig(installed: nil)
-        r.u.started()
-        r.u.started()
-        #expect(!exists(r.startedOk))
-    }
-
+    /// started-ok is the version once the first tick ran; one before load() finished writes it on a later tick.
     @Test func startedBeforeTheInstalledVersionIsKnownIsWrittenOnALaterTick() throws {
         let backend = FakeUpdateBackend()
         let ok = tempDir().appendingPathComponent("started-ok")
@@ -368,12 +345,6 @@ final class Box<T>: @unchecked Sendable {
         #expect(!u.due())  // nothing else happens until Python answers
     }
 
-    @Test func aDevelopmentBuildStillWritesNoStartedOk() {
-        let r = Rig(installed: nil)
-        r.u.started()
-        #expect(!exists(r.startedOk) && r.u.startedDone)
-    }
-
     @Test func loadIsAskedAgainWithBackoffUntilPythonAnswers() {
         let backend = FakeUpdateBackend()
         backend.statusFailures = 3
@@ -382,16 +353,14 @@ final class Box<T>: @unchecked Sendable {
         u.loadUntilAnswered(sleep: { slept.append($0) })
         #expect(slept == [2, 4, 8] && backend.statusCalls == 4)
         #expect(u.status()["state"] == .string("idle") && u.due())
-    }
-
-    @Test func theBackoffStopsGrowingAtItsCap() {
-        let backend = FakeUpdateBackend()
-        backend.statusFailures = 9
-        let u = Updates(.init(backend: backend, startedOk: tempDir().appendingPathComponent("ok")))
-        var slept: [Double] = []
-        u.loadUntilAnswered(sleep: { slept.append($0) }, maxDelay: 30)
-        #expect(slept == [2, 4, 8, 16, 30, 30, 30, 30, 30])
-        #expect(u.load())  // answered: true
+        // The backoff stops growing at its cap.
+        let capped = FakeUpdateBackend()
+        capped.statusFailures = 9
+        let c = Updates(.init(backend: capped, startedOk: tempDir().appendingPathComponent("ok")))
+        var cappedSlept: [Double] = []
+        c.loadUntilAnswered(sleep: { cappedSlept.append($0) }, maxDelay: 30)
+        #expect(cappedSlept == [2, 4, 8, 16, 30, 30, 30, 30, 30])
+        #expect(c.load())  // answered: true
     }
 
     @Test func uninstallStartsTheScriptAndTheNextTickQuits() throws {

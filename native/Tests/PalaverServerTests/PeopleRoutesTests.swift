@@ -166,6 +166,7 @@ private func importedMeeting(_ root: URL, _ name: String = "2026-10-28T09-00-00"
         #expect(status == 200 && answer["speakers"]?.list.count == 2)
         (status, answer) = post(s, "/api/meetings/\(MEETING)/merge", body([("label", "SPEAKER_01"), ("into", nil)]))
         #expect(status == 200 && answer["speakers"]?.list.count == 3)
+        #expect(answer.isObject && answer["undo"] == nil)  // splitting off a merged speaker has no undo token
     }
 
     @Test func test_http_merge_undo_puts_names_and_earlier_merges_back() throws {
@@ -205,6 +206,13 @@ private func importedMeeting(_ root: URL, _ name: String = "2026-10-28T09-00-00"
         let s = try TestServer(userName: "Timo", meetings: { try pageMeeting($0) })
         defer { s.stop() }
         _ = post(s, "/api/meetings/\(MEETING)/speakers", body([("label", "SPEAKER_00"), ("name", "Rico")]))
+        // The organization routes answer the directory.
+        var (orgStatus, orgAnswer) = post(s, "/api/organizations", body([("key", "muellerbau"), ("name", "Müllerbau")]))
+        #expect(orgStatus == 200 && orgAnswer["people"]?[0]?["name"] == .string("Rico") && orgAnswer["undo"] == nil)
+        (orgStatus, orgAnswer) = post(s, "/api/people/org", body([("name", "Rico"), ("org", "Northwind")]))
+        #expect(orgStatus == 200 && orgAnswer["people"]?[0]?["org"] == .string("Northwind") && orgAnswer["people"]?[0]?["org_given"] == .bool(true))
+        #expect(dumps(PythonJSON.read(s.app.stores.organizations)) == #"{"names": {"muellerbau": "Müllerbau"}, "people": {"rico": "Northwind"}}"#)
+
         let r = s.get("/api/people")
         let people = r.json?["people"]?.list ?? []
         #expect(r.status == 200 && people.count == 1 && people.first?["name"] == .string("Rico"))
@@ -224,34 +232,7 @@ private func importedMeeting(_ root: URL, _ name: String = "2026-10-28T09-00-00"
         #expect(s.get("/api/names").json == .strings(["Anna", "Rico Lanza", "Timo"]))
     }
 
-    @Test func test_http_person_rename_can_be_undone() throws {
-        let s = try TestServer(meetings: { try pageMeeting($0) })
-        defer { s.stop() }
-        _ = post(s, "/api/meetings/\(MEETING)/speakers", body([("label", "SPEAKER_00"), ("name", "Ana")]))
-        let (status, answer) = post(s, "/api/people/rename", body([("old", "Ana"), ("new", "Anna")]))
-        #expect(status == 200 && answer["undo"]?.stringValue?.isEmpty == false)
-        #expect(page(s)["transcript"]?[1]?["speaker"] == .string("Anna"))
-        #expect(post(s, "/api/undo", body([("token", answer["undo"] ?? .null)])).0 == 200)
-        #expect(page(s)["transcript"]?[1]?["speaker"] == .string("Ana"))
-    }
-
-    @Test func test_http_removes_a_voice() throws {
-        let s = try TestServer(meetings: { try pageMeeting($0) })
-        defer { s.stop() }
-        let (status, answer) = post(s, "/api/meetings/\(MEETING)/remove", body([("label", "SPEAKER_01")]))
-        #expect(status == 200 && answer["removed"]?[0]?["label"] == .string("SPEAKER_01"))
-        #expect(post(s, "/api/meetings/\(MEETING)/remove", body([("label", "SPEAKER_09")])).0 == 404)
-    }
-
-    @Test func test_http_splitting_off_a_merged_speaker_has_no_undo_token() throws {
-        let s = try TestServer(meetings: { try pageMeeting($0) })
-        defer { s.stop() }
-        _ = post(s, "/api/meetings/\(MEETING)/merge", body([("label", "SPEAKER_01"), ("into", "SPEAKER_00")]))
-        let (status, answer) = post(s, "/api/meetings/\(MEETING)/merge", body([("label", "SPEAKER_01"), ("into", nil)]))
-        #expect(status == 200 && answer.isObject && answer["undo"] == nil)
-    }
-
-    @Test func test_http_undo_rename_after_one_meeting_was_trashed() throws {
+    @Test func test_http_person_rename_can_be_undone_also_after_one_meeting_was_trashed() throws {
         let other = "2026-10-27T16-03-30"
         let s = try TestServer(meetings: { out in
             try pageMeeting(out)
@@ -261,7 +242,9 @@ private func importedMeeting(_ root: URL, _ name: String = "2026-10-28T09-00-00"
         for id in [MEETING, other] {
             _ = post(s, "/api/meetings/\(id)/speakers", body([("label", "SPEAKER_00"), ("name", "Ana")]))
         }
-        let (_, answer) = post(s, "/api/people/rename", body([("old", "Ana"), ("new", "Anna")]))
+        let (renamed, answer) = post(s, "/api/people/rename", body([("old", "Ana"), ("new", "Anna")]))
+        #expect(renamed == 200 && answer["undo"]?.stringValue?.isEmpty == false)
+        #expect(page(s)["transcript"]?[1]?["speaker"] == .string("Anna"))
         _ = post(s, "/api/meetings/\(other)/trash")
         let (status, restored) = post(s, "/api/undo", body([("token", answer["undo"] ?? .null)]))
         #expect(status == 200 && restored["restored"] == .strings([MEETING]))
@@ -300,6 +283,11 @@ private func importedMeeting(_ root: URL, _ name: String = "2026-10-28T09-00-00"
                 == .object([("error", .string("bad request: too many values to unpack (expected 2)"))]))
         let r = s.post("/api/voices/name", body([("voices", JSONValue.array([.int(7)])), ("name", "Anna")]))
         #expect(r.status == 500 && r.error == "cannot unpack non-iterable int object")
+
+        // Removing a voice (test_http_removes_a_voice).
+        let (status, answer) = post(s, "\(base)/remove", body([("label", "SPEAKER_01")]))
+        #expect(status == 200 && answer["removed"]?[0]?["label"] == .string("SPEAKER_01"))
+        #expect(post(s, "\(base)/remove", body([("label", "SPEAKER_09")])).0 == 404)
     }
 
     @Test func dontKnowIsUndoneWithItsTokenAndRefusedBeforeTheTranscript() throws {
@@ -317,18 +305,6 @@ private func importedMeeting(_ root: URL, _ name: String = "2026-10-28T09-00-00"
         #expect(Speakers.loadUnknown(paths).isEmpty)
         #expect(post(s, "/api/meetings/2026-10-27T17-00-00/unknown", body([("label", "SPEAKER_00"), ("on", true)])).1
                 == .object([("error", .string(PeopleAPI.NOT_TRANSCRIBED))]))
-    }
-
-    @Test func organizationsRoutesAnswerTheDirectory() throws {
-        let s = try TestServer(meetings: { try pageMeeting($0) })
-        defer { s.stop() }
-        _ = post(s, "/api/meetings/\(MEETING)/speakers", body([("label", "SPEAKER_00"), ("name", "Rico")]))
-        var (status, answer) = post(s, "/api/organizations", body([("key", "muellerbau"), ("name", "Müllerbau")]))
-        #expect(status == 200 && answer["people"]?[0]?["name"] == .string("Rico") && answer["undo"] == nil)
-        (status, answer) = post(s, "/api/people/org", body([("name", "Rico"), ("org", "Northwind")]))
-        #expect(status == 200 && answer["people"]?[0]?["org"] == .string("Northwind") && answer["people"]?[0]?["org_given"] == .bool(true))
-        let file = PythonJSON.read(s.app.stores.organizations)
-        #expect(dumps(file) == #"{"names": {"muellerbau": "Müllerbau"}, "people": {"rico": "Northwind"}}"#)
     }
 
     // MARK: - test_attribution.py
@@ -394,7 +370,7 @@ private func importedMeeting(_ root: URL, _ name: String = "2026-10-28T09-00-00"
         ]))
     }
 
-    @Test func test_speakers_and_invitees_show_their_organization() throws {
+    @Test func test_speakers_and_invitees_show_their_organization_which_can_be_renamed_or_given() throws {
         let f = try Fixture()
         try withInvitees(f)
         try f.name("SPEAKER_00", "Rico")  // first name: resolves to Rico Lanza
@@ -403,12 +379,8 @@ private func importedMeeting(_ root: URL, _ name: String = "2026-10-28T09-00-00"
                 == [[.string("Timo"), .string("KLOUD")], [.string("Rico"), .string("Muellerbau")], [.null, .null]])
         #expect(dumps(.object(m["calendar"]?["attendees"]?.list.map { ($0["name"]?.stringValue ?? "", $0["org"] ?? .null) } ?? []))
                 == #"{"Rico Lanza": "Muellerbau", "Anna Huber": "Extern"}"#)
-    }
 
-    @Test func test_organizations_can_be_renamed_and_people_given_one() throws {
-        let f = try Fixture()
-        try withInvitees(f)
-        try f.name("SPEAKER_00", "Rico")
+        // Organizations can be renamed and people given one.
         try f.name("SPEAKER_01", "Stefan D")
         try PeopleAPI.renameOrganization(f.app, key: "muellerbau", name: "Müllerbau")
         try PeopleAPI.setPersonOrg(f.app, person: "Stefan D", org: "Extern")

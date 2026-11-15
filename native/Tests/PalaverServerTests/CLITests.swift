@@ -120,10 +120,7 @@ private func script(_ url: URL, _ body: String) throws {
         }
         #expect(c.text.contains("--config FILE") && c.text.contains("--dictionary FILE") && c.text.contains("--no-notify"))
         #expect(c.run(["-h"], config: false) == 0 && c.out.first?.hasPrefix("usage: palaver") == true)
-    }
-
-    @Test func eachCommandHasItsOwnHelpWithItsArgumentsAndOptions() {
-        let c = CLI()
+        // Each command has its own help with its arguments and options.
         #expect(c.run(["export", "--help"]) == 0)
         #expect(c.out.first == "usage: palaver export [--notes | --no-notes] [--voices] [--audio] [-o FILE] [--yes] meeting")
         #expect(c.text.contains("-o, --output FILE") && c.text.contains("--notes, --no-notes"))
@@ -286,14 +283,11 @@ private func script(_ url: URL, _ body: String) throws {
     @Test func test_app_restart_web_restarts_only_the_server() {
         let c = CLI()
         let app = FakeAppSocket(c.ctx.appSocket) { name, _ in name == "restart_web" ? .ok(.object([("pid", .int(4321))])) : .failed("no") }
-        defer { app.stop() }
         #expect(c.run(["app", "restart-web"]) == 0)
         #expect(app.calls.map(\.0) == ["restart_web"])
         #expect(c.out == ["Restarted the window's server (pid 4321); the window reloads where it was."])
-    }
-
-    @Test func test_app_restart_web_without_a_running_app() {
-        let c = CLI()
+        app.stop()
+        // Without a running app, refused by it, or not up again.
         #expect(c.run(["app", "restart-web"]) == 1 && c.text.contains("not running"))
         let refusing = FakeAppSocket(c.ctx.appSocket) { _, _ in .refused("a test recording runs") }
         #expect(c.run(["app", "restart-web"]) == 1 && c.out == ["Palaver did not restart the window's server: a test recording runs"])
@@ -498,11 +492,7 @@ private func script(_ url: URL, _ body: String) throws {
         #expect(reader.entries.contains { $0.name == "meetings/2026-10-30T09-00-00/meta.json" })
         #expect(c.out.first == "Collecting logs, settings and this Mac's setup…")
         #expect(c.text.contains(zip.path) && c.text.contains("about 2026-10-30T09-00-00"))
-    }
-
-    @Test func test_report_create_without_a_meeting_and_with_an_unknown_one() throws {
-        let c = CLI()
-        try c.meeting()
+        // Without a meeting, and with an unknown one.
         #expect(c.run(["report", "create", "--meeting", "none"]) == 0 && !c.text.contains("about"))
         #expect(c.run(["report", "create", "--meeting", "2020-01-01T00-00-00"]) == 2)
         #expect(c.out.last == "error: no meeting 2020-01-01T00-00-00")

@@ -109,14 +109,6 @@ private func tmpWav(_ name: String) -> URL {
     FileManager.default.temporaryDirectory.appendingPathComponent("palaver-\(UUID().uuidString)-\(name).wav")
 }
 
-@Test func emptyAudioGivesNoSegments() async throws {
-    let url = tmpWav("short")
-    defer { try? FileManager.default.removeItem(at: url) }
-    try writeWav(frames: 799, to: url)
-    let segs = try await transcribeFile(url, start: nil, end: nil, with: Boom())
-    #expect(segs.isEmpty)
-}
-
 @Test func wavReadsEveryFrame() throws {
     let url = tmpWav("long")
     defer { try? FileManager.default.removeItem(at: url) }
@@ -212,6 +204,9 @@ private func run(_ lines: [String], modelsDir: URL, recognizer: (() async throws
     try writeWav(frames: 800, to: url)
     _ = try await transcribeFile(url, start: nil, end: nil, with: spy)
     #expect(spy.counts == [4_800, 4_800])
+    try writeWav(frames: 799, to: url)
+    let none = try await transcribeFile(url, start: nil, end: nil, with: Boom())  // the model is never called
+    #expect(none.isEmpty)
     // a slice of a long file is padded too
     try writeWav(frames: 100_000, to: url)
     _ = try await transcribeFile(url, start: 10_000, end: 12_000, with: spy)

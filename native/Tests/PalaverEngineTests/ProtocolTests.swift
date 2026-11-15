@@ -27,20 +27,16 @@ private func run(_ lines: [String]) async throws -> [[String: Any]] {
     #expect(models?.keys.sorted() == ["asr", "diarizer"])
 }
 
-@Test func unknownCommandIsAnError() async throws {
-    let r = try await run([#"{"id":2,"cmd":"nope"}"#])
-    #expect(r[0]["id"] as? Int == 2)
-    #expect(r[0]["ok"] as? Bool == false)
-    #expect((r[0]["error"] as? String)?.contains("nope") == true)
-}
-
-@Test func badJsonIsAnErrorNotACrash() async throws {
-    let r = try await run(["{", #"{"id":3,"cmd":"hello"}"#])
-    #expect(r.count == 2)
+@Test func badJsonAndAnUnknownCommandAreErrorsNotACrash() async throws {
+    let r = try await run(["{", #"{"id":2,"cmd":"nope"}"#, #"{"id":3,"cmd":"hello"}"#])
+    #expect(r.count == 3)
     #expect(r[0]["id"] as? Int == -1)
     #expect(r[0]["ok"] as? Bool == false)
-    #expect(r[1]["id"] as? Int == 3)
-    #expect(r[1]["ok"] as? Bool == true)
+    #expect(r[1]["id"] as? Int == 2)
+    #expect(r[1]["ok"] as? Bool == false)
+    #expect((r[1]["error"] as? String)?.contains("nope") == true)
+    #expect(r[2]["id"] as? Int == 3)
+    #expect(r[2]["ok"] as? Bool == true)
 }
 
 @Test func exitsWhenStdinCloses() async throws {

@@ -51,15 +51,20 @@ private func call(_ lines: [String], diarizer: (() async throws -> Diarizing)?) 
     #expect(r.map == ["S3": "SPEAKER_00", "S1": "SPEAKER_01"])
 }
 
-@Test func shortTrackGivesNoTurns() async throws {
+@Test func shortTrackGivesNoTurnsAndMissingDiarizerModelsAreNamed() async throws {
     let dir = try tempDir()
     let wav = dir.appendingPathComponent("short.wav")
     try writeSilence(wav, samples: 400)  // 25 ms
-    // No models folder, no injected diarizer: it must not even try to load.
-    let r = try await call([#"{"id":1,"cmd":"diarize","wav":"\#(wav.path)"}"#], diarizer: nil)
+    let longer = dir.appendingPathComponent("a.wav")
+    try writeSilence(longer, samples: 16000 * 2)
+    // No models folder, no injected diarizer: the short track must not even try to load; the longer one names what is missing.
+    let r = try await call([#"{"id":1,"cmd":"diarize","wav":"\#(wav.path)"}"#,
+                            #"{"id":2,"cmd":"diarize","wav":"\#(longer.path)"}"#], diarizer: nil)
     #expect(r[0]["ok"] as? Bool == true)
     #expect((r[0]["turns"] as? [Any])?.isEmpty == true)
     #expect((r[0]["embeddings"] as? [String: Any])?.isEmpty == true)
+    #expect(r[1]["ok"] as? Bool == false)
+    #expect((r[1]["error"] as? String)?.hasPrefix("models missing: diarizer") == true)
 }
 
 /// The diarizer finds no speech (the other side silent so far): no turns, not a failure.
@@ -154,15 +159,6 @@ private struct SilentDiarizer: Diarizing {
     #expect(r[0]["ok"] as? Bool == true)
     #expect((r[0]["embeddings"] as? [String: [Double]])?["a"] == [2, 4])
     for i in 1...3 { #expect(r[i]["ok"] as? Bool == false) }
-}
-
-@Test func missingDiarizerModelsIsNamed() async throws {
-    let dir = try tempDir()
-    let wav = dir.appendingPathComponent("a.wav")
-    try writeSilence(wav, samples: 16000 * 2)
-    let r = try await call([#"{"id":1,"cmd":"diarize","wav":"\#(wav.path)"}"#], diarizer: nil)
-    #expect(r[0]["ok"] as? Bool == false)
-    #expect((r[0]["error"] as? String)?.hasPrefix("models missing: diarizer") == true)
 }
 
 // MARK: - Model test

@@ -13,17 +13,15 @@ import Testing
         Word(text: text, start: start, end: end, confidence: confidence)
     }
 
-    @Test func test_assign_speakers_single_turn() {
-        let s = seg(0.0, 2.0, "hallo welt", words: [w("hallo", 0.1, 0.5), w("welt", 1.5, 1.9)])
-        let assigned = Merger.assignSpeakersToWords([s], [SpeakerTurn(speaker: "SPEAKER_00", start: 0.0, end: 2.0)])
-        #expect(assigned.allSatisfy { $0.speaker == "SPEAKER_00" })
-    }
-
     @Test func test_assign_speakers_split_between_turns() {
         let s = seg(0.0, 4.0, "hallo das bist du",
                     words: [w("hallo", 0.0, 0.5), w("das", 1.0, 1.5), w("bist", 2.5, 3.0), w("du", 3.2, 3.8)])
         let turns = [SpeakerTurn(speaker: "SPEAKER_00", start: 0.0, end: 2.0), SpeakerTurn(speaker: "SPEAKER_01", start: 2.0, end: 4.0)]
         #expect(Merger.assignSpeakersToWords([s], turns).map(\.speaker) == ["SPEAKER_00", "SPEAKER_00", "SPEAKER_01", "SPEAKER_01"])
+        // A single turn takes every word.
+        let one = seg(0.0, 2.0, "hallo welt", words: [w("hallo", 0.1, 0.5), w("welt", 1.5, 1.9)])
+        let assigned = Merger.assignSpeakersToWords([one], [SpeakerTurn(speaker: "SPEAKER_00", start: 0.0, end: 2.0)])
+        #expect(assigned.allSatisfy { $0.speaker == "SPEAKER_00" })
     }
 
     @Test func test_assign_speakers_word_outside_any_turn_falls_back_to_nearest() {
@@ -36,6 +34,9 @@ import Testing
     @Test func test_merge_single_track_mic_only() {
         let utterances = Merger.merge(mic: [seg(0.0, 2.0, "hallo", speaker: "Timo")], system: [], turns: [])
         #expect(utterances == [Utterance(speaker: "Timo", start: 0.0, end: 2.0, text: "hallo")])
+        #expect(Merger.merge(mic: [], system: [], turns: []).isEmpty)  // empty inputs
+        // `s.speaker or "User"`: a mic segment with an empty name counts as none, the user's.
+        #expect(Merger.merge(mic: [seg(0, 1, " Hallo ", speaker: "")], system: [], turns: []).map(\.speaker) == ["User"])
     }
 
     @Test func test_merge_interleaves_by_start_time() {
@@ -53,10 +54,6 @@ import Testing
         #expect(utterances.count == 2)
         #expect(utterances[0] == Utterance(speaker: "SPEAKER_00", start: 0.0, end: 1.5, text: "a b"))
         #expect(utterances[1] == Utterance(speaker: "SPEAKER_01", start: 2.5, end: 3.9, text: "c d"))
-    }
-
-    @Test func test_merge_empty_inputs() {
-        #expect(Merger.merge(mic: [], system: [], turns: []).isEmpty)
     }
 
     @Test func test_merge_system_segment_without_words_uses_segment_level_overlap() {
@@ -82,11 +79,6 @@ import Testing
         #expect(out[0].unsure == ["Tini"] && out[1].unsure == ["Zini?"])
         #expect(try Utterance(json: out[0].json) == out[0])
         #expect(Utterance(speaker: "A", start: 0, end: 1, text: "sure").json["unsure"] == nil)
-    }
-
-    @Test func aMicSegmentWithAnEmptySpeakerIsTheUsers() {
-        // `s.speaker or "User"`: an empty name counts as none.
-        #expect(Merger.merge(mic: [seg(0, 1, " Hallo ", speaker: "")], system: [], turns: []).map(\.speaker) == ["User"])
     }
 
 }

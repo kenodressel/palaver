@@ -154,11 +154,8 @@ struct PeopleRoot {
         let close = try #require(try People.suggestions(m2, bank: r.bank, stores: r.stores)["SPEAKER_00"])
         #expect(close.count == 1)
         #expect(close[0].0 == "Anna" && 0.65 <= close[0].1 && close[0].1 < 0.75)
-    }
-
-    @Test func test_a_meeting_just_started_has_no_suggestions_yet() throws {
-        // A live meeting before its first block: no speaker turns yet (the window opened it and failed).
-        let r = PeopleRoot(); defer { r.remove() }
+        // A meeting just started has no suggestions yet: a live meeting before its first block, no speaker turns yet
+        // (the window opened it and failed).
         let paths = RecordingPaths(r.root.appendingPathComponent("2026-10-30T08-02-13", isDirectory: true))
         try FileManager.default.createDirectory(at: paths.folder, withIntermediateDirectories: true)
         #expect(try People.suggestions(paths, bank: r.bank, stores: r.stores).isEmpty)

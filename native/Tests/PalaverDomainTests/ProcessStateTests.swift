@@ -7,12 +7,16 @@ import Testing
 @Suite struct ProcessStateTests {
     private func paths(_ t: TempFolder) -> RecordingPaths { RecordingPaths(t.url) }
 
-    @Test func anErrorKeepsItsWords() throws {
+    @Test func anErrorKeepsItsWordsAndClearRemovesTheFile() throws {
         let t = TempFolder("failed"); defer { t.remove() }
+        ProcessState.clear(paths(t))  // nothing to clear: no error
         try ProcessState.mark(paths(t), reason: ProcessState.error, error: "Unable to reach MTLCompilerService — äh")
         let text = try #require(t.text("failed.json"))
         #expect(text.contains("\"missing\": []") && text.contains("\\u00e4h"))  // ensure_ascii, as json.dumps(indent=2)
         #expect(ProcessState.read(paths(t))?["error"]?.stringValue == "Unable to reach MTLCompilerService — äh")
+        ProcessState.clear(paths(t))
+        #expect(!t.exists("failed.json"))
+        #expect(ProcessState.exitModels == 4)
     }
 
     @Test func aFailureOfAnotherKindOrBrokenFileIsNoFailure() {
@@ -24,15 +28,6 @@ import Testing
         #expect(ProcessState.read(paths(t)) == nil)
         t.write("failed.json", "{broken")
         #expect(ProcessState.read(paths(t)) == nil)
-    }
-
-    @Test func clearRemovesTheFileAndMissesNothing() throws {
-        let t = TempFolder("failed"); defer { t.remove() }
-        ProcessState.clear(paths(t))
-        try ProcessState.mark(paths(t), reason: ProcessState.error, error: "x")
-        ProcessState.clear(paths(t))
-        #expect(!t.exists("failed.json"))
-        #expect(ProcessState.exitModels == 4)
     }
 
     @Test func test_a_meeting_waiting_for_its_models_says_which() throws {

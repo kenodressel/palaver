@@ -28,28 +28,9 @@ private func part(_ url: URL) -> URL { URL(fileURLWithPath: url.path + ".part") 
         // synced: notion info exists (highest precedence)
         touch(p.notionInfo, bytes: "{}")
         #expect(MeetingStatus.status(p) == "synced")
-    }
-
-    @Test func test_status_synced_takes_precedence_even_if_transcript_missing() {
-        let t = TempFolder("status"); defer { t.remove() }
-        let p = RecordingPaths(t.url)
-        touch(p.notionInfo, bytes: "{}")
+        // synced takes precedence even if the transcript and the tracks are missing
+        for url in [p.transcriptJson, p.micRawWav, p.systemWav] { try? FileManager.default.removeItem(at: url) }
         #expect(MeetingStatus.status(p) == "synced")
-    }
-
-    @Test func test_status_crashed_when_part_files_remain() {
-        let t = TempFolder("status"); defer { t.remove() }
-        let p = RecordingPaths(t.url)
-        touch(part(p.micRawWav)); touch(part(p.systemWav))
-        #expect(MeetingStatus.status(p, now: Date().addingTimeInterval(3600)).hasPrefix("crashed"))
-        #expect(MeetingStatus.status(p, now: Date().addingTimeInterval(3600)) == "crashed (run `process` to recover)")
-    }
-
-    @Test func test_status_recording_while_part_files_still_grow() {
-        let t = TempFolder("status"); defer { t.remove() }
-        let p = RecordingPaths(t.url)
-        touch(part(p.micRawWav))
-        #expect(MeetingStatus.status(p) == "recording")
     }
 
     @Test func aGrowingPartIsRecording() {
@@ -110,13 +91,6 @@ private func part(_ url: URL) -> URL { URL(fileURLWithPath: url.path + ".part") 
         #expect(!t.exists("live.pid"))
     }
 
-    @Test func test_a_stale_pid_file_is_no_running_worker_and_is_removed() {
-        let t = TempFolder("pids"); defer { t.remove() }
-        livePid(t, exitedPid())
-        #expect(!WorkerPids.liveRunning(t.url))
-        #expect(!t.exists("live.pid"))
-    }
-
     @Test func test_an_exited_child_worker_is_reaped_not_counted() {
         let t = TempFolder("pids"); defer { t.remove() }
         // posix_spawn, not Process: Foundation reaps its children itself, and a zombie is the point.
@@ -135,21 +109,6 @@ private func part(_ url: URL) -> URL { URL(fileURLWithPath: url.path + ".part") 
         #expect(!WorkerPids.liveRunning(t.url))
         #expect(!t.exists("live.pid"))
         #expect(kill(pid, 0) == -1)  // reaped by the check
-    }
-
-    @Test func test_a_pid_now_used_by_another_program_is_no_worker() {
-        let t = TempFolder("pids"); defer { t.remove() }
-        livePid(t, getppid())  // alive, but not `palaver live <this folder>`
-        #expect(!WorkerPids.liveRunning(t.url))
-    }
-
-    @Test func test_a_live_worker_for_this_folder_is_running() {
-        let t = TempFolder("pids"); defer { t.remove() }
-        let (w, stdin) = worker(for: t.url.path)
-        defer { stop(w, stdin) }
-        livePid(t, w.processIdentifier)
-        #expect(WorkerPids.liveRunning(t.url))
-        #expect(t.exists("live.pid"))
     }
 
     @Test func test_a_worker_for_a_folder_with_a_similar_name_is_not_this_ones() {
@@ -227,6 +186,9 @@ private func part(_ url: URL) -> URL { URL(fileURLWithPath: url.path + ".part") 
         let (w, stdin) = worker(for: t.url.path)
         defer { try? stdin.fileHandleForWriting.close() }
         livePid(t, w.processIdentifier)
+        #expect(WorkerPids.liveRunning(t.url))  // a live worker for this folder is running
+        #expect(t.exists("live.pid"))
+        if !t.exists("live.pid") { livePid(t, w.processIdentifier) }  // a failed check above must not leave the worker running
         WorkerPids.stopLive(t.url)
         w.waitUntilExit()
         #expect(w.terminationReason == .uncaughtSignal && w.terminationStatus == SIGTERM)

@@ -83,27 +83,28 @@ private final class Said: @unchecked Sendable {
 }
 
 @Suite struct StorageTests {
-    @Test func test_drop_audio_keeps_the_transcript_and_says_so() throws {
+    @Test func test_drop_audio_keeps_the_transcript_and_says_so_and_the_marker_survives_a_second_delete() throws {
         let place = Place(); defer { place.remove() }
         let p = place.meeting("2026-10-01T10-00-00")
         #expect(try Storage.dropAudio(p) == 3000)
         #expect(Storage.audioFiles(p).isEmpty && exists(p.transcriptJson) && exists(p.notes))
         #expect(Storage.deleted(p)?["bytes"] == .int(3000))
         #expect(!Storage.canDrop(p))
+        // The deleted marker survives a second delete.
+        bytes(p.micRawWav, 10)  // e.g. put back by hand
+        _ = try Storage.dropAudio(p)
+        let marker = try PythonJSON.parse(Data(contentsOf: p.folder.appendingPathComponent(Storage.DELETED)))
+        #expect(marker["bytes"] == .int(3010))
     }
 
-    @Test func test_an_untranscribed_meeting_keeps_its_audio() {
+    @Test func test_an_untranscribed_meeting_or_one_still_being_written_keeps_its_audio() {
         let place = Place(); defer { place.remove() }
         let p = place.meeting("2026-10-01T10-00-00", transcribed: false)
         #expect(throws: StorageError.self) { try Storage.dropAudio(p) }
         #expect(Storage.audioFiles(p).count == 3)
-    }
-
-    @Test func test_a_meeting_still_being_written_keeps_its_audio() {
-        let place = Place(); defer { place.remove() }
-        let p = place.meeting("2026-10-01T10-00-00")
-        bytes(URL(fileURLWithPath: p.systemWav.path + ".part"), 1)
-        #expect(!Storage.canDrop(p))
+        let writing = place.meeting("2026-10-02T10-00-00")
+        bytes(URL(fileURLWithPath: writing.systemWav.path + ".part"), 1)
+        #expect(!Storage.canDrop(writing))
     }
 
     @Test func test_drop_old_audio_only_older_than_the_days() throws {
@@ -244,16 +245,6 @@ private final class Said: @unchecked Sendable {
         #expect(logged.all == Array(repeating: "deleting the audio older than 7 days failed: permission denied", count: 2))
     }
 
-    @Test func test_deleted_marker_survives_a_second_delete() throws {
-        let place = Place(); defer { place.remove() }
-        let p = place.meeting("2026-10-01T10-00-00")
-        _ = try Storage.dropAudio(p)
-        bytes(p.micRawWav, 10)  // e.g. put back by hand
-        _ = try Storage.dropAudio(p)
-        let marker = try PythonJSON.parse(Data(contentsOf: p.folder.appendingPathComponent(Storage.DELETED)))
-        #expect(marker["bytes"] == .int(3010))
-    }
-
     @Test func test_a_model_no_longer_offered_goes_at_start() throws {
         let place = Place(); defer { place.remove() }
         let qwen = place.cacheDir(ModelCatalog.QWEN)
@@ -379,7 +370,7 @@ private final class Said: @unchecked Sendable {
         #expect(!ModelCatalog.complete(repo, stores: place.stores))
     }
 
-    @Test func aMissingOrEmptyBlobOrAStrayRefIsNotComplete() throws {
+    @Test func aMissingOrEmptyBlobAStrayRefOrADoubleDashInTheNameIsNotComplete() throws {
         let place = Place(); defer { place.remove() }
         let repo = "intfloat/multilingual-e5-small"
         let folder = cached(place, repo, files: ["config.json": 10, "model.bin": 0])
@@ -401,6 +392,9 @@ private final class Said: @unchecked Sendable {
         #expect(!ModelCatalog.complete(fourth, stores: place.stores))  // the scan dates an empty revision by its stat: it raises
         #expect(!ModelCatalog.complete("nobody/nothing", stores: place.stores))
         #expect(ModelCatalog.cachedBytes("nobody/nothing", stores: place.stores) == 0)
+        let dashed = "someone/model--v2"  // the cache scan reads its folder back as someone/model/v2
+        _ = cached(place, dashed, files: ["config.json": 10])
+        #expect(!ModelCatalog.complete(dashed, stores: place.stores))
     }
 
     /// Setup's "downloaded" is palaver-lm's: a language model needs the weights it loads (`weightsHere`), so a download
@@ -428,13 +422,6 @@ private final class Said: @unchecked Sendable {
                       ("model.safetensors.index.json", false), ("Model.safetensors", false)])
     func whichFilesAreWeights(_ name: String, _ weights: Bool) {
         #expect(ModelCatalog.isWeights(name) == weights)
-    }
-
-    @Test func aRepoWhoseNameHasADoubleDashIsNeverComplete() throws {
-        let place = Place(); defer { place.remove() }
-        let repo = "someone/model--v2"  // the cache scan reads its folder back as someone/model/v2
-        _ = cached(place, repo, files: ["config.json": 10])
-        #expect(!ModelCatalog.complete(repo, stores: place.stores))
     }
 
     @Test func theSpeechModelsAreHereWhenEveryFileIs() throws {

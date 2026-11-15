@@ -115,9 +115,9 @@ public struct AnthropicRunner {
             ("messages", .array([.object([("role", .string("user")), ("content", .string(prompt))])])),
             ("output_config", .object([("format", .object([("type", .string("json_schema")), ("schema", CloudLLM.closed(plain))]))])),
         ])
-        let request = CloudLLM.post(url, headers: [("content-type", "application/json"), ("x-api-key", apiKey ?? ""),
-                                                   ("anthropic-version", CloudLLM.ANTHROPIC_VERSION)],
-                                    body: body, timeout: timeout)
+        var headers = [("content-type", "application/json"), ("anthropic-version", CloudLLM.ANTHROPIC_VERSION)]
+        if let apiKey, !apiKey.isEmpty { headers.append(("x-api-key", apiKey)) }
+        let request = CloudLLM.post(url, headers: headers, body: body, timeout: timeout)
         return try await CloudLLM.parsed(name: name, parse: parse) {
             let data = try await http.sendJSON(request, name: name, key: apiKey)
             switch data["stop_reason"]?.stringValue {

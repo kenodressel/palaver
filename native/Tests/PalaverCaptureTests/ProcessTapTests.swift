@@ -19,7 +19,9 @@ import Testing
                                       .destroyAggregate(20), .destroyTap(10)]
 
     @Test func startTranslatesPidsAndWiresAggregateUID() throws {
+        // Chunks carry the device's rate, not the tap's: AirPods in a call run at 24 kHz while the tap still says 48 kHz.
         let backend = FakeTapBackend()
+        backend.state.with { $0.deviceRate = 24_000 }
         let ring = CaptureRing(capacity: 1 << 20)
         let tap = tap(backend, ring: ring, pids: [1234, 4321])
         try tap.start()
@@ -28,7 +30,7 @@ import Testing
         let chunks = drain(ring)
         #expect(chunks.count == 1)
         #expect(chunks[0].pts == 123_000_000)  // host time → ns, as AudioConvertHostTimeToNanos
-        #expect(chunks[0].rate == 48_000)
+        #expect(chunks[0].rate == 24_000)
         #expect(chunks[0].samples.count == 480 && chunks[0].samples.allSatisfy { $0 == 0.5 })
         tap.stop()
         #expect(Array(backend.calls.suffix(4)) == teardown20)
@@ -74,16 +76,6 @@ import Testing
         tap.stop()
     }
 
-    @Test func startSucceedsWhileNothingIsPlaying() throws {
-        // A tap that is quiet at first must not cost the recording; a quiet one is rebuilt later.
-        let backend = FakeTapBackend()
-        backend.state.with { $0.deliver = false }
-        let tap = tap(backend)
-        try tap.start()
-        tap.stop()
-        #expect(Array(backend.calls.suffix(4)) == teardown20)
-    }
-
     @Test func startFailureCleansUp() {
         let backend = FakeTapBackend()
         backend.state.with { $0.failStart = true }
@@ -92,11 +84,14 @@ import Testing
         #expect(Array(backend.calls.suffix(4)) == teardown20)
     }
 
-    @Test func stopIsIdempotent() throws {
+    @Test func startSucceedsWhileNothingIsPlayingAndStopIsIdempotent() throws {
+        // A tap that is quiet at first must not cost the recording; a quiet one is rebuilt later.
         let backend = FakeTapBackend()
+        backend.state.with { $0.deliver = false }
         let tap = tap(backend)
         try tap.start()
         tap.stop()
+        #expect(Array(backend.calls.suffix(4)) == teardown20)
         let after = backend.calls
         tap.stop()
         #expect(backend.calls == after)
@@ -142,18 +137,7 @@ import Testing
                                                    .destroyAggregate(21), .destroyTap(10)])
     }
 
-    @Test func chunksCarryTheDevicesRateNotTheTaps() throws {
-        // AirPods in a call run at 24 kHz while the tap still says 48 kHz.
-        let backend = FakeTapBackend()
-        backend.state.with { $0.deviceRate = 24_000 }
-        let ring = CaptureRing(capacity: 1 << 20)
-        let tap = tap(backend, ring: ring)
-        try tap.start()
-        #expect(drain(ring).map(\.rate) == [24_000])
-        tap.stop()
-    }
-
-    @Test func followsARateChangeOnTheSameOutput() throws {
+    @Test func followsARateChangeOnTheSameOutputAndTheWatcherStopsWithTheTap() throws {
         let backend = FakeTapBackend()
         backend.state.with { $0.deliver = false }
         let log = LogLines()
@@ -163,14 +147,6 @@ import Testing
         #expect(waitFor { tap.sourceRate == 24_000 })
         #expect(backend.aggregates == 1)
         #expect(log.text.contains("system audio rate 48000 Hz → 24000 Hz"))
-        tap.stop()
-    }
-
-    @Test func routeWatcherStopsWithTap() throws {
-        let backend = FakeTapBackend()
-        backend.state.with { $0.deliver = false }
-        let tap = tap(backend, poll: 0.01)
-        try tap.start()
         tap.stop()
         let calls = backend.calls
         backend.state.with { $0.outputUID = "AirPods-UID" }

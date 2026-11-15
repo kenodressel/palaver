@@ -58,33 +58,27 @@ private final class Installed {
 }
 
 @Suite(.serialized) struct CLIProcessTests {
+    /// Help lists the commands; a command of earlier versions says what replaces it and exits 2.
     @Test func helpRunsThroughTheLinkTheOldInstallersMadeAndListsTheCommands() throws {
         let p = try Installed()
         let r = try p.run(["--help"])
         #expect(r.status == 0 && r.err.isEmpty)
         for name in Usage.CLI_COMMANDS { #expect(r.out.contains("\n  \(name) "), "\(name)") }
+        let gone = try p.run(["record", "--run"])
+        #expect(gone.status == 2 && gone.out.isEmpty)
+        #expect(gone.err == "palaver record is gone: Palaver.app records (its menu: Start recording now; calls on their own).\n")
     }
 
-    @Test func aCommandOfEarlierVersionsSaysWhatReplacesItAndExits2() throws {
-        let p = try Installed()
-        let r = try p.run(["record", "--run"])
-        #expect(r.status == 2 && r.out.isEmpty)
-        #expect(r.err == "palaver record is gone: Palaver.app records (its menu: Start recording now; calls on their own).\n")
-    }
-
-    @Test func daemonStatusReadsTheAppsDaemonJson() throws {
+    /// `daemon status` reads the app's daemon.json, `app ping` asks the running app on app.sock: both in the home's
+    /// Application Support.
+    @Test func daemonStatusAndAppPingFindTheAppInTheHome() throws {
         let p = try Installed()
         #expect(try p.run(["daemon", "status"]).out == "daemon has never run\n")
         try FileManager.default.createDirectory(at: p.support, withIntermediateDirectories: true)
         try Data(#"{"pid": 999999, "state": "idle", "updated": "2026-11-08T09:00:00+01:00"}"#.utf8)
             .write(to: p.support.appendingPathComponent("daemon.json"))
-        let r = try p.run(["daemon", "status"])
-        #expect(r.status == 0 && r.out == "daemon not running (last update 2026-11-08T09:00:00+01:00)\n")
-    }
-
-    @Test func appPingAsksTheRunningAppOnAppSock() throws {
-        let p = try Installed()
-        try FileManager.default.createDirectory(at: p.support, withIntermediateDirectories: true)
+        let status = try p.run(["daemon", "status"])
+        #expect(status.status == 0 && status.out == "daemon not running (last update 2026-11-08T09:00:00+01:00)\n")
         let socket = p.support.appendingPathComponent("app.sock")
         let app = FakeAppSocket(socket) { name, _ in name == "ping" ? .ok(.object([("pid", .int(4242))])) : .failed("?") }
         defer { app.stop() }

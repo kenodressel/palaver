@@ -133,10 +133,10 @@ debug-programs: $(VENDOR)/.patched ## Build palaver-cli, palaver-lm, palaver-ser
 
 e2e-server: test-build ## Build palaver-server and palaver-lm for the e2e tests (the tests' build)
 
-# Only the Python tests of what changed, in parallel (pytest-xdist: a test file's tests stay on one worker, so its
-# fixtures, a window's server and the browser, are made once). TEST_WORKERS=0: in order.
+# Only the Python tests of what changed, in parallel (pytest-xdist: each worker takes the next test when it is done;
+# its WebKit serves every e2e test it runs). TEST_WORKERS=0: in order.
 TEST_WORKERS ?= $(TEST_JOBS)
-PYTEST = uv run --extra dev pytest -q $(if $(filter 0,$(TEST_WORKERS)),,-n $(TEST_WORKERS) --dist loadscope)
+PYTEST = uv run --extra dev pytest -q $(if $(filter 0,$(TEST_WORKERS)),,-n $(TEST_WORKERS) --dist worksteal)
 
 eval-engine: ## Local gate on your recordings (needs PALAVER_EVAL_DIR). tools/eval_engine.py's exit: 0 pass, 1 a check FAILED, 2 misconfigured (make itself reports 2 for both)
 	@test -n "$$PALAVER_EVAL_DIR" -a -f "$$PALAVER_EVAL_DIR/eval.json" || { echo "eval-engine needs PALAVER_EVAL_DIR: a folder with the local eval.json (see tools/eval_engine.py)" >&2; exit 2; }

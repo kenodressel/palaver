@@ -114,6 +114,15 @@ public enum Lifecycle {
         return "Recording paused \(from)–\(to)" + (why.map { " (\($0))" } ?? "")
     }
 
+    /// Where the user was muted in the call, so their mic was not kept: "Muted in Teams 12:13:05–12:14:40 · your mic
+    /// wasn't recorded"; `open` (still muted while recording): "Muted in Teams since 12:13:05 · your mic isn't recorded".
+    public static func mutedText(app: String?, from: Double, to: Double, open: Bool, start: Date, timeZone: TimeZone) throws -> String {
+        let name = app == "slack" ? "Slack" : app == "teams" ? "Teams" : "the call"
+        let since = try hms(start, plus: from, timeZone)
+        if open { return "Muted in \(name) since \(since) · your mic isn't recorded" }
+        return "Muted in \(name) \(since)–\(try hms(start, plus: to, timeZone)) · your mic wasn't recorded"
+    }
+
     public static func times(_ n: Int) -> String {
         switch n { case 1: return ""; case 2: return " twice"; default: return " \(n) times" }
     }

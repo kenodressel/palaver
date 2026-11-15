@@ -30,9 +30,7 @@ private func b(_ v: Bool) -> SetupValue { .bool(v) }
             let got = Recommendations.parseChip(brand)
             #expect(got?.generation == want?.0 && got?.tier == want?.1, "\(brand)")
         }
-    }
-
-    @Test func test_hardware_says_what_it_is() {
+        // The hardware says what it is.
         let hw = Hardware(chip: "Apple M4 Pro", memoryGB: 48.0, freeDiskGB: 120.4)
         #expect(hw.appleSilicon && hw.generation == 4 && hw.tier == "pro")
         #expect(hw.fingerprint == "Apple M4 Pro, 48 GB")
@@ -95,12 +93,10 @@ private func b(_ v: Bool) -> SetupValue { .bool(v) }
         #expect(r.value == s("claude-cli") && !r.needsSetup)  // no key needed: the Claude Code login
         r = F.recs("Apple M2 Pro", 16, F.current(registry: F.lmRegistry(ready: ["anthropic"])))["language_model"]!
         #expect(r.value == s("anthropic"))
-    }
-
-    @Test func test_a_cloud_model_already_chosen_stays_recommended() {
+        // A cloud model already chosen stays recommended.
         let cur = F.current(choices: PyDict([("notes", "openai"), ("projects", "openai")]),
                             registry: F.lmRegistry(ready: ["anthropic", "openai"]))
-        let r = F.recs("Apple M1", 16, cur)["language_model"]!
+        r = F.recs("Apple M1", 16, cur)["language_model"]!
         #expect(r.value == s("openai") && r.matches)
     }
 
@@ -110,15 +106,12 @@ private func b(_ v: Bool) -> SetupValue { .bool(v) }
         #expect(r.value == s("pending") && !gemma.available)
     }
 
-    @Test func test_qwen_is_no_longer_offered() {
+    @Test func test_qwen_is_no_longer_offered_and_cloud_providers_say_their_problem() throws {
         // It made more mistakes on German meetings than Gemma, at twice the size.
         let r = F.recs("Apple M4 Pro", 48)["language_model"]!
         #expect(r.value == s("local:\(GEMMA)"))
         #expect(option(r, s("local:\(QWEN)")) == nil)
-    }
-
-    @Test func test_cloud_providers_are_offered_with_their_problem() throws {
-        let r = F.recs("Apple M4 Pro", 48)["language_model"]!
+        // Cloud providers are offered with their problem.
         let anthropic = try #require(option(r, s("anthropic")))
         #expect(!anthropic.available && anthropic.note == "Add the API key")
     }
@@ -131,12 +124,10 @@ private func b(_ v: Bool) -> SetupValue { .bool(v) }
         #expect(lm.value == s("pending"))
         #expect(lm.reason.contains("8.3 GB") && lm.reason.contains("10 GB free"))
         #expect(got["transcription"]!.value == s("local"))  // Parakeet still fits: 0.5 GB
-    }
-
-    @Test func test_low_disk_is_fine_when_the_model_is_already_here() {
-        let got = F.recs("Apple M4 Pro", 32, disk: 10)
-        #expect(got["language_model"]!.value == s("local:\(GEMMA)"))
-        #expect(got["disk"] == nil)
+        // Low disk is fine when the model is already here.
+        let here = F.recs("Apple M4 Pro", 32, disk: 10)
+        #expect(here["language_model"]!.value == s("local:\(GEMMA)"))
+        #expect(here["disk"] == nil)
     }
 
     @Test func test_very_low_disk_says_what_to_free() {
@@ -156,21 +147,16 @@ private func b(_ v: Bool) -> SetupValue { .bool(v) }
 
     // MARK: - during calls
 
-    @Test func test_realtime_is_off_below_an_m2_pro_and_says_why() {
+    @Test func test_realtime_and_live_processing_say_why() {
         var r = F.recs("Apple M1", 32)["realtime"]!
         #expect(r.value == b(false) && r.reason.contains("M2 Pro"))
         r = F.recs("Apple M4 Pro", 8)["realtime"]!
         #expect(r.value == b(false) && r.reason.contains("8 GB"))
-    }
-
-    @Test func test_realtime_names_its_cost() {
-        let r = F.recs("Apple M4 Pro", 48)["realtime"]!
-        #expect(r.value == b(true) && r.reason.contains("2.5 GB"))
-    }
-
-    @Test func test_live_processing_needs_24_gb() {
+        r = F.recs("Apple M4 Pro", 48)["realtime"]!
+        #expect(r.value == b(true) && r.reason.contains("2.5 GB"))  // it names its cost
+        // Live processing needs 24 GB.
         #expect(F.recs("Apple M4 Pro", 16)["live_processing"]!.value == b(false))
-        let r = F.recs("Apple M4 Pro", 24)["live_processing"]!
+        r = F.recs("Apple M4 Pro", 24)["live_processing"]!
         #expect(r.value == b(true) && r.reason.contains("3.6 GB"))
     }
 
@@ -193,6 +179,10 @@ private func b(_ v: Bool) -> SetupValue { .bool(v) }
         let lm = F.recs("Apple M4 Pro", 48, F.current(registry: reg))["language_model"]!
         #expect(lm.features == ["notes", "projects"])  // transcription services are no language model
         #expect(option(lm, s("assemblyai")) == nil)
+        // A transcription service chosen stays chosen; local is still the advice.
+        let cur = F.current(choices: PyDict([("notes", "local"), ("transcription", "soniox")]), registry: reg)
+        let chosen = F.recs("Apple M4 Pro", 48, cur)["transcription"]!
+        #expect(chosen.value == s("local") && chosen.current == s("soniox") && !chosen.matches)
     }
 
     @Test func test_an_intel_mac_is_not_supported_yet() {
@@ -206,13 +196,6 @@ private func b(_ v: Bool) -> SetupValue { .bool(v) }
             #expect(!r.reason.contains("transcribes the calls"))
         }
         #expect(got["realtime"]!.value == b(false) && got["live_processing"]!.value == b(false))
-    }
-
-    @Test func test_a_transcription_service_chosen_stays_recommended() {
-        let reg = F.withTranscription(F.lmRegistry(), ready: ["soniox"])
-        let cur = F.current(choices: PyDict([("notes", "local"), ("transcription", "soniox")]), registry: reg)
-        let r = F.recs("Apple M4 Pro", 48, cur)["transcription"]!
-        #expect(r.value == s("local") && r.current == s("soniox") && !r.matches)  // local is still the advice
     }
 
     // MARK: - what to record, Claude
@@ -247,30 +230,31 @@ private func b(_ v: Bool) -> SetupValue { .bool(v) }
 
     private func offerJSON(_ r: PyDict<JSONValue>?) -> String { r.map { F.dumps($0.json) } ?? "None" }
 
-    @Test func test_offer_on_first_start_only_without_meetings() {
+    @Test func test_when_the_assistant_is_offered() {
+        // On first start, only without meetings.
         #expect(offerJSON(Recommendations.offer(nil, "Apple M4 Pro, 48 GB", hasMeetings: false, missing: []))
             == #"{"why": "first"}"#)
         #expect(Recommendations.offer(nil, "Apple M4 Pro, 48 GB", hasMeetings: true, missing: []) == nil)  // an existing user
-    }
-
-    @Test func test_offer_again_when_the_mac_changed() {
-        let state = PyDict<JSONValue>([("done", .string("2026-10-29T10:00:00+01:00")), ("hardware", .string("Apple M1, 16 GB"))])
-        #expect(offerJSON(Recommendations.offer(state, "Apple M4 Pro, 48 GB", hasMeetings: true, missing: []))
+        // Again when the Mac changed.
+        let older = PyDict<JSONValue>([("done", .string("2026-10-29T10:00:00+01:00")), ("hardware", .string("Apple M1, 16 GB"))])
+        #expect(offerJSON(Recommendations.offer(older, "Apple M4 Pro, 48 GB", hasMeetings: true, missing: []))
             == #"{"why": "changed", "was": "Apple M1, 16 GB", "now": "Apple M4 Pro, 48 GB"}"#)
-    }
-
-    @Test func test_offer_the_downloads_when_a_model_is_missing() {
+        // The downloads when a model is missing.
         let state = PyDict<JSONValue>([("done", .string("2026-10-29T10:00:00+01:00")),
                                        ("hardware", .string("Apple M4 Pro, 48 GB"))])
         #expect(offerJSON(Recommendations.offer(state, "Apple M4 Pro, 48 GB", hasMeetings: true, missing: ["gemma"]))
             == #"{"why": "missing", "models": ["gemma"]}"#)
         #expect(Recommendations.offer(state, "Apple M4 Pro, 48 GB", hasMeetings: true, missing: []) == nil)
-    }
-
-    @Test func test_skipped_is_not_offered_again() {
-        let state = PyDict<JSONValue>([("skipped", .string("2026-10-29T10:00:00+01:00")),
-                                       ("hardware", .string("Apple M4 Pro, 48 GB"))])
-        #expect(Recommendations.offer(state, "Apple M4 Pro, 48 GB", hasMeetings: false, missing: ["gemma"]) == nil)
+        // Skipped is not offered again.
+        let skipped = PyDict<JSONValue>([("skipped", .string("2026-10-29T10:00:00+01:00")),
+                                         ("hardware", .string("Apple M4 Pro, 48 GB"))])
+        #expect(Recommendations.offer(skipped, "Apple M4 Pro, 48 GB", hasMeetings: false, missing: ["gemma"]) == nil)
+        // A user without setup state but with meetings is offered the speech models.
+        #expect(offerJSON(Recommendations.offer(nil, "fp", hasMeetings: true, missing: ["speech", "gemma"]))
+            == #"{"why": "missing", "models": ["speech"]}"#)
+        #expect(Recommendations.offer(nil, "fp", hasMeetings: true, missing: ["gemma"]) == nil)
+        #expect(Recommendations.offer(nil, "fp", hasMeetings: true, missing: []) == nil)
+        #expect(offerJSON(Recommendations.offer(nil, "fp", hasMeetings: false, missing: ["speech"])) == #"{"why": "first"}"#)
     }
 
     @Test func test_missing_models_are_those_the_choices_need() {
@@ -280,6 +264,9 @@ private func b(_ v: Bool) -> SetupValue { .bool(v) }
         c = F.current(choices: PyDict([("notes", "anthropic")]), downloaded: ["speech", "e5"],
                       registry: F.lmRegistry(ready: ["anthropic"]))
         #expect(Recommendations.missingModels(c, hw) == [])
+        // Never Gemma while notes wait for a cloud model.
+        c = F.current(choices: PyDict([("notes", "pending")]), downloaded: ["speech"])
+        #expect(Recommendations.missingModels(c, Hardware(chip: "Apple M2 Pro", memoryGB: 16, freeDiskGB: 200)) == [])
     }
 
     // MARK: - the summary (doctor in the window)
@@ -301,12 +288,19 @@ private func b(_ v: Bool) -> SetupValue { .bool(v) }
         #expect(by["Disk space"]!.status == "ok")
     }
 
-    @Test func test_summary_local_notes_name_the_model_and_its_download() {
+    @Test func test_summary_of_notes_names_the_local_model_or_the_wait() {
         let c = F.current(downloaded: ["speech", "e5"])
         let by = Dictionary(uniqueKeysWithValues: Recommendations.summary(
             Hardware(chip: "Apple M4 Pro", memoryGB: 48, freeDiskGB: 200), PyDict(), Installed(), c).map { ($0.name, $0) })
         #expect(by["Notes and projects"]!.status == "warn" && by["Notes and projects"]!.detail.contains("Gemma 4 12B"))
         #expect(by["Notes and projects"]!.fix.contains("8.3 GB"))
+        // Notes that wait for a cloud model say so.
+        let waiting = F.current(choices: PyDict([("notes", "pending"), ("projects", "pending")]))
+        let byWaiting = Dictionary(uniqueKeysWithValues: Recommendations.summary(
+            Hardware(chip: "Apple M2 Pro", memoryGB: 16, freeDiskGB: 200), PyDict(), Installed(), waiting).map { ($0.name, $0) })
+        let notes = byWaiting["Notes and projects"]!
+        #expect(notes.status == "warn")
+        #expect(notes.detail.contains("none yet") && notes.fix.contains("Language model"))
     }
 
     // MARK: - the test recording's verdict
@@ -323,21 +317,19 @@ private func b(_ v: Bool) -> SetupValue { .bool(v) }
         #expect(ok[1].detail.contains("quiet"))  // nothing played: a silent system track is right
     }
 
-    @Test func test_test_verdict_silent_mic_and_missing_system_track() {
+    @Test func test_test_verdict_silent_or_missing_tracks() {
         let bad = Recommendations.testVerdict(result(
             mic: track([("recorded", .bool(true)), ("level_db", .double(-75.0)), ("text", .string(""))]),
             system: track([("recorded", .bool(false)), ("level_db", .null)])))
         #expect(bad.map(\.status) == ["warn", "fail"])
         #expect(bad[0].fix.contains("input") && bad[1].fix.contains("System Audio Recording"))
         for c in bad { #expect(!(c.detail + c.fix).lowercased().contains("headphone")) }
-    }
-
-    @Test func test_test_verdict_mic_missing() {
-        let bad = Recommendations.testVerdict(result(
+        // The mic missing.
+        let noMic = Recommendations.testVerdict(result(
             mic: track([("recorded", .bool(false)), ("level_db", .null), ("text", .null)]),
             system: track([("recorded", .bool(true)), ("level_db", .double(-20.0))])))
-        #expect(bad[0].status == "fail" && bad[0].fix.contains("Microphone"))
-        #expect(bad[1].status == "ok")
+        #expect(noMic[0].status == "fail" && noMic[0].fix.contains("Microphone"))
+        #expect(noMic[1].status == "ok")
     }
 
     // MARK: - review fixes
@@ -346,19 +338,6 @@ private func b(_ v: Bool) -> SetupValue { .bool(v) }
         let got = F.recs("Apple M1", 32, F.current(settings: PyDict([("realtime", true)]), chosen: ["realtime"]))
         #expect(got["realtime"]!.chosen && !got["realtime"]!.matches)
         #expect(!got["live_processing"]!.chosen)
-    }
-
-    @Test func test_summary_says_notes_wait_for_a_cloud_model() {
-        let c = F.current(choices: PyDict([("notes", "pending"), ("projects", "pending")]))
-        let by = Dictionary(uniqueKeysWithValues: Recommendations.summary(
-            Hardware(chip: "Apple M2 Pro", memoryGB: 16, freeDiskGB: 200), PyDict(), Installed(), c).map { ($0.name, $0) })
-        #expect(by["Notes and projects"]!.status == "warn")
-        #expect(by["Notes and projects"]!.detail.contains("none yet") && by["Notes and projects"]!.fix.contains("Language model"))
-    }
-
-    @Test func test_missing_models_never_include_gemma_while_notes_wait() {
-        let c = F.current(choices: PyDict([("notes", "pending")]), downloaded: ["speech"])
-        #expect(Recommendations.missingModels(c, Hardware(chip: "Apple M2 Pro", memoryGB: 16, freeDiskGB: 200)) == [])
     }
 
     @Test func test_the_catch_of_a_local_model_on_a_small_mac() {
@@ -388,13 +367,5 @@ private func b(_ v: Bool) -> SetupValue { .bool(v) }
             mic: track([("recorded", .bool(true)), ("level_db", .double(-20.0)), ("text", .null),
                         ("transcript", .string("cloud")), ("service", .string("Soniox"))]), system: system))
         #expect(cloud[0].detail.contains("transcription is skipped") && cloud[0].detail.contains("Soniox"))
-    }
-
-    @Test func test_a_user_without_setup_state_but_with_meetings_is_offered_the_speech_models() {
-        #expect(offerJSON(Recommendations.offer(nil, "fp", hasMeetings: true, missing: ["speech", "gemma"]))
-            == #"{"why": "missing", "models": ["speech"]}"#)
-        #expect(Recommendations.offer(nil, "fp", hasMeetings: true, missing: ["gemma"]) == nil)
-        #expect(Recommendations.offer(nil, "fp", hasMeetings: true, missing: []) == nil)
-        #expect(offerJSON(Recommendations.offer(nil, "fp", hasMeetings: false, missing: ["speech"])) == #"{"why": "first"}"#)
     }
 }

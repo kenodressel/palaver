@@ -100,7 +100,7 @@ public struct NotionClient: Sendable {
                                    speakers: Int, source: String) async throws -> String {
         let (data, status) = try await request("GET", "\(base)/databases/\(databaseId)")
         guard status == 200, let schema = try? PythonJSON.parse(data) else {
-            throw NotionError("Notion database lookup failed: \(status) \(Self.text(data))")
+            throw NotionError("Notion database lookup failed: \(status) \(HTTPClient.redact(Self.text(data), key: token))")
         }
         let properties = Self.databaseProperties(schema, title: title, start: start, durationMinutes: durationMinutes,
                                                  speakers: speakers, source: source)
@@ -112,14 +112,16 @@ public struct NotionClient: Sendable {
         let payload = JSONValue.object([("parent", parent), ("properties", properties), ("children", .array(first))])
         let (data, status) = try await request("POST", "\(base)/pages", json: payload)
         guard status == 200, let page = try? PythonJSON.parse(data), let pageId = page["id"]?.stringValue else {
-            throw NotionError("Notion create_page failed: \(status) \(Self.text(data))")
+            throw NotionError("Notion create_page failed: \(status) \(HTTPClient.redact(Self.text(data), key: token))")
         }
         let url = page["url"]?.stringValue ?? ""
         var at = Self.MAX_BLOCKS_PER_REQUEST
         while at < blocks.count {
             let batch = Array(blocks[at..<min(at + Self.MAX_BLOCKS_PER_REQUEST, blocks.count)])
             let (body, code) = try await request("PATCH", "\(base)/blocks/\(pageId)/children", json: .object([("children", .array(batch))]))
-            guard code == 200 else { throw NotionError("Notion append blocks failed: \(code) \(Self.text(body))") }
+            guard code == 200 else {
+                throw NotionError("Notion append blocks failed: \(code) \(HTTPClient.redact(Self.text(body), key: token))")
+            }
             at += Self.MAX_BLOCKS_PER_REQUEST
         }
         return url

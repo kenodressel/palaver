@@ -132,6 +132,20 @@ private final class Fixture {
         #expect(!FileManager.default.fileExists(atPath: paths.speakersLive.path))
     }
 
+    /// Where the user is muted in the call (their mic not kept) shows in the live transcript; the last stretch goes
+    /// on while still muted.
+    @Test func aMeetingBeingRecordedShowsWhereTheMicIsMuted() throws {
+        let f = try Fixture()
+        let paths = try recording(f.out)
+        #expect(try f.page()["muted"] == .array([]))
+        try MicMuted.write(.init(pending: false, late: [], muted: [2...5.5, 9...9], app: "teams", open: true), folder: paths.folder)
+        #expect(try f.page()["muted"] == .array([
+            .object([("start", .double(2)), ("end", .double(5.5)),
+                     ("text", .string("Muted in Teams 16:03:09–16:03:12 · your mic wasn't recorded"))]),
+            .object([("start", .double(9)), ("end", .null), ("text", .string("Muted in Teams since 16:03:16 · your mic isn't recorded"))]),
+        ]))
+    }
+
     @Test func test_a_meeting_being_recorded_can_be_renamed() throws {
         let f = try Fixture()
         let paths = try recording(f.out)
@@ -170,12 +184,6 @@ private final class Fixture {
 
     // MARK: - the stream's tail (#42)
 
-    @Test func test_stream_tail_without_stream_json() throws {
-        let f = try Fixture()
-        try recording(f.out)
-        #expect(dumps(try f.stream()) == #"{"stream": false}"#)
-    }
-
     @Test func test_stream_tail_after_block_text() throws {
         let f = try Fixture()
         let g = Glossary(path: f.stores.glossary)
@@ -195,17 +203,34 @@ private final class Fixture {
         #expect(keys(tail) == ["stream", "until", "lines", "draft", "speaking", "questions"])
     }
 
+    /// Without stream.json, no stream. Also: stream.json is replaced whole once a second (`stream.json.tmp`, then a
+    /// rename): a half-written one beside it is not read, and a stream.json cut short anyway is no stream
+    /// (`_read_json(paths.stream, None)`). Never a 500.
     @Test func test_http_stream_endpoint() throws {
         let server = try TestServer(meetings: { out in try recording(out) })
         defer { server.stop() }
         #expect(dumps(server.get("/api/meetings/\(MEETING)/stream?since=0").json) == #"{"stream": false}"#)
-        try streamJSON(RecordingPaths(server.app.outputDir.appendingPathComponent(MEETING, isDirectory: true)))
+        let paths = RecordingPaths(server.app.outputDir.appendingPathComponent(MEETING, isDirectory: true))
+        try streamJSON(paths)
         let r = server.get("/api/meetings/\(MEETING)/stream?since=71")
         #expect(r.status == 200)
         #expect(dumps(r.json) == dumps(try LivePage.stream(app: server.app, id: MEETING, since: 71.0)))
         #expect(r.json?["lines"]?.arrayValue?.map { $0["start"]! } == [.double(72.0), .double(74.0)])
         #expect(server.get("/api/meetings/nope/stream").status == 404)
         #expect(server.get("/api/meetings/nope/stream").error == "not found: nope")
+
+        let full = try String(contentsOf: paths.stream, encoding: .utf8)
+        try Data(full.prefix(full.count / 2).utf8).write(to: paths.folder.appendingPathComponent("stream.json.tmp"))
+        var cutShort = server.get("/api/meetings/\(MEETING)/stream?since=0")
+        #expect(cutShort.status == 200 && cutShort.json?["lines"]?.arrayValue?.count == 4)
+        try Data("\(getpid())".utf8).write(to: paths.streamPid)  // a stream running: still not "starting", the file is there
+        for cut in [String(full.prefix(full.count / 2)), "", "{\"until\": 75.0, \"system\": [{\"start\": 7", "\u{FF}"] {
+            try Data(cut.utf8).write(to: paths.stream)
+            cutShort = server.get("/api/meetings/\(MEETING)/stream?since=0")
+            #expect(cutShort.status == 200 && dumps(cutShort.json) == #"{"stream": false}"#, "\(cut.prefix(20))")
+        }
+        try Data([0x7B, 0xFF]).write(to: paths.stream)  // no UTF-8
+        #expect(dumps(server.get("/api/meetings/\(MEETING)/stream").json) == #"{"stream": false}"#)
     }
 
     @Test func test_stream_tail_survives_wrong_shapes() throws {
@@ -261,27 +286,6 @@ private final class Fixture {
         let paths = try recording(f.out)
         try write(.object([("draft", .object([("system", .string("Mm-hmm.")), ("mic", .string("äh"))]))]), to: paths.stream)
         #expect(dumps(try f.stream()["draft"]) == #"{"system": "", "mic": ""}"#)
-    }
-
-    /// stream.json is replaced whole once a second (`stream.json.tmp`, then a rename): a half-written one beside it is
-    /// not read, and a stream.json cut short anyway is no stream (`_read_json(paths.stream, None)`). Never a 500.
-    @Test func test_stream_json_cut_mid_write_is_no_error() throws {
-        let server = try TestServer(meetings: { out in try recording(out) })
-        defer { server.stop() }
-        let paths = RecordingPaths(server.app.outputDir.appendingPathComponent(MEETING, isDirectory: true))
-        try streamJSON(paths)
-        let full = try String(contentsOf: paths.stream, encoding: .utf8)
-        try Data(full.prefix(full.count / 2).utf8).write(to: paths.folder.appendingPathComponent("stream.json.tmp"))
-        var r = server.get("/api/meetings/\(MEETING)/stream?since=0")
-        #expect(r.status == 200 && r.json?["lines"]?.arrayValue?.count == 4)
-        try Data("\(getpid())".utf8).write(to: paths.streamPid)  // a stream running: still not "starting", the file is there
-        for cut in [String(full.prefix(full.count / 2)), "", "{\"until\": 75.0, \"system\": [{\"start\": 7", "\u{FF}"] {
-            try Data(cut.utf8).write(to: paths.stream)
-            r = server.get("/api/meetings/\(MEETING)/stream?since=0")
-            #expect(r.status == 200 && dumps(r.json) == #"{"stream": false}"#, "\(cut.prefix(20))")
-        }
-        try Data([0x7B, 0xFF]).write(to: paths.stream)  // no UTF-8
-        #expect(dumps(server.get("/api/meetings/\(MEETING)/stream").json) == #"{"stream": false}"#)
     }
 
     // MARK: - since=

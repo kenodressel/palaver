@@ -12,15 +12,11 @@ import Testing
         #expect(d.replacements == PyDict<String>())
     }
 
-    @Test func test_load_initial_prompt() {
-        let t = TempFolder("dict"); defer { t.remove() }
-        t.write("dict.toml", "[initial_prompt]\ntext = \"Sprint Planning OKRs KPIs\"\n")
-        #expect(TranscriberDictionary.load(t.url.appendingPathComponent("dict.toml")).initialPrompt == "Sprint Planning OKRs KPIs")
-    }
-
-    @Test func test_load_replacements() {
+    @Test func test_load_initial_prompt_and_replacements() {
         let t = TempFolder("dict"); defer { t.remove() }
         t.write("dict.toml", """
+        [initial_prompt]
+        text = "Sprint Planning OKRs KPIs"
 
         [replacements]
         "kay pee eye" = "KPI"
@@ -28,23 +24,17 @@ import Testing
 
         """)
         let d = TranscriberDictionary.load(t.url.appendingPathComponent("dict.toml"))
+        #expect(d.initialPrompt == "Sprint Planning OKRs KPIs")
         #expect(d.replacements == PyDict([("kay pee eye", "KPI"), ("oh kay are", "OKR")]))
         #expect(d.replacements.keys == ["kay pee eye", "oh kay are"])  // file order, as tomllib's dict
     }
 
-    @Test func test_apply_replacements_case_insensitive() {
+    @Test func test_apply_replacements_case_insensitive_and_leaves_unmatched_text() {
         let d = TranscriberDictionary(initialPrompt: "", replacements: PyDict([("kay pee eye", "KPI")]))
         #expect(d.apply("Our Kay Pee Eye is great") == "Our KPI is great")
-    }
-
-    @Test func test_apply_replacements_leaves_unmatched_text() {
-        let d = TranscriberDictionary(initialPrompt: "", replacements: PyDict([("foo", "bar")]))
         #expect(d.apply("nothing to replace here") == "nothing to replace here")
-    }
-
-    @Test func test_apply_with_empty_replacements() {
-        let d = TranscriberDictionary(initialPrompt: "hint", replacements: PyDict())
-        #expect(d.apply("hello world") == "hello world")
+        let empty = TranscriberDictionary(initialPrompt: "hint", replacements: PyDict())
+        #expect(empty.apply("hello world") == "hello world")
     }
 
     @Test func theLongestSourceGoesFirstAndEqualOnesInFileOrder() {

@@ -127,13 +127,7 @@ import Testing
         #expect(kinds(unknown) == ["project nil"] && unknown.filters[0].label == "nope")  // finds nothing
     }
 
-    @Test func test_each_filter_knows_where_it_is_in_the_text() {
-        let text = "Anna and Tom last month"
-        let q = parse(text)
-        #expect(q.filters.map { SearchQuery.slice(text, $0.span) } == ["Anna", "Tom", "last month", "last month"])
-    }
-
-    @Test func test_the_chips_the_page_shows() {
+    @Test func test_the_chips_the_page_shows_and_where_each_filter_is() {
         let chips = parse("Anna and Tom last month in:decisions").chips()
         let want = """
             [{"kind": "person", "label": "Anna", "title": "Took part: named speaker or invited", "span": [0, 4], \
@@ -144,6 +138,11 @@ import Testing
             """
         #expect(PythonJSON.dumps(.array(chips), ensureAscii: false) == want)
         #expect(parse("anna or tom").chips()[0]["title"]?.stringValue == "Took part, any of them: named speaker or invited")
+        // Each filter knows where it is in the text; a chip knows its text and whether it was written out.
+        let text = "Anna and Tom last month"
+        #expect(parse(text).filters.map { SearchQuery.slice(text, $0.span) } == ["Anna", "Tom", "last month", "last month"])
+        #expect(parse("Anna project:ÖNW").chips().map { "\($0["text"]?.stringValue ?? "") \($0["written"]?.boolValue ?? false)" }
+                == ["Anna false", "project:ÖNW true"])
     }
 
     @Test func test_a_one_word_project_is_a_filter_only_when_nothing_else_is_searched() {
@@ -154,6 +153,10 @@ import Testing
         #expect(kinds(parse("project:search ranking", vocab)) == ["project p1"])
         q = parse("software foundry pricing", vocab)
         #expect(kinds(q) == ["project p2"] && q.words == ["pricing"])  // a whole longer name is
+        // A name typed twice and a filter removed keep their places: filters.remove(f) removes that one project
+        // filter; the rest keep Python's order.
+        q = parse("Mara search search ranking", vocab)
+        #expect(kinds(q) == ["person Mara"] && q.words == ["search", "search", "ranking"])
     }
 
     @Test func test_short_parts_of_names_stay_words() {
@@ -163,12 +166,6 @@ import Testing
         #expect(kinds(parse("tom kraus", vocab)) == ["person Tom Kraus"])
         #expect(kinds(parse("eli", vocab)) == ["person Eli"])  // a whole name
         #expect(kinds(parse("thomas", vocab)) == ["person Thomas Berg"])
-    }
-
-    @Test func test_a_chip_knows_its_text_and_whether_it_was_written_out() {
-        let chips = parse("Anna project:ÖNW").chips()
-        #expect(chips.map { "\($0["text"]?.stringValue ?? "") \($0["written"]?.boolValue ?? false)" }
-                == ["Anna false", "project:ÖNW true"])
     }
 
     // Extra: casefold, not lower(): ß is ss.
@@ -190,13 +187,6 @@ import Testing
         return Vocabulary(people: v["people"]?.arrayValue?.compactMap(\.stringValue) ?? [],
                           projects: PyDict(projects.map { ($0.key, $0.value.stringValue ?? "") }),
                           orgs: v["orgs"]?.arrayValue?.compactMap(\.stringValue) ?? [])
-    }
-
-    @Test func aNameTypedTwiceAndAFilterRemovedKeepTheirPlaces() {
-        // filters.remove(f) removes that one project filter; the rest keep Python's order.
-        let vocab = Vocabulary(people: ["Mara"], projects: PyDict([("p1", "Search")]), orgs: [])
-        let q = parse("Mara search search ranking", vocab)
-        #expect(kinds(q) == ["person Mara"] && q.words == ["search", "search", "ranking"])
     }
 
     @Test func nfdAndNfcStayApart() {

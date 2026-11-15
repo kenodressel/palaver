@@ -144,13 +144,20 @@ private func post(_ s: TestServer, _ path: String, _ body: JSONValue) -> (Int, J
         try f.undo(named)
     }
 
-    @Test func test_a_room_named_and_both_changes_undone_in_turn() throws {
+    @Test func test_a_room_named_and_both_changes_undone_in_turn_and_its_name_kept_for_a_new_mark() throws {
         let f = try Fixture()
         let marked = try f.shared(on: true, label: "SPEAKER_01")
         let named = try f.shared(on: true, label: "SPEAKER_01", name: "Raum 3.12")
         try f.undo(named)
         try f.undo(marked)
         #expect(lanes(try f.page())["SPEAKER_01"]?["shared"] == .null)
+
+        // One person after all keeps the room's name for when it is marked again.
+        try f.shared(on: true, label: "SPEAKER_00", name: "Lab")
+        try f.shared(on: false, label: "SPEAKER_00")
+        #expect(lanes(try f.page())["SPEAKER_00"]?["shared"] == .null)
+        try f.shared(on: true, label: "SPEAKER_00")
+        #expect(lanes(try f.page())["SPEAKER_00"]?["display"] == .string("Room (Lab)"))
     }
 
     @Test func test_a_room_is_no_open_question_and_no_unnamed_voice() throws {
@@ -251,15 +258,6 @@ private func post(_ s: TestServer, _ path: String, _ body: JSONValue) -> (Int, J
         #expect(m["transcript"]?[0]?["speaker"] == .string("Room (with you)") && m["speakers"]?[0]?["shared"] == .string("meeting"))
     }
 
-    @Test func test_one_person_after_all_keeps_the_rooms_name_for_when_it_is_marked_again() throws {
-        let f = try Fixture()
-        try f.shared(on: true, label: "SPEAKER_00", name: "Lab")
-        try f.shared(on: false, label: "SPEAKER_00")
-        #expect(lanes(try f.page())["SPEAKER_00"]?["shared"] == .null)
-        try f.shared(on: true, label: "SPEAKER_00")
-        #expect(lanes(try f.page())["SPEAKER_00"]?["display"] == .string("Room (Lab)"))
-    }
-
     @Test func test_only_a_recurring_event_is_remembered() throws {
         let f = try Fixture()
         try CalendarEvents.save(f.paths, try event("All Hands", series: false))
@@ -272,7 +270,7 @@ private func post(_ s: TestServer, _ path: String, _ body: JSONValue) -> (Int, J
         #expect(try f.page()["shared"]?["line"] == .null)
     }
 
-    @Test func test_http_marks_a_room_and_dismisses_the_suggestion() throws {
+    @Test func test_http_marks_a_room_and_dismisses_the_suggestion_taking_marks_only_as_said_plainly() throws {
         let s = try TestServer(userName: "Timo", meetings: { try pageMeeting($0) })
         defer { s.stop() }
         var (status, m) = post(s, "/api/meetings/\(MEETING)/shared",
@@ -281,11 +279,8 @@ private func post(_ s: TestServer, _ path: String, _ body: JSONValue) -> (Int, J
         #expect(post(s, "/api/meetings/\(MEETING)/shared", .object([("label", .string("SPEAKER_09")), ("on", .bool(true))])).0 == 404)
         (status, m) = post(s, "/api/meetings/\(MEETING)/shared-suggestion", .object([("dismiss", .bool(true))]))
         #expect(status == 200 && m["shared_suggestion"] == .null)
-    }
 
-    @Test func test_http_takes_marks_only_as_said_plainly() throws {
-        let s = try TestServer(userName: "Timo", meetings: { try pageMeeting($0) })
-        defer { s.stop() }
+        // It takes marks only as said plainly.
         func send(_ fields: [(String, JSONValue)]) -> (Int, JSONValue) { post(s, "/api/meetings/\(MEETING)/shared", .object(fields)) }
         let lane: JSONValue = .string("SPEAKER_01")
         #expect(send([("label", lane), ("on", .string("false"))]).0 == 400)  // not a JSON boolean
@@ -293,7 +288,7 @@ private func post(_ s: TestServer, _ path: String, _ body: JSONValue) -> (Int, J
         #expect(send([("on", .bool(false)), ("series", .bool(true))]).0 == 400)  // a series only with the whole meeting marked
         #expect(send([("label", lane), ("on", .bool(true)), ("series", .bool(true))]).0 == 400)
         #expect(send([("label", lane), ("on", .bool(true)), ("name", .strings(["Lab"]))]).0 == 400)
-        let (status, m) = send([("label", lane), ("on", .bool(true)), ("name", .string("  " + String(repeating: "R", count: 120) + " "))])
-        #expect(status == 200 && lanes(m)["SPEAKER_01"]?["room"] == .string(String(repeating: "R", count: 80)))
+        let (renamed, long) = send([("label", lane), ("on", .bool(true)), ("name", .string("  " + String(repeating: "R", count: 120) + " "))])
+        #expect(renamed == 200 && lanes(long)["SPEAKER_01"]?["room"] == .string(String(repeating: "R", count: 80)))
     }
 }

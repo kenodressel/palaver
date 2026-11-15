@@ -400,9 +400,7 @@ private struct Stop: Error {}
         #expect(line["mb"] == .int(Int((Double(StreamWorker.STREAM_MEMORY_LIMIT + 1) / 1_048_576).rounded())))
         // twice the stream's budget, measured as this process (the engine is in it)
         #expect(StreamWorker.STREAM_MEMORY_LIMIT == 3 * 1_073_741_824)
-    }
-
-    @Test func test_the_stream_cap_follows_the_configured_budget() {
+        // The cap follows the configured budget.
         var config = Config()
         config.memory["stream_gb"] = 2.5
         #expect(StreamWorker.memoryLimit(config) == 5 * 1_073_741_824)

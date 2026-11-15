@@ -78,7 +78,7 @@ private func checks(_ result: JSONValue) -> [(String, String, String)] {
         #expect(checks(result).map(\.2) == ["heard you", "recorded, with sound from other apps"])
     }
 
-    @Test func test_analyze_never_downloads() async throws {
+    @Test func test_analyze_never_downloads_nor_sends() async throws {
         let t = Temp("test-analyze"); defer { t.remove() }
         try writeTone(t.file("mic.wav"), seconds: 1)
         let words = Words()
@@ -86,16 +86,11 @@ private func checks(_ result: JSONValue) -> [(String, String, String)] {
         #expect(words.asked.isEmpty && result["mic"]?["transcript"] == .string("not_downloaded"))
         #expect(checks(result)[0].2.hasPrefix("heard you (levels only: the speech models are not downloaded yet"))
         #expect(checks(result)[1].1 == "fail")  // no system track was written
-    }
-
-    @Test func aCloudServiceMeansLevelsOnly_theTestSendsNothing() async throws {
-        let t = Temp("test-analyze"); defer { t.remove() }
-        try writeTone(t.file("mic.wav"), seconds: 1)
-        let words = Words()
-        let result = await run(mic: t.file("mic.wav"), system: nil,
-                               mode: .object([("transcribe", .string("cloud")), ("service", .string("Contoso Speech"))]), words: words)
-        #expect(words.asked.isEmpty && result["mic"]?["transcript"] == .string("cloud"))
-        #expect(checks(result)[0].2 == "heard you (levels only: Contoso Speech transcribes your calls, and transcription is skipped in the test)")
+        // A cloud service means levels only: the test sends nothing.
+        let cloud = await run(mic: t.file("mic.wav"), system: nil,
+                              mode: .object([("transcribe", .string("cloud")), ("service", .string("Contoso Speech"))]), words: words)
+        #expect(words.asked.isEmpty && cloud["mic"]?["transcript"] == .string("cloud"))
+        #expect(checks(cloud)[0].2 == "heard you (levels only: Contoso Speech transcribes your calls, and transcription is skipped in the test)")
     }
 
     @Test func aSilentMicIsAWarningAndNoMicTrackAFailure() async throws {

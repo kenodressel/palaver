@@ -139,7 +139,12 @@ private func ones(_ n: Int) -> [Float] { [Float](repeating: 0.5, count: n) }
                 t.set(false, at: ns(102))
             }
             while rec.drainOnce() {}
-            if k == 199 { atFour = try readWav(micPart).samples }
+            if k == 199 {
+                atFour = try readWav(micPart).samples
+                // While recording, every stretch the mic was not kept in, in seconds of the track.
+                #expect(rec.mutedSeconds.count == 1 && abs(rec.mutedSeconds[0].lowerBound - 1) < 1e-6
+                        && abs(rec.mutedSeconds[0].upperBound - 2) < 1e-6)
+            }
         }
         #expect(atFour.count == 48_000 && atFour[16_000..<32_000].allSatisfy { $0 == 0 })
         #expect(meanAbs(atFour[0..<16_000]) > 1_000 && meanAbs(atFour[32_000...]) > 1_000)
@@ -178,6 +183,35 @@ private func ones(_ n: Int) -> [Float] { [Float](repeating: 0.5, count: n) }
         #expect(meanAbs(mic[0..<16_000]) > 1_000 && meanAbs(mic[32_000...]) > 1_000)
         #expect(rec.lateSilenced.count == 1 && abs(rec.lateSilenced[0].lowerBound - 1) < 1e-6 && abs(rec.lateSilenced[0].upperBound - 2) < 1e-6)
         #expect(log.all.contains("silenced 1.0 s of microphone after the stop: Teams told the mute late"))
+    }
+
+    /// A mute still on reaches to now while recording, and to the track's end once it stopped.
+    @Test func aMuteStillOnReachesToNowAndThenToTheEnd() throws {
+        let dir = tempDir()
+        let now = Locked(102.0)
+        var mics: [FakeSource] = [], taps: [FakeSource] = []
+        let sources = CaptureSources(
+            systemTap: { taps.append(FakeSource(ring: $0, error: nil)); return taps.last! },
+            mic: { mics.append(FakeSource(ring: $0, error: nil)); return mics.last! },
+            screenCapture: { FakeScreenCapture(mic: $0, system: $1, failures: 0) })
+        let t = timeline(delay: 0)
+        let rec = CaptureRecorder(micURL: dir.appendingPathComponent("mic_raw.wav"), systemURL: dir.appendingPathComponent("system.wav"),
+                                  sources: sources, monitor: nil, clock: { now.get }, log: { _ in }, debug: { _ in },
+                                  sleep: { _ in }, ringCapacity: 1 << 20, runsWriterThread: false, mute: t)
+        try rec.start()
+        #expect(rec.mutedSeconds.isEmpty)  // no audio yet: no track to place it on
+        let signal = sine(48_000)
+        for k in 0..<150 {
+            push(mics[0].ring, pts: ns(100) + Int64(k) * 20_000_000, Array(signal[k * 320..<(k + 1) * 320]), rate: 16_000)
+            push(taps[0].ring, pts: ns(100) + Int64(k) * 20_000_000, Array(signal[k * 320..<(k + 1) * 320]), rate: 16_000)
+        }
+        t.set(true, at: ns(101))
+        while rec.drainOnce() {}
+        #expect(rec.mutedSeconds.count == 1 && abs(rec.mutedSeconds[0].lowerBound - 1) < 1e-6
+                && abs(rec.mutedSeconds[0].upperBound - 2) < 1e-6)
+        now.with { $0 = 110 }
+        try rec.stop()
+        #expect(rec.mutedSeconds.count == 1 && abs(rec.mutedSeconds[0].upperBound - 3) < 1e-6)
     }
 
     @Test func aShorterHoldLetsTheHeldAudioGoInOrder() {

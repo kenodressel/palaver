@@ -366,7 +366,11 @@ extension WorkerMain {
         let folders = o.args.filter { !$0.hasPrefix("--") }.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath, isDirectory: true) }
         var modelFolder: () -> URL? = { E5Encoder.modelFolder(stores: stores) }
         var freeGB: () -> Double = FreeMemory.availableGB
+        var qos = QualityOfService.background
         #if DEBUG
+        // A test process: a higher QoS. Background threads are throttled hard while the other tests write files: a
+        // test's first index took three minutes beside the full suite.
+        if TestIsolation.isTestProcess { qos = .userInitiated }
         // Tests: the e5 model's folder (there or not) and the free memory, in place of this Mac's.
         if let folder = env["PALAVER_TEST_E5_FOLDER"], !folder.isEmpty {
             modelFolder = { FileManager.default.fileExists(atPath: folder) ? URL(fileURLWithPath: folder, isDirectory: true) : nil }
@@ -383,7 +387,7 @@ extension WorkerMain {
         }
         let rc = await Index.run(outputDir: config.outputDir, only: folders.isEmpty ? nil : folders, stores: stores,
                                  download: download, modelFolder: modelFolder, encoder: { try E5Encoder(folder: $0) },
-                                 shouldStop: Index.shouldStop(stores: stores, freeGB: freeGB))
+                                 shouldStop: Index.shouldStop(stores: stores, freeGB: freeGB), qos: qos)
         fflush(stdout)
         return rc
     }

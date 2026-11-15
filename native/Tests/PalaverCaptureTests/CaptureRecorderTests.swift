@@ -88,9 +88,15 @@ final class RecordingMonitor: CaptureMonitor, @unchecked Sendable {
     }
 
     @Test func fallsBackToSCStreamForFailedSource() throws {
+        // The fallback fills the ring of the failed track.
         let micRig = Rig(micFails: true)
         try micRig.rec.start()
-        try micRig.rec.stop()
+        let screen = try #require(micRig.screens.first)
+        push(screen.mic, pts: ns(100), sine(16_000), rate: 16_000)
+        push(micRig.taps[0].ring, pts: ns(100), sine(16_000, freq: 880), rate: 16_000)
+        Thread.sleep(forTimeInterval: 0.1)
+        let lengths = try #require(try micRig.rec.stop())
+        #expect(lengths.mic == 16_000 && lengths.system == 16_000)
         #expect(micRig.screenCalls == [[true, false]])
         #expect(micRig.rec.micSource == "scstream" && micRig.rec.systemSource == "process-tap" && micRig.rec.missing.isEmpty)
         #expect(micRig.log.text.contains(
@@ -106,24 +112,20 @@ final class RecordingMonitor: CaptureMonitor, @unchecked Sendable {
             + "ScreenCaptureKit system audio, which other recorders running in parallel can starve."))
     }
 
-    @Test func fallbackFillsTheRingOfTheFailedTrack() throws {
-        let rig = Rig(micFails: true)
-        try rig.rec.start()
-        let screen = try #require(rig.screens.first)
-        push(screen.mic, pts: ns(100), sine(16_000), rate: 16_000)
-        push(rig.taps[0].ring, pts: ns(100), sine(16_000, freq: 880), rate: 16_000)
-        Thread.sleep(forTimeInterval: 0.1)
-        let lengths = try #require(try rig.rec.stop())
-        #expect(lengths.mic == 16_000 && lengths.system == 16_000)
-    }
-
     @Test func recordsSystemAudioAloneWhenNoMicSourceWorks() throws {
-        // Losing one track must not throw away the other.
-        let rig = Rig(micFails: true, screenFailures: 99)
+        // Losing one track must not throw away the other. SCStream is given up after its attempts, and
+        // the stall watchdog stays quiet about a microphone that is missing.
+        let now = Locked(0.0)
+        let rig = Rig(micFails: true, screenFailures: 99, writerThread: false, clock: { now.get })
         try rig.rec.start()
         #expect(rig.rec.missing == ["microphone"] && rig.rec.systemSource == "process-tap" && rig.rec.micSource == nil)
+        #expect(rig.screenCalls.count == CaptureRecorder.screenCaptureStartAttempts)
         #expect(rig.taps[0].started)
         #expect(rig.log.text.contains("⚠ recording without the microphone: SCStream startCapture failed"))
+        rig.log.clear()
+        now.with { $0 = 100 }
+        rig.rec.checkMicStall()
+        #expect(rig.log.all.isEmpty)
         try rig.rec.stop()
         #expect(rig.exists("system.wav"))
     }
@@ -160,21 +162,6 @@ final class RecordingMonitor: CaptureMonitor, @unchecked Sendable {
         #expect(rig.log.all.filter { $0.contains("retrying") }.count == 2)
         #expect(rig.log.text.contains("warning: SCStream startCapture failed; retrying in 2 s (1/2)"))
         #expect(rig.sleeps == [2, 2])
-    }
-
-    @Test func givesUpOnSCStreamAfterRepeatedFailures() throws {
-        let rig = Rig(micFails: true, screenFailures: 99)
-        try rig.rec.start()
-        #expect(rig.screenCalls.count == CaptureRecorder.screenCaptureStartAttempts)
-        #expect(rig.rec.missing == ["microphone"])
-        try rig.rec.stop()
-    }
-
-    @Test func doubleStartRaises() throws {
-        let rig = Rig()
-        try rig.rec.start()
-        #expect(throws: CaptureError("CaptureRecorder already started")) { try rig.rec.start() }
-        try rig.rec.stop()
     }
 
     @Test func knowsTheNativeRateAndTheDevices() throws {
@@ -263,17 +250,6 @@ final class RecordingMonitor: CaptureMonitor, @unchecked Sendable {
         try rig.rec.stop()
     }
 
-    @Test func noStallWarningWhenTheMicrophoneIsMissing() throws {
-        let now = Locked(0.0)
-        let rig = Rig(micFails: true, screenFailures: 99, writerThread: false, clock: { now.get })
-        try rig.rec.start()
-        rig.log.clear()
-        now.with { $0 = 100 }
-        rig.rec.checkMicStall()
-        #expect(rig.log.all.isEmpty)
-        try rig.rec.stop()
-    }
-
     // MARK: - health hooks and write failures
 
     @Test func theMonitorSeesChunksStatusAndStalls() throws {
@@ -321,47 +297,6 @@ final class RecordingMonitor: CaptureMonitor, @unchecked Sendable {
         #expect(rig.log.all.filter { $0 == "Audio health checks failed; warnings are off for this recording" }.count == 1)
     }
 
-    @Test func aDiskWriteErrorIsReportedAndTheRecordingGoesOn() throws {
-        // Python's writer thread died on an OSError and the queues grew in silence. Here the error
-        // is logged once, shown to the monitor, and later chunks still land at their true offset.
-        let now = Locked(0.0)
-        let monitor = RecordingMonitor()
-        let rig = Rig(monitor: monitor, writerThread: false, clock: { now.get })
-        let full = Locked(false)
-        rig.rec.makeWriter = { url in
-            try TrackWriter(finalURL: url, io: TrackWriter.FileIO(
-                pwrite: { fd, buf, n, off in
-                    if full.get, off > 44 { errno = ENOSPC; return -1 }
-                    return Darwin.pwrite(fd, buf, n, off)
-                },
-                ftruncate: { Darwin.ftruncate($0, $1) }))
-        }
-        try rig.rec.start()
-        func second(_ s: Int) {
-            push(rig.mics[0].ring, pts: ns(100 + Double(s)), sine(16_000), rate: 16_000)
-            push(rig.taps[0].ring, pts: ns(100 + Double(s)), sine(16_000), rate: 16_000)
-            while rig.rec.drainOnce() {}
-        }
-        second(0)
-        full.with { $0 = true }
-        second(1)
-        second(2)
-        #expect(rig.rec.writeFailures.keys.sorted { $0.rawValue < $1.rawValue } == [.mic, .system])
-        #expect(rig.log.all.filter { $0.hasPrefix("⚠ cannot write the microphone track:") }.count == 1)
-        #expect(rig.log.text.contains("No space left on device"))
-        now.with { $0 = 1 }
-        rig.rec.checkHealth()
-        #expect(monitor.statuses.get.last?.writeFailures.count == 2)
-        full.with { $0 = false }
-        second(3)
-        #expect(rig.rec.writeFailures.isEmpty)
-        #expect(rig.log.text.contains("writing the microphone track works again"))
-        let lengths = try #require(try rig.rec.stop())
-        #expect(lengths.mic == 64_000 && lengths.system == 64_000)  // seconds 1-2 zero-padded, 3 at its place
-        let mic = try rig.wav("mic_raw.wav").samples
-        #expect(mic[16_000..<48_000].allSatisfy { $0 == 0 } && maxAbs(mic[48_000...]) > 9_000)
-    }
-
     // MARK: - the real monitor on the recorder (Task 6 carry-forwards)
 
     @Test func aFullRingBecomesADroppedIncident() throws {
@@ -390,7 +325,10 @@ final class RecordingMonitor: CaptureMonitor, @unchecked Sendable {
         try rig.rec.stop()
     }
 
-    @Test func aDiskWriteErrorBecomesAWriteIncident() throws {
+    @Test func aDiskWriteErrorIsReportedAndTheRecordingGoesOn() throws {
+        // Python's writer thread died on an OSError and the queues grew in silence. Here the error
+        // is logged once, becomes a write incident per track for the health monitor (over once writing
+        // works again), and later chunks still land at their true offset.
         let now = Locked(0.0)
         let events = Locked<[String]>([])
         let monitor = AudioHealthMonitor(problemsURL: nil, events: { _, name, f in
@@ -416,22 +354,33 @@ final class RecordingMonitor: CaptureMonitor, @unchecked Sendable {
         second(0)
         full.with { $0 = true }
         second(1)
+        second(2)
+        #expect(rig.rec.writeFailures.keys.sorted { $0.rawValue < $1.rawValue } == [.mic, .system])
+        #expect(rig.log.all.filter { $0.hasPrefix("⚠ cannot write the microphone track:") }.count == 1)
+        #expect(rig.log.text.contains("No space left on device"))
         now.with { $0 = 1 }
         rig.rec.checkHealth()
         #expect(events.get == ["audio_problem/write/mic", "audio_problem/write/system"])
         full.with { $0 = false }
         second(3)
+        #expect(rig.rec.writeFailures.isEmpty)
+        #expect(rig.log.text.contains("writing the microphone track works again"))
         now.with { $0 = 2 }
         rig.rec.checkHealth()
         #expect(events.get.suffix(2) == ["audio_problem_over/write/mic", "audio_problem_over/write/system"])
-        try rig.rec.stop()
+        let lengths = try #require(try rig.rec.stop())
+        #expect(lengths.mic == 64_000 && lengths.system == 64_000)  // seconds 1-2 zero-padded, 3 at its place
+        let mic = try rig.wav("mic_raw.wav").samples
+        #expect(mic[16_000..<48_000].allSatisfy { $0 == 0 } && maxAbs(mic[48_000...]) > 9_000)
     }
 
-    @Test func theRecorderStartsTheMonitorAfresh() throws {
+    @Test func theRecorderStartsTheMonitorAfreshAndADoubleStartRaises() throws {
         let monitor = RecordingMonitor()
         let rig = Rig(monitor: monitor, writerThread: false, clock: { 5 })
         try rig.rec.start()
         #expect(monitor.begins.get == [5])
+        #expect(throws: CaptureError("CaptureRecorder already started")) { try rig.rec.start() }
+        #expect(monitor.begins.get == [5])  // refused before the monitor is touched
         try rig.rec.stop()
     }
 }

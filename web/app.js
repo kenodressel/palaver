@@ -1933,9 +1933,14 @@ function renderTranscript(m, color) {
     into = h("div", { class: "cut-part cut-before" });
     wrap.append(into);
   }
-  const pause = (g) => h("p", { class: "gap", role: "note" }, g.text);
+  // Pauses and where the user was muted in the call (their mic not kept), between the lines by time.
+  const breaks = [...(m.gaps || []), ...(m.muted || []).map((g) => ({ ...g, muted: true }))]
+    .sort((a, b) => a.start - b.start);
+  const pause = (g) => g.muted
+    ? h("p", { class: "gap muted-gap", role: "note" }, h("span", { class: "mute-icon", "aria-hidden": "true" }), g.text)
+    : h("p", { class: "gap", role: "note" }, g.text);
   m.transcript.forEach((t, i) => {
-    const gaps = gapsBefore(m.gaps, m.transcript, i);
+    const gaps = gapsBefore(breaks, m.transcript, i);
     if (gaps.length) {
       into.append(...gaps.map(pause));
       last = null;  // the speaker is named again after the pause
@@ -1971,7 +1976,7 @@ function renderTranscript(m, color) {
     t.fixed ? h("span", { class: "edited speaker-fixed", title: `Was ${t.fixed.was}` }, "speaker corrected") : null));
     into.append(turn);
   });
-  into.append(...gapsBefore(m.gaps, m.transcript, m.transcript.length).map(pause));
+  into.append(...gapsBefore(breaks, m.transcript, m.transcript.length).map(pause));
   if (m.live) {
     if (!state.stream?.stream) wrap.append(h("p", { class: "notes-empty live-tail" }, "The last minute follows shortly…"));
     wrap.append(h("div", { class: "stream-tail" }, ...streamRows(m, color)));

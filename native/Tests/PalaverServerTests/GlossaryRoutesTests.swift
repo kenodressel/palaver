@@ -182,49 +182,35 @@ private func object(_ pairs: [(String, JSONValue)]) -> JSONValue { .object(pairs
         #expect(post(s, "/api/glossary/ffff", object([("term", .string("X"))])).0 == 404)
     }
 
+    /// The undo renders the Markdown again too.
     @Test func test_http_glossary_delete_can_be_undone() throws {
-        let s = try server()
-        defer { s.stop() }
-        _ = post(s, "/api/glossary/accept", object([("term", .string("Genie")), ("variants", .strings(["Tini"]))]))
-        let tid = try #require(Glossary(path: s.app.stores.glossary).terms.keys.first)
-        let (status, answer) = post(s, "/api/glossary/\(tid)", object([("delete", .bool(true))]))
-        #expect(status == 200 && answer["undo"]?.stringValue?.isEmpty == false && Glossary(path: s.app.stores.glossary).terms.isEmpty)
-        #expect(post(s, "/api/undo", object([("token", answer["undo"] ?? .null)])).0 == 200)
-        #expect(Glossary(path: s.app.stores.glossary).terms.keys == [tid])
-    }
-
-    @Test func test_http_glossary_undo_renders_the_markdown_again() throws {
         let s = try server()
         defer { s.stop() }
         let md = s.app.outputDir.appendingPathComponent(MEETING).appendingPathComponent("transcript.md")
         try Data("rendered".utf8).write(to: md)  // the glossary only re-renders a Markdown that exists
         _ = post(s, "/api/glossary/accept", object([("term", .string("Rico Lanza")), ("variants", .strings(["Rico"]))]))
         let tid = try #require(Glossary(path: s.app.stores.glossary).terms.keys.first)
-        let (_, answer) = post(s, "/api/glossary/\(tid)", object([("delete", .bool(true))]))
+        let (status, answer) = post(s, "/api/glossary/\(tid)", object([("delete", .bool(true))]))
+        #expect(status == 200 && answer["undo"]?.stringValue?.isEmpty == false && Glossary(path: s.app.stores.glossary).terms.isEmpty)
         #expect(!text(md).contains("Rico Lanza"))
-        _ = post(s, "/api/undo", object([("token", answer["undo"] ?? .null)]))
+        #expect(post(s, "/api/undo", object([("token", answer["undo"] ?? .null)])).0 == 200)
+        #expect(Glossary(path: s.app.stores.glossary).terms.keys == [tid])
         #expect(text(md).contains("Rico Lanza"))
     }
 
+    /// A term's rename and its note, each undone.
     @Test func test_http_term_rename_can_be_undone() throws {
         let s = try server()
         defer { s.stop() }
-        _ = post(s, "/api/glossary/accept", object([("term", .string("Genie")), ("variants", .strings(["Tini"]))]))
+        _ = post(s, "/api/glossary/accept", object([("term", .string("Genie")), ("variants", .strings(["Tini"])), ("note", .string("the bot"))]))
         let tid = term(s)["id"]?.stringValue ?? ""
         let (status, answer) = post(s, "/api/glossary/\(tid)", object([("term", .string("Jeanie"))]))
         #expect(status == 200 && answer["terms"]?[0]?["term"] == .string("Jeanie"))
         undo(s, answer)
         #expect(term(s)["term"] == .string("Genie"))
-    }
-
-    @Test func test_http_term_note_can_be_undone() throws {
-        let s = try server()
-        defer { s.stop() }
-        _ = post(s, "/api/glossary/accept", object([("term", .string("Genie")), ("variants", .strings(["Tini"])), ("note", .string("the bot"))]))
-        let tid = term(s)["id"]?.stringValue ?? ""
-        let (status, answer) = post(s, "/api/glossary/\(tid)", object([("note", .string("the lamp"))]))
-        #expect(status == 200 && answer["terms"]?[0]?["note"] == .string("the lamp"))
-        undo(s, answer)
+        let (noted, withNote) = post(s, "/api/glossary/\(tid)", object([("note", .string("the lamp"))]))
+        #expect(noted == 200 && withNote["terms"]?[0]?["note"] == .string("the lamp"))
+        undo(s, withNote)
         #expect(term(s)["note"] == .string("the bot"))
     }
 
@@ -235,16 +221,11 @@ private func object(_ pairs: [(String, JSONValue)]) -> JSONValue { .object(pairs
         #expect(status == 200 && Glossary(path: s.app.stores.glossary).isRejected("term:rico"))
         undo(s, answer)
         #expect(!Glossary(path: s.app.stores.glossary).isRejected("term:rico"))
-    }
-
-    /// A card's "Not this" goes for each of its spellings, or the rest come back.
-    @Test func test_http_not_this_takes_several_spellings_at_once() throws {
-        let s = try server()
-        defer { s.stop() }
+        // A card's "Not this" goes for each of its spellings, or the rest come back.
         let keys = ["variant:kein:timo", "variant:kino:timo"]
-        let (status, answer) = post(s, "/api/glossary/reject", object([("keys", .strings(keys))]))
-        #expect(status == 200 && keys.allSatisfy(Glossary(path: s.app.stores.glossary).isRejected))
-        undo(s, answer)
+        let (several, both) = post(s, "/api/glossary/reject", object([("keys", .strings(keys))]))
+        #expect(several == 200 && keys.allSatisfy(Glossary(path: s.app.stores.glossary).isRejected))
+        undo(s, both)
         #expect(!keys.contains(where: Glossary(path: s.app.stores.glossary).isRejected))
     }
 

@@ -82,7 +82,7 @@ import Testing
         #expect(PythonJSON.dumps(try #require(file["names"]), ensureAscii: false) == #"{"muellerbau": "Müllerbau"}"#)
     }
 
-    @Test func test_a_colleague_at_a_client_stays_a_colleague() {
+    @Test func test_a_colleague_at_a_client_stays_a_colleague_and_is_not_unsure() {
         // Felix is KLOUD but was invited with his Contoso address lately; Anna has two client addresses, more often the
         // Contoso one.
         let index = index([
@@ -93,6 +93,15 @@ import Testing
         let o = Organizations(path: URL(fileURLWithPath: "/nonexistent/organizations.json"))
         #expect(Orgs.orgOf("Felix Brunner", index, o) == "KLOUD")
         #expect(Orgs.orgOf("Anna Huber", index, o) == "Contoso")
+        // Nor is the colleague's organization unsure: mostly a client's address, one of ours.
+        let mostlyClient = self.index([
+            ("timo", .object([("name", .string("Timo")), ("email", .string("timo@kloud.io")),
+                              ("emails", .object([("timo@kloud.io", .int(5))])), ("self", .bool(true))])),
+            ("mia lang", .object([("name", .string("Mia Lang")), ("email", .string("mia@contoso.de")),
+                                  ("emails", .object([("mia@contoso.de", .int(4)), ("mia@kloud.io", .int(1))])), ("self", .bool(false))])),
+        ])
+        let link = Orgs.orgLink("Mia Lang", mostlyClient, o)
+        #expect(link?.target == "KLOUD" && link?.unsure == false && link?.reason == "has an address of your organization")
     }
 
     @Test func test_the_index_keeps_every_address_of_a_person() throws {
@@ -123,17 +132,6 @@ import Testing
         o.setPerson("Bob Weiss", "RTV")
         #expect(Orgs.orgLink("Bob Weiss", index, o)?.byYou == true)
         #expect(Orgs.orgLink("Zoe", index, o) == nil)
-    }
-
-    @Test func test_a_colleague_at_a_client_is_not_unsure() {
-        let index = index([
-            ("timo", .object([("name", .string("Timo")), ("email", .string("timo@kloud.io")),
-                              ("emails", .object([("timo@kloud.io", .int(5))])), ("self", .bool(true))])),
-            ("mia lang", .object([("name", .string("Mia Lang")), ("email", .string("mia@contoso.de")),
-                                  ("emails", .object([("mia@contoso.de", .int(4)), ("mia@kloud.io", .int(1))])), ("self", .bool(false))])),
-        ])
-        let link = Orgs.orgLink("Mia Lang", index, Organizations(path: URL(fileURLWithPath: "/nonexistent/organizations.json")))
-        #expect(link?.target == "KLOUD" && link?.unsure == false && link?.reason == "has an address of your organization")
     }
 
     // MARK: the store

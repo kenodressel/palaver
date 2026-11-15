@@ -173,6 +173,17 @@ final class Ran: @unchecked Sendable { var scripts: [String] = [] }
         let dest = r.root.appendingPathComponent("x/a.part")
         try ReleaseDownloads(manifestURL: r.manifest.absoluteString).download(m.app, to: dest) { seen.last = $0 }
         #expect(seen.last == m.app.size && exists(dest))
+        // A download larger than the release says stops at once.
+        let d = ReleaseDownloads(manifestURL: r.manifest.absoluteString)
+        var asset = m.app
+        asset.size = 10
+        let small = r.root.appendingPathComponent("x/b.part")
+        final class Most: @unchecked Sendable { var most = 0 }
+        let most = Most()
+        #expect(throws: DownloadError("download of \(asset.name) failed: more than the 10 bytes the release names")) {
+            try d.download(asset, to: small) { most.most = max(most.most, $0) }
+        }
+        #expect(!exists(small) && most.most <= 10)
     }
 
     @Test func aDamagedDownloadIsDeletedAndRefused() throws {
@@ -185,21 +196,6 @@ final class Ran: @unchecked Sendable { var scripts: [String] = [] }
             try d.download(m.app, to: dest)
         }
         #expect(!exists(dest))
-    }
-
-    @Test func aDownloadLargerThanTheReleaseSaysStopsAtOnce() throws {
-        let r = StubRelease()
-        try r.make()
-        let d = ReleaseDownloads(manifestURL: r.manifest.absoluteString)
-        var asset = try d.fetchManifest().app
-        asset.size = 10
-        let dest = r.root.appendingPathComponent("x/a.part")
-        final class Seen: @unchecked Sendable { var most = 0 }
-        let seen = Seen()
-        #expect(throws: DownloadError("download of \(asset.name) failed: more than the 10 bytes the release names")) {
-            try d.download(asset, to: dest) { seen.most = max(seen.most, $0) }
-        }
-        #expect(!exists(dest) && seen.most <= 10)
     }
 
     @Test func onlyHttpsUnlessTheManifestItselfIsALocalFile() throws {
@@ -225,6 +221,10 @@ final class Ran: @unchecked Sendable { var scripts: [String] = [] }
         #expect(plan.version == "0.6.1" && !plan.runtime && plan.models.isEmpty && plan.downloadBytes > 0)
         #expect(try r.backend(bundle: .some(nil)).status().installed == nil)
         #expect(try r.backend(bundle: .some(nil)).check() == .upToDate)
+        // A release that moved on since the check is checked again.
+        #expect(throws: ManifestError("Palaver 0.6.1 came out, not 0.6.0rc9; check again")) {
+            try r.backend().download(version: "0.6.0rc9") { _ in }
+        }
     }
 
     @Test func downloadStagesTheCheckedAppAndTheSwapInstallsItOnceItStarted() throws {
@@ -279,14 +279,6 @@ final class Ran: @unchecked Sendable { var scripts: [String] = [] }
         #expect(throws: ManifestError("no downloaded update to install")) { try r.backend().prepare(waitFor: []) }
     }
 
-    @Test func aReleaseThatMovedOnSinceTheCheckIsCheckedAgain() throws {
-        let r = StubRelease()
-        try r.make()
-        #expect(throws: ManifestError("Palaver 0.6.1 came out, not 0.6.0rc9; check again")) {
-            try r.backend().download(version: "0.6.0rc9") { _ in }
-        }
-    }
-
     @Test func theSwapScriptQuotesItsPathsAndKeepsItsKeys() {
         let places = UpdateSwap.Places(target: URL(fileURLWithPath: "/Users/x/Applications/Palaver.app"),
                                        staged: URL(fileURLWithPath: "/tmp/it's/Palaver.app"), support: URL(fileURLWithPath: "/s"))
@@ -321,16 +313,13 @@ final class Ran: @unchecked Sendable { var scripts: [String] = [] }
         return (paths, meetings)
     }
 
-    @Test func alwaysTheAppItsRuntimeTheLoginItemTheCommandAndAPendingUpdate() {
+    @Test func alwaysTheAppItsRuntimeTheLoginItemTheCommandAndAPendingUpdate() throws {
         let (paths, meetings) = home()
         let plan = Uninstall.plan(paths: paths, outputDir: meetings, models: false, recordings: false).map(\.lastPathComponent)
         #expect(plan == ["Palaver.app", "runtime", "com.kenodressel.meeting-transcribe.plist", "updates", "update.json", "palaver"])
         let models = Uninstall.plan(paths: paths, outputDir: meetings, models: true, recordings: false).map(\.lastPathComponent)
         #expect(models.last == "models")
-    }
-
-    @Test func aCommandLinkedElsewhereStays() throws {
-        let (paths, meetings) = home()
+        // A command linked elsewhere stays.
         let link = paths.home.appendingPathComponent(".local/bin/palaver")
         try FileManager.default.removeItem(at: link)
         try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "/opt/other/palaver")

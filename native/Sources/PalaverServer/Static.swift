@@ -9,6 +9,10 @@ public enum Static {
     static let contentTypes = [".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
                                ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".woff2": "font/woff2"]
 
+    static let htmlCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        + "img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; font-src 'self'; "
+        + "object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+
     /// `_static(path)`.
     public static func serve(_ path: String, staticDir: URL) -> Response {
         let name = path == "/" || path.isEmpty || suffix(path).isEmpty ? "index.html" : String(path.drop { $0 == "/" })
@@ -17,7 +21,9 @@ public enum Static {
               let body = FileManager.default.contents(atPath: file) else {
             return .error(404, "not found")
         }
-        return .send(200, body, contentType: contentTypes[suffix(file)] ?? "application/octet-stream")
+        let ext = suffix(file)
+        let extra: [(String, String)] = ext == ".html" ? [("Content-Security-Policy", htmlCSP)] : []
+        return .send(200, body, contentType: contentTypes[ext] ?? "application/octet-stream", extra: extra)
     }
 
     /// `PurePosixPath(path).suffix`: of the last part (empty and `.` parts dropped), from its last

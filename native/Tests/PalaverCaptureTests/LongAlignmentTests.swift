@@ -30,8 +30,10 @@ struct Simulation {
     /// The tap's clock against host time: positive = its samples take longer (130 ppm measured on hardware).
     var systemDrift = 0.0
     var systemLoss = 0.0
-    /// Nothing delivered for the last minute of every 5 (a tap that went quiet).
+    /// Nothing delivered for the last fifth of every `silenceCycle` seconds (a tap that went quiet).
     var systemSilentMinutes = false
+    /// 300: the last minute of every 5.
+    var silenceCycle = 300.0
     /// PTS stamps off by up to ± this (seconds), uniformly, on both tracks.
     var jitter = 0.0
     var seed: UInt64 = 1
@@ -97,7 +99,7 @@ struct Simulation {
                 // The system track catches up to the same host time.
                 while Double(systemK) * systemStep < micNow {
                     let host = Double(systemK) * systemStep
-                    let silent = systemSilentMinutes && Int(host) % 300 >= 240
+                    let silent = systemSilentMinutes && host.truncatingRemainder(dividingBy: silenceCycle) >= silenceCycle * 0.8
                     let lost = systemLoss > 0 && Double.random(in: 0..<1, using: &g) < systemLoss
                     if !silent && !lost {
                         try aligner.handle(TimedChunk(pts: stamp(host),
@@ -171,13 +173,15 @@ private let longTests = ProcessInfo.processInfo.environment["PALAVER_LONG_TESTS"
     func tapDriftLossesAndSilenceStayAligned(full: Bool) throws {
         // test_long_recording_with_tap_drift_losses_and_silence_stays_aligned: tap clock 130 ppm fast,
         // 0.2 % lost IO cycles, a minute of tap silence every 5 min; clicks within 20 ms on both tracks.
-        // Python's 20 minutes take ~20 s in a debug build: 5 minutes by default, 20 with PALAVER_LONG_TESTS=1.
+        // Python's 20 minutes take ~20 s in a debug build: 20 with PALAVER_LONG_TESTS=1. By default 90 s with
+        // the tap clock 400 ppm fast (32 ms by the second click: more than the 20 ms tolerance) and 12 s of
+        // tap silence every minute, so the second click comes after a silence.
         guard !full || longTests else { return }
-        let marks: [Double] = full ? [100, 610, 1_130] : [100, 200]
-        let sim = Simulation(seconds: full ? 1_200 : 300, marks: marks, systemDrift: 130e-6, systemLoss: 0.002,
-                             systemSilentMinutes: true)
+        let marks: [Double] = full ? [100, 610, 1_130] : [30, 80]
+        let sim = Simulation(seconds: full ? 1_200 : 90, marks: marks, systemDrift: full ? 130e-6 : 400e-6,
+                             systemLoss: 0.002, systemSilentMinutes: true, silenceCycle: full ? 300 : 60)
         let r = try sim.run(in: tempDir())
-        print(summary(full ? "20 min" : "5 min", r))
+        print(summary(full ? "20 min" : "90 s", r))
         #expect(r.micErrors.count == marks.count && r.systemErrors.count == marks.count)
         for (m, s) in zip(r.micErrors, r.systemErrors) { #expect(abs(s - m) <= 0.020) }
         #expect((r.micErrors + r.systemErrors).allSatisfy { abs($0) <= 0.020 })

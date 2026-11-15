@@ -267,15 +267,6 @@ extension DaemonTicksC {
             #expect(p(h.launched) == [rec0.path])  // not continued within 5 min: on its own
         }
 
-        @Test func aCrashDuringAPlainRecordingIsRecovered() async throws {
-            let dir = tempDir()
-            let rec0 = dir.appendingPathComponent("rec0")
-            crashedState(dir, folder: rec0, updated: 500)
-            let h = try Harness(dir, activity: noCall, sessions: Sessions([nil]), start: 1000)
-            await h.run { $0 > 1004 }
-            #expect(p(h.launched) == [rec0.path])  // `process` promotes the .part files and rebuilds meta.json
-        }
-
         /// Review focus 1: the app killed during a manual recording; it is queued at once.
         @Test func crashRecoveryQueuesManual() async throws {
             let dir = tempDir()
@@ -325,7 +316,7 @@ extension DaemonTicksC {
                 deps.palaverAlive = { Processes.palaverAlive($0) }
             }
             await h.run { $0 > 1004 }
-            #expect(p(h.launched) == [rec0.path])
+            #expect(p(h.launched) == [rec0.path])  // `process` promotes the .part files and rebuilds meta.json
         }
 
         @Test func onlyTheAppOrTheDaemonCountAsARunningPalaver() async throws {

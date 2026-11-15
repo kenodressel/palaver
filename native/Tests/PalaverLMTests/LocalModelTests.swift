@@ -33,20 +33,18 @@ struct FakeHub {
 }
 
 @Suite struct LocalModelTests {
-    @Test func thePinnedSnapshotLoadsWhenItIsComplete() {
+    @Test func thePinnedSnapshotLoadsWhenItIsCompleteElseTheNewestCompleteOne() {
         let hub = FakeHub()
         hub.snapshot(ModelCatalog.GEMMA, "older", age: 10)
         let pinned = hub.snapshot(ModelCatalog.GEMMA, GEMMA_PIN, age: 100)
         #expect(LocalModel.snapshot(ModelCatalog.GEMMA, cache: hub.cache)?.path == pinned.path)
-    }
-
-    @Test func aCompleteOlderSnapshotLoadsWhenThePinIsCutShort() {
-        let hub = FakeHub()
-        hub.snapshot(ModelCatalog.GEMMA, GEMMA_PIN, complete: false)
-        hub.snapshot(ModelCatalog.GEMMA, "oldest", age: 300)
-        let newer = hub.snapshot(ModelCatalog.GEMMA, "newer", age: 100)
-        hub.snapshot(ModelCatalog.GEMMA, "newest-but-broken", complete: false, age: 1)
-        #expect(LocalModel.snapshot(ModelCatalog.GEMMA, cache: hub.cache)?.path == newer.path)
+        // The pin cut short: the newest complete older snapshot.
+        let cut = FakeHub()
+        cut.snapshot(ModelCatalog.GEMMA, GEMMA_PIN, complete: false)
+        cut.snapshot(ModelCatalog.GEMMA, "oldest", age: 300)
+        let newer = cut.snapshot(ModelCatalog.GEMMA, "newer", age: 100)
+        cut.snapshot(ModelCatalog.GEMMA, "newest-but-broken", complete: false, age: 1)
+        #expect(LocalModel.snapshot(ModelCatalog.GEMMA, cache: cut.cache)?.path == newer.path)
     }
 
     @Test func aModelThatIsNotHereIsNeverDownloaded() {

@@ -122,11 +122,9 @@ func fakeLiveWorker(_ folder: URL) throws -> Foundation.Process {
         #expect(meetings.map { $0["id"] } == [.string(MEETING), .string("2026-10-26T09-00-00")])
         #expect(meetings[0]["title"] == .string("Hiring debrief") && meetings[0]["status"] == .string("ready"))
         #expect(meetings[0]["start"] == .string("2026-10-27T16:03:07+01:00"))
-    }
 
-    @Test func test_list_shows_who_was_there_and_what_is_left_to_do() throws {
-        let f = try Fixture()
-        let paths = try pageMeeting(f.out)
+        // Who was there and what is left to do.
+        let paths = f.paths()
         var m = try #require(f.list().first)
         // SPEAKER_00 talked 11 s, SPEAKER_01 only 2 s: too little to ask for a name
         #expect(m["people"] == .array([]) && m["unnamed"] == .int(1))
@@ -382,20 +380,27 @@ func fakeLiveWorker(_ folder: URL) throws -> Foundation.Process {
         #expect(m["recorded"] == .string("Teams call detected 16:03 · Teams call ended 16:03 · Palaver restarted — continued"))
         #expect(m["gaps"] == .array([.object([("start", .double(12.0)), ("end", .double(12.5)),
                                               ("text", .string("Recording paused 16:03:19–16:03:19 (Palaver restarted)"))])]))
-    }
 
-    @Test func test_a_part_cut_by_a_restart_says_it_is_continued() throws {
-        let f = try Fixture()
-        let paths = try pageMeeting(f.out)
-        var meta = PyDict<JSONValue>(try read(paths.meta))!
-        meta["end_time"] = .string("2026-10-27T16:03:27+01:00")
-        meta["trigger"] = .string("teams")
+        // A part cut by a restart says it is continued.
         meta["stop_reason"] = .string("restart")
+        meta["gaps"] = nil
         try write(meta.json, to: paths.meta)
         #expect(try f.page()["recorded"] == .string("Teams call detected 16:03 · Palaver restarted 16:03"))
         try write(.object([("parts", .strings(["2026-10-27T16-03-40"]))]), to: paths.parts)
         #expect(try f.page()["recorded"]?.stringValue?.hasSuffix("Palaver restarted 16:03 — continued") == true)
         #expect(try f.page()["gaps"] == .array([]))
+    }
+
+    /// A finished meeting shows where the user was muted in the call; a stretch left open (the recording ended while
+    /// muted, or Palaver quit) ends where it was written.
+    @Test func aMeetingShowsWhereTheMicWasMuted() throws {
+        let f = try Fixture()
+        let paths = try pageMeeting(f.out)
+        try MicMuted.write(.init(pending: false, late: [3...4], muted: [3...4, 10...12], app: "slack", open: true), folder: paths.folder)
+        #expect(try f.page()["muted"]?.arrayValue?.compactMap { $0["text"]?.stringValue } == [
+            "Muted in Slack 16:03:10–16:03:11 · your mic wasn't recorded",
+            "Muted in Slack 16:03:17–16:03:19 · your mic wasn't recorded",
+        ])
     }
 
     /// Issue #50: "Audio problem at 16:04 (system audio played at the wrong speed)".

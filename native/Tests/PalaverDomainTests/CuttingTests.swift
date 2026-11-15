@@ -69,6 +69,7 @@ import Testing
         let temp = TempFolder("cutting"); defer { temp.remove() }
         let a = try standard(temp.url)
         try write(a.speakers, .object([("SPEAKER_00", .string("Anna")), ("SPEAKER_01", .string("Valerie"))]))
+        try marked(a, #"{"engine": "assemblyai", "model": "universal-3-5-pro", "sent_seconds": 50.0}"#)  // who transcribed it (#54)
         let tail = try Cutting.split(a, at: 40)
 
         #expect(tail.folder.lastPathComponent == "2026-10-21T15-34-40")
@@ -81,6 +82,7 @@ import Testing
         #expect(equal(read(tail.speakers), #"{"SPEAKER_01": "Valerie"}"#))
         #expect(meta(a)["duration_seconds"]?.doubleValue == 40)
         #expect(meta(tail)["start_time"]?.stringValue == later(40).iso)
+        #expect(systemMarker(a)["engine"]?.stringValue == "assemblyai" && systemMarker(tail)["engine"]?.stringValue == "assemblyai")
     }
 
     @Test func test_split_takes_the_corrected_lines_along() throws {
@@ -127,6 +129,7 @@ import Testing
         let lines = (read(kept.transcriptJson)?.arrayValue ?? []).map { "\(Int($0["start"]!.doubleValue!.rounded())) \($0["speaker"]!.stringValue!)" }
         #expect(lines == ["1 SPEAKER_01", "23 Timo", "24 SPEAKER_00"])
         #expect(!exists(kept.folder.appendingPathComponent(".join-backup")))
+        #expect(meta(kept)["gaps"] == nil)  // a join by hand marks no gap
     }
 
     @Test func test_discard_what_came_after_keeps_the_meeting() throws {
@@ -172,12 +175,10 @@ import Testing
         let a = try recording(temp.url, Self.T0, 1800, [("SPEAKER_00", 420, 900, Self.ANNA), ("SPEAKER_01", 900, 1500, Self.VALERIE)], audio: false)
         #expect(PythonJSON.dumps(.array(try Cutting.suggestTrim(a)))
                 == #"[{"edge": "start", "at": 418.0, "seconds": 418.0}, {"edge": "end", "at": 1502.0, "seconds": 298.0}]"#)
-    }
-
-    @Test func test_a_short_quiet_start_or_end_is_left_alone() throws {
-        let temp = TempFolder("cutting"); defer { temp.remove() }
-        let a = try recording(temp.url, Self.T0, 600, [("SPEAKER_00", 60, 300, Self.ANNA), ("SPEAKER_01", 300, 540, Self.VALERIE)], audio: false)
-        #expect(try Cutting.suggestTrim(a).isEmpty)
+        // A short quiet start or end is left alone.
+        let short = try recording(temp.url.appendingPathComponent("short"), Self.T0, 600,
+                                  [("SPEAKER_00", 60, 300, Self.ANNA), ("SPEAKER_01", 300, 540, Self.VALERIE)], audio: false)
+        #expect(try Cutting.suggestTrim(short).isEmpty)
     }
 
     @Test func test_silence_said_no_to_is_not_offered_again_and_the_undo_offers_it_again() throws {
@@ -213,12 +214,10 @@ import Testing
 
         try write(a.cutDismissed, .object([]))
         #expect(try Cutting.suggestCut(a, events: all) == nil)
-    }
 
-    @Test func test_no_cut_is_suggested_when_the_voices_go_on() throws {
-        let temp = TempFolder("cutting"); defer { temp.remove() }
-        let a = try recording(temp.url, Self.T0, 600, [("SPEAKER_00", 10, 590, Self.ANNA)], audio: false)
-        #expect(try Cutting.suggestCut(a, events: events([("Checkin", 400, 900, ["Valerie"])])) == nil)
+        // No cut is suggested when the voices go on.
+        let goesOn = try recording(temp.url.appendingPathComponent("goes-on"), Self.T0, 600, [("SPEAKER_00", 10, 590, Self.ANNA)], audio: false)
+        #expect(try Cutting.suggestCut(goesOn, events: events([("Checkin", 400, 900, ["Valerie"])])) == nil)
     }
 
     @Test func aCutAtAPauseNamesTheVoicesThatStopped() throws {
@@ -242,44 +241,27 @@ import Testing
 
     // MARK: - names, voices and marks through split and join
 
+    /// Names a voice is not, voices nobody knows, rooms and a whole meeting mark go with the voice through split and join.
     @Test func test_names_a_voice_is_not_go_with_the_voice_through_split_and_join() throws {
         let temp = TempFolder("cutting"); defer { temp.remove() }
         let a = try standard(temp.url)
         let b = try recording(temp.url, later(62), 30, [("SPEAKER_00", 2, 28, [0, 0, 1])])
         try write(a.speakersRejected, .object([("SPEAKER_00", .strings(["Carla"])), ("SPEAKER_01", .strings(["Timo Strauß"]))]))
+        try write(a.speakersUnknown, .strings(["SPEAKER_00", "SPEAKER_01"]))
+        try SharedMic.setLane(a, "SPEAKER_01", true, name: "Lab")
         let tail = try Cutting.split(a, at: 40)
         #expect(equal(read(a.speakersRejected), #"{"SPEAKER_00": ["Carla"]}"#))
         #expect(equal(read(tail.speakersRejected), #"{"SPEAKER_01": ["Timo Strauß"]}"#))
-
-        try write(b.speakersRejected, .object([("SPEAKER_00", .strings(["Valerie"]))]))
-        let kept = try Cutting.join(tail, b)  // b keeps its labels, the tail's are renumbered after them
-        #expect(equal(read(kept.speakersRejected), #"{"SPEAKER_00": ["Valerie"], "SPEAKER_01": ["Timo Strauß"]}"#))
-    }
-
-    @Test func test_voices_nobody_knows_go_with_the_voice_through_split_and_join() throws {
-        let temp = TempFolder("cutting"); defer { temp.remove() }
-        let a = try standard(temp.url)
-        let b = try recording(temp.url, later(62), 30, [("SPEAKER_00", 2, 28, [0, 0, 1])])
-        try write(a.speakersUnknown, .strings(["SPEAKER_00", "SPEAKER_01"]))
-        let tail = try Cutting.split(a, at: 40)
         #expect(read(a.speakersUnknown) == .strings(["SPEAKER_00"]))
         #expect(read(tail.speakersUnknown) == .strings(["SPEAKER_01"]))
-
-        try write(b.speakersUnknown, .strings(["SPEAKER_00"]))
-        let kept = try Cutting.join(tail, b)  // b keeps its labels, the tail's are renumbered after them
-        #expect(read(kept.speakersUnknown) == .strings(["SPEAKER_00", "SPEAKER_01"]))
-    }
-
-    @Test func test_rooms_and_a_whole_meeting_mark_go_with_split_and_join() throws {
-        let temp = TempFolder("cutting"); defer { temp.remove() }
-        let a = try standard(temp.url)
-        let b = try recording(temp.url, later(62), 30, [("SPEAKER_00", 2, 28, [0, 0, 1])])
-        try SharedMic.setLane(a, "SPEAKER_01", true, name: "Lab")
-        let tail = try Cutting.split(a, at: 40)
         #expect(SharedMic.roomNames(a).isEmpty && SharedMic.roomNames(tail) == PyDict([("SPEAKER_01", "Lab")]))
 
+        try write(b.speakersRejected, .object([("SPEAKER_00", .strings(["Valerie"]))]))
+        try write(b.speakersUnknown, .strings(["SPEAKER_00"]))
         try SharedMic.setMeeting(b, true)
         let kept = try Cutting.join(tail, b)  // b keeps its labels, the tail's are renumbered after them
+        #expect(equal(read(kept.speakersRejected), #"{"SPEAKER_00": ["Valerie"], "SPEAKER_01": ["Timo Strauß"]}"#))
+        #expect(read(kept.speakersUnknown) == .strings(["SPEAKER_00", "SPEAKER_01"]))
         #expect(SharedMic.roomNames(kept) == PyDict([("SPEAKER_01", "Lab")]) && SharedMic.meetingMarked(kept))
     }
 
@@ -332,23 +314,23 @@ import Testing
         #expect(Set(SharedMic.display(kept).values) == ["Room (Lab)"])  // b's own voice too: the room wins
     }
 
+    /// Kept on this Mac stays so when split, joined or the start discarded; the user's title stays with the meeting.
     @Test func test_a_meeting_kept_on_this_mac_stays_so_when_split_or_joined() throws {
         let temp = TempFolder("cutting"); defer { temp.remove() }
         let a = try standard(temp.url)
         try LocalOnly.set(a.folder, on: true)
+        try Titles.save(a, "Budget with Anna")
         let tail = try Cutting.split(a, at: 40)
         #expect(LocalOnly.isLocalOnly(a.folder) && LocalOnly.isLocalOnly(tail.folder))  // both parts
+        #expect(Titles.load(a) == "Budget with Anna" && Titles.load(tail) == nil)  // the rest is another meeting
 
+        try Titles.save(tail, "Budget, part two")
         let b = try recording(temp.url, later(62), 30, [("SPEAKER_00", 2, 28, Self.VALERIE)])
-        let kept = try Cutting.join(tail, b)  // b keeps the meeting; tail was local only
+        let kept = try Cutting.join(tail, b)  // b keeps the meeting; tail was local only, b had no title of its own
         #expect(kept.folder == b.folder && LocalOnly.isLocalOnly(kept.folder))
-    }
+        #expect(Titles.load(kept) == "Budget, part two")
 
-    @Test func test_discarding_the_start_keeps_the_mark() throws {
-        let temp = TempFolder("cutting"); defer { temp.remove() }
-        let a = try standard(temp.url)
-        try LocalOnly.set(a.folder, on: true)
-        try Cutting.discard(a, at: 20, side: "before")
+        try Cutting.discard(a, at: 20, side: "before")  // discarding the start keeps the mark
         #expect(LocalOnly.isLocalOnly(a.folder))
     }
 
@@ -384,14 +366,6 @@ import Testing
         let tail = try Cutting.split(a, at: 50)
         #expect(spans(meta(a)["gaps"]) == [[30, 39]])
         #expect(spans(meta(tail)["gaps"]) == [[19, 30]])
-    }
-
-    @Test func test_a_join_by_hand_marks_no_gap() throws {
-        let temp = TempFolder("cutting"); defer { temp.remove() }
-        let a = try recording(temp.url, Self.T0, 30, [("SPEAKER_00", 1, 20, Self.ANNA)])
-        let b = try recording(temp.url, later(39), 60, [("SPEAKER_00", 2, 50, Self.ANNA)])
-        let kept = try Cutting.join(a, b)
-        #expect(kept.folder == b.folder && meta(kept)["gaps"] == nil)
     }
 
     private func withProblems(_ p: RecordingPaths, _ problems: String) throws {
@@ -431,14 +405,6 @@ import Testing
     }
 
     private func systemMarker(_ p: RecordingPaths) -> JSONValue { read(p.transcription)?["system"] ?? .null }
-
-    @Test func test_a_split_carries_who_transcribed_it_to_both_halves() throws {
-        let temp = TempFolder("cutting"); defer { temp.remove() }
-        let a = try standard(temp.url)
-        try marked(a, #"{"engine": "assemblyai", "model": "universal-3-5-pro", "sent_seconds": 50.0}"#)
-        let tail = try Cutting.split(a, at: 40)
-        #expect(systemMarker(a)["engine"]?.stringValue == "assemblyai" && systemMarker(tail)["engine"]?.stringValue == "assemblyai")
-    }
 
     @Test func test_a_join_keeps_the_service_only_when_both_parts_had_it() throws {
         let temp = TempFolder("cutting"); defer { temp.remove() }
@@ -508,19 +474,6 @@ import Testing
         let tail = try Cutting.split(kept, at: 40)
         #expect(MyNotes.load(kept.folder) == [.init(text: "prep"), .init(text: "in part one", at: 10)])
         #expect(MyNotes.load(tail.folder) == [.init(text: "in part two", at: 4)])
-    }
-
-    @Test func test_the_users_title_stays_with_the_meeting_through_split_and_join() throws {
-        let temp = TempFolder("cutting"); defer { temp.remove() }
-        let a = try standard(temp.url)
-        try Titles.save(a, "Budget with Anna")
-        let tail = try Cutting.split(a, at: 40)
-        #expect(Titles.load(a) == "Budget with Anna" && Titles.load(tail) == nil)  // the rest is another meeting
-
-        try Titles.save(tail, "Budget, part two")
-        let b = try recording(temp.url, later(62), 30, [("SPEAKER_00", 2, 28, Self.VALERIE)])
-        let kept = try Cutting.join(tail, b)  // b keeps the meeting, and had no title of its own
-        #expect(kept.folder == b.folder && Titles.load(kept) == "Budget, part two")
     }
 
     @Test func aJoinKeepsTheKeptRecordingsCalendarFileWhenThisCodeCannotReadIt() throws {

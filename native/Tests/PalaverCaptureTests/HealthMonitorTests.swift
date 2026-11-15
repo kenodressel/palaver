@@ -35,7 +35,7 @@ private final class Harness: @unchecked Sendable {
 }
 
 @Suite struct HealthMonitorTests {
-    @Test func anOpeningIncidentIsLoggedAndKept() throws {
+    @Test func anIncidentIsLoggedAndKeptAndItsEndUpdatesTheFile() throws {
         let h = Harness()
         try h.monitor.begin(now: 1000)
         try h.monitor.check(h.status(1040, micStalled: true))
@@ -47,12 +47,12 @@ private final class Harness: @unchecked Sendable {
         let kept = try h.json()
         #expect(kept.count == 1 && kept[0]["kind"] as? String == "stalled" && kept[0]["id"] == nil)
         #expect(kept[0]["end"] is NSNull && kept[0]["start"] as? Double == 40.0)
-    }
-
-    @Test func anEndingIncidentIsLoggedAndTheFileUpdated() throws {
-        let h = Harness()
-        try h.monitor.begin(now: 1000)
-        try h.monitor.check(h.status(1040, micStalled: true))
+        // Written through a .tmp and renamed, with both indents of Python's json.dumps(indent=2).
+        let text = try String(contentsOf: h.file, encoding: .utf8)
+        #expect(text.hasPrefix("[\n  {\n    \"kind\": \"stalled\",\n    \"track\": \"mic\",\n"))
+        #expect(text.hasSuffix("\n  }\n]"))
+        #expect(!FileManager.default.fileExists(atPath: h.file.path + ".tmp"))
+        // It ends: logged, and the file updated.
         try h.monitor.check(h.status(1041))
         let over = try #require(h.events.get.last)
         #expect(over.level == "INFO" && over.name == "audio_problem_over")
@@ -69,32 +69,15 @@ private final class Harness: @unchecked Sendable {
         #expect(!FileManager.default.fileExists(atPath: h.file.path + ".tmp"))
     }
 
-    @Test func theStopEndsWhatIsOpenAndKeepsIt() throws {
+    @Test func theStopEndsWhatIsOpenAndKeepsItAndANewRecordingStartsAfresh() throws {
         let h = Harness()
         try h.monitor.begin(now: 1000)
         try h.monitor.check(h.status(1040, micStalled: true))
         try h.monitor.close(now: 1050)
         #expect(try h.json()[0]["end"] as? Double == 50.0)
         #expect(h.monitor.openProblems.isEmpty && h.monitor.problems.count == 1)
-    }
-
-    @Test func aNewRecordingStartsAfresh() throws {
-        let h = Harness()
-        try h.monitor.begin(now: 1000)
-        try h.monitor.check(h.status(1040, micStalled: true))
         try h.monitor.begin(now: 2000)
         #expect(h.monitor.problems.isEmpty)
-    }
-
-    @Test func theFileIsWrittenThroughTmpAndRenamed() throws {
-        let h = Harness()
-        try h.monitor.begin(now: 1000)
-        try h.monitor.check(h.status(1040, micStalled: true))
-        // Both indents of Python's json.dumps(indent=2).
-        let text = try String(contentsOf: h.file, encoding: .utf8)
-        #expect(text.hasPrefix("[\n  {\n    \"kind\": \"stalled\",\n    \"track\": \"mic\",\n"))
-        #expect(text.hasSuffix("\n  }\n]"))
-        #expect(!FileManager.default.fileExists(atPath: h.file.path + ".tmp"))
     }
 
     @Test func aFailingFileSystemOnlyLogsADebugLine() throws {

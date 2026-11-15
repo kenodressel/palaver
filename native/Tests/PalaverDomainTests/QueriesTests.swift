@@ -19,14 +19,6 @@ import Testing
                       attendees: [Attendee(name: "Timo Strauß")], allDay: allDay, uid: uid)
     }
 
-    @Test func test_query_answers_one_json_line() throws {
-        let t = TempFolder("queries"); defer { t.remove() }
-        let r = Queries.run("index-stale", args: [], config: { self.config(t.url) }, calendar: { _ in nil })
-        #expect(r.code == 0)
-        #expect(!r.line.contains("\n"))
-        #expect(parse(r.line)["stale"] == .array([]))
-    }
-
     @Test func test_notes_memory_follows_the_choice_and_the_meeting() throws {
         let t = TempFolder("queries"); defer { t.remove() }
         let stores = StorePaths(configDir: t.url.appendingPathComponent("config"), home: t.url.appendingPathComponent("home"))
@@ -120,7 +112,12 @@ import Testing
         #expect(naive == .object([("key", .null)]))
     }
 
-    @Test func test_bad_usage_and_failures_are_json_errors() throws {
+    @Test func test_query_answers_one_json_line_and_bad_usage_and_failures_are_json_errors() throws {
+        let t = TempFolder("queries"); defer { t.remove() }
+        let ok = Queries.run("index-stale", args: [], config: { self.config(t.url) }, calendar: { _ in nil })
+        #expect(ok.code == 0)
+        #expect(!ok.line.contains("\n"))
+        #expect(parse(ok.line)["stale"] == .array([]))
         let cfg: () throws -> Config = { Config() }
         var r = Queries.run("nope", args: [], config: cfg, calendar: { _ in nil })
         #expect(r.code == 2 && parse(r.line)["error"]?.stringValue?.contains("usage") == true)

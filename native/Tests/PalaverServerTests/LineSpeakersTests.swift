@@ -130,6 +130,13 @@ private func fixedValue(_ was: String, _ from: String?) -> JSONValue { .object([
         #expect(f.fixes == #"[{"start": 19.0, "end": 21.0, "from": "SPEAKER_01", "me": true, "name": "Kim"}]"#)
         let you = try #require(m["speakers"]?.arrayValue?.first { $0["is_user"] == .bool(true) })
         #expect(you["talk_seconds"] == .double(4.0))  // 0–1, 16.5–17.5 and now 19–21
+        // `withoutIgnored` applies the corrections.
+        try f.set(16.0, me)
+        #expect(try Speakers.withoutIgnored(f.paths, try MeetingsAPI.utterances(f.paths))[3].speaker == USER)
+        // speakers_lines.json is one of the speaker files.
+        #expect(f.paths.speakersLines.lastPathComponent == "speakers_lines.json")
+        #expect(Undo.matches("speakers_lines.json", Undo.SPEAKER_FILES))  // snapshots of speaker files take it
+        #expect(SearchIndex.signature(f.paths)["speakers_lines.json"] != nil)  // the search index is made again
     }
 
     @Test func test_a_line_of_mine_goes_to_someone_else() throws {
@@ -296,12 +303,6 @@ private func fixedValue(_ was: String, _ from: String?) -> JSONValue { .object([
         #expect(out.map(\.text) == given.map(\.text))
     }
 
-    @Test func test_without_ignored_applies_the_corrections() throws {
-        let f = try Fixture()
-        try f.set(16.0, me)
-        #expect(try Speakers.withoutIgnored(f.paths, try MeetingsAPI.utterances(f.paths))[3].speaker == USER)
-    }
-
     // MARK: - undo, and where the file goes
 
     @Test func test_undo_puts_the_line_back() throws {
@@ -314,14 +315,6 @@ private func fixedValue(_ was: String, _ from: String?) -> JSONValue { .object([
         #expect(!exists(f.paths.speakersLines))
         #expect(f.markdown.contains("**SPEAKER_01** [14:00:16]"))  // transcript.md follows
         #expect(throws: UndoGone.self) { try UndoRoute.undoChange(f.app, token: first) }
-    }
-
-    @Test func test_speakers_lines_is_one_of_the_speaker_files() throws {
-        let f = try Fixture()
-        try f.set(16.0, me)
-        #expect(f.paths.speakersLines.lastPathComponent == "speakers_lines.json")
-        #expect(Undo.matches("speakers_lines.json", Undo.SPEAKER_FILES))  // snapshots of speaker files take it
-        #expect(SearchIndex.signature(f.paths)["speakers_lines.json"] != nil)  // the search index is made again
     }
 
     // MARK: - the window's server

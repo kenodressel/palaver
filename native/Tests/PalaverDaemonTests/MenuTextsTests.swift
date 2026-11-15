@@ -41,7 +41,7 @@ private typealias Levels = [(label: String, db: Double?, silentFor: Double)]
         let why = "Recording · Teams call since 14:48 · Muted in Teams"
         let muted = rec([("since", .string(ago(65))), ("why_text", .string(why)), ("muted", .string("teams"))])
         #expect(MenuText.mutedIn(muted) == "Teams")
-        #expect(MenuText.title(muted, now: now) == "🔴🔇 1:05")
+        #expect(MenuText.title(muted, now: now) == "🔴 1:05")  // the icon's mic-slash badge says it, no 🔇 (a speaker)
         #expect(MenuText.statusLine(muted, now: now) == "Mic muted in Teams — not recorded")
         #expect(MenuText.statusLine(rec([("muted", .string("slack"))]), now: now) == "Mic muted in Slack — not recorded")
         let unmuted = rec([("since", .string(ago(65))), ("why_text", .string(why)), ("muted", .null)])
@@ -80,14 +80,6 @@ private typealias Levels = [(label: String, db: Double?, silentFor: Double)]
         #expect(MenuText.dockBadge(teams) == "REC")
     }
 
-    @Test func startStopItemDoesWhatItSaid() {
-        #expect(MenuText.manualAction(shown: MenuText.startTitle, recording: false) == .start)
-        #expect(MenuText.manualAction(shown: MenuText.stopTitle, recording: true) == .stop)
-        // The call ended (or one began) while the menu was open: nothing happens.
-        #expect(MenuText.manualAction(shown: MenuText.stopTitle, recording: false) == nil)
-        #expect(MenuText.manualAction(shown: MenuText.startTitle, recording: true) == nil)
-    }
-
     @Test func statusLine() {
         let since = ago(12 * 60)
         #expect(MenuText.statusLine(status(), now: now) == "Waiting for a Teams call or Slack huddle")
@@ -100,6 +92,9 @@ private typealias Levels = [(label: String, db: Double?, silentFor: Double)]
         let why = "Recording · Teams call since 14:48 · mic AirPods (24 kHz)"
         #expect(MenuText.statusLine(rec([("since", .string(since)), ("why_text", .string(why))]), now: now) == why)
         #expect(MenuText.statusLine(status([("transcribing", .bool(true)), ("queued", .strings(["a"]))]), now: now) == "Transcribing (1 more queued)")
+        let progress = MenuText.statusLine(status([("transcribing", .bool(true)), ("queued", .strings(["a"]))]), now: now,
+                                           progress: MenuText.Progress(step: 3, total: 7, label: "Transcribing your microphone"))
+        #expect(progress == "Transcribing your microphone (3/7, 1 more queued)")
     }
 
     @Test func menuLayoutStartsStopsAndLeavesSettingsToTheWindow() {
@@ -151,12 +146,9 @@ private typealias Levels = [(label: String, db: Double?, silentFor: Double)]
         let lines = [#"{"event": "aec_start"}"#] + Array(repeating: #"{"message": "\#(filler)"}"#, count: 2000)
             + [#"{"event": "diarize_start"}"#]
         #expect(MenuText.processingProgress(try writeLog(lines)).step == 4)
-    }
-
-    @Test func aProgressEventBeforeALongStretchOfOtherLinesIsStillFound() throws {
-        let filler = String(repeating: "x", count: 300)
-        let lines = [#"{"event": "transcribe_start", "track": "mic"}"#] + Array(repeating: #"{"message": "\#(filler)"}"#, count: 2000)
-        #expect(MenuText.processingProgress(try writeLog(lines)) == MenuText.Progress(step: 3, total: 7, label: "Transcribing your microphone"))
+        // A progress event before a long stretch of other lines is still found.
+        let before = [#"{"event": "transcribe_start", "track": "mic"}"#] + Array(repeating: #"{"message": "\#(filler)"}"#, count: 2000)
+        #expect(MenuText.processingProgress(try writeLog(before)) == MenuText.Progress(step: 3, total: 7, label: "Transcribing your microphone"))
     }
 
     @Test func titleShowsElapsedTimeAndProgress() {
@@ -190,19 +182,6 @@ private typealias Levels = [(label: String, db: Double?, silentFor: Double)]
 
     private func levelBarFor(_ db: Double?) -> String { MenuText.bar(db) }
 
-    @Test func recordingLinesWarnAboutAMissingTrack() {
-        let lines = MenuText.recordingLines(
-            rec([("since", .string(ago(60))), ("folder", .string("/r/x")), ("system_source", .string("process-tap")),
-                 ("mic_source", .string("avcapture")), ("teams_active", .bool(true)), ("missing", .strings(["system audio"]))]),
-            levels: [("mic", -24.0, 0.0), ("system", nil, 60.0)], now: now)
-        #expect(lines.contains { $0.hasPrefix("⚠ Not recording: system audio") })
-        #expect(lines.contains("⚠ Not recording: system audio — see `palaver doctor`"))
-    }
-
-    @Test func titleFlagsAMissingTrack() {
-        #expect(MenuText.title(rec([("since", .string(ago(120))), ("missing", .strings(["microphone"]))]), now: now) == "🔴⚠ 2:00")
-    }
-
     @Test func startStopItemAsksWhenAManualRecordingOutlivedItsCall() {
         #expect(MenuText.manualTitle(status()) == MenuText.startTitle)
         #expect(MenuText.manualTitle(rec()) == MenuText.stopTitle)
@@ -213,6 +192,12 @@ private typealias Levels = [(label: String, db: Double?, silentFor: Double)]
         // Whatever it says, a click on it while recording stops.
         #expect(MenuText.manualAction(shown: "Call ended — Stop recording", recording: true) == .stop)
         #expect(MenuText.manualAction(shown: "Silent for 30 min — Stop recording", recording: false) == nil)
+        // The item does what it said.
+        #expect(MenuText.manualAction(shown: MenuText.startTitle, recording: false) == .start)
+        #expect(MenuText.manualAction(shown: MenuText.stopTitle, recording: true) == .stop)
+        // The call ended (or one began) while the menu was open: nothing happens.
+        #expect(MenuText.manualAction(shown: MenuText.stopTitle, recording: false) == nil)
+        #expect(MenuText.manualAction(shown: MenuText.startTitle, recording: true) == nil)
     }
 
     @Test func keepRecordingIsShownOnlyWithAnOpenStopQuestion() {
@@ -247,6 +232,7 @@ private typealias Levels = [(label: String, db: Double?, silentFor: Double)]
             levels: [("mic", -24.0, 0.0), ("system", -30.0, 0.0)], now: now)
         #expect(lines.filter { $0.hasPrefix("⚠ ") && !$0.contains("Not recording") } == ["⚠ a", "⚠ b"])
         #expect(lines.contains("+2 more — open Palaver for all"))
+        #expect(lines.contains("⚠ Not recording: microphone — see `palaver doctor`"))  // a missing track
         #expect(lines.contains { $0.hasPrefix("System audio via") } && lines.last == Self.hint)  // hints after it (#41)
         #expect(lines.count <= 8)  // the menu's live lines
     }
@@ -255,6 +241,7 @@ private typealias Levels = [(label: String, db: Double?, silentFor: Double)]
         let since = ago(120)
         #expect(MenuText.title(rec([("since", .string(since)), ("warnings", .strings([Self.warning]))]), now: now) == "🔴⚠ 2:00")
         #expect(MenuText.title(rec([("since", .string(since)), ("warnings", .array([])), ("hints", .strings([Self.hint]))]), now: now) == "🔴 2:00")
+        #expect(MenuText.title(rec([("since", .string(since)), ("missing", .strings(["microphone"]))]), now: now) == "🔴⚠ 2:00")  // a missing track
     }
 
     @Test func statusLineWhileTheSearchIndexIsBuilt() {
@@ -262,12 +249,6 @@ private typealias Levels = [(label: String, db: Double?, silentFor: Double)]
                 == "Downloading the search model (470 MB)")
         #expect(MenuText.statusLine(status([("indexing", .bool(true))]), now: now) == "Indexing meetings for search")
         #expect(MenuText.statusLine(status([("indexing", .bool(true)), ("transcribing", .bool(true))]), now: now).hasPrefix("Transcribing"))
-    }
-
-    @Test func statusLineWithProgress() {
-        let line = MenuText.statusLine(status([("transcribing", .bool(true)), ("queued", .strings(["a"]))]), now: now,
-                                       progress: MenuText.Progress(step: 3, total: 7, label: "Transcribing your microphone"))
-        #expect(line == "Transcribing your microphone (3/7, 1 more queued)")
     }
 
     @Test func theCoachInTheMenuBar() throws {

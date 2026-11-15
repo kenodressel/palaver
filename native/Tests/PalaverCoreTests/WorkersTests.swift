@@ -41,13 +41,6 @@ private func fakeTaskpolicy() throws -> String {
     #expect(try String(contentsOf: log, encoding: .utf8) == "earlier\nqos=background\none\nqos=background\ntwo\n")
 }
 
-@Test func spawnWorkerReportsExitCodesAndStartFailures() throws {
-    let log = tempLog()
-    let tp = try fakeTaskpolicy()
-    #expect(try spawnWorker(["/bin/sh", "-c", "exit 3"], qos: .utility, log: log, taskpolicy: tp).waitUntilExit() == 3)
-    #expect(throws: WorkerError.self) { try spawnWorker(["/bin/true"], qos: .utility, log: log, taskpolicy: "/nonexistent/taskpolicy") }
-}
-
 @Test func theRealTaskpolicyRunsTheCommand() throws {
     let log = tempLog()
     // utility, not background: a background process gets no CPU while every core is busy (minutes under a loaded
@@ -71,26 +64,19 @@ private func fakeTaskpolicy() throws -> String {
     #expect(fds.allSatisfy { $0 <= 5 })  // 0,1,2 and ls's own directory handles
 }
 
-@Test func spawnWorkerReapsWithoutAWaiter() throws {
-    let p = try spawnWorker(["/bin/sh", "-c", "exit 5"], qos: .utility, log: tempLog(), taskpolicy: try fakeTaskpolicy())
+@Test func spawnWorkerReapsWithoutAWaiterAndCallsBackOnExit() throws {
+    let called = Box<Int32?>(nil)
+    let p = try spawnWorker(["/bin/sh", "-c", "exit 5"], qos: .utility, log: tempLog(), taskpolicy: try fakeTaskpolicy(),
+                            onExit: { called.value = $0 })
     // Nobody waits: the reaper thread alone records the exit (a sh start may take seconds on a busy Mac).
     let end = Date().addingTimeInterval(60)
-    while p.exitCode == nil && Date() < end { usleep(10_000) }
+    while (p.exitCode == nil || called.value == nil) && Date() < end { usleep(10_000) }
     #expect(p.exitCode == 5)
+    #expect(called.value == 5)
     errno = 0
     #expect(waitpid(p.pid, nil, WNOHANG) == -1 && errno == ECHILD)  // already reaped: no zombie
     #expect(p.waitUntilExit() == 5)
     #expect(p.waitUntilExit() == 5)
-}
-
-@Test func spawnWorkerCallsBackOnExit() async throws {
-    let code: Int32 = await withCheckedContinuation { cont in
-        do {
-            _ = try spawnWorker(["/bin/sh", "-c", "exit 4"], qos: .utility, log: tempLog(),
-                                taskpolicy: try fakeTaskpolicy(), onExit: { cont.resume(returning: $0) })
-        } catch { cont.resume(returning: -1) }
-    }
-    #expect(code == 4)
 }
 
 @Test func spawnWorkerResetsSignalDispositionsAndMask() throws {
@@ -108,18 +94,6 @@ private func fakeTaskpolicy() throws -> String {
     #expect(usr1.waitUntilExit() == 128 + SIGUSR1)
 }
 
-// MARK: task 8: never signal a reaped pid
-
-@Test func signalsAfterTheExitAreNotSent() throws {
-    let p = try spawnWorker(["/bin/sh", "-c", "exit 0"], qos: .utility, log: tempLog(), taskpolicy: try fakeTaskpolicy())
-    #expect(p.waitUntilExit() == 0)
-    #expect(p.poll() == 0)
-    #expect(!p.signal(SIGTERM))  // reaped: its pid may be someone else's now
-    #expect(!p.signal(SIGKILL, group: true))
-    p.terminate()
-    p.kill()
-}
-
 @Test func terminateReachesARunningWorkerAndItsGroup() throws {
     let tp = try fakeTaskpolicy()
     let p = try spawnWorker(["/bin/sleep", "30"], qos: .utility, log: tempLog(), taskpolicy: tp)
@@ -132,9 +106,9 @@ private func fakeTaskpolicy() throws -> String {
     #expect(g.waitUntilExit() == 128 + SIGKILL)
 }
 
-// MARK: task 8 fix 1: a killed worker says so as Popen does
+// MARK: task 8 fix 1: a killed worker says so as Popen does; task 8: never signal a reaped pid
 
-@Test func pollIsPopensReturncode() throws {
+@Test func pollIsPopensReturncodeAndAReapedWorkerIsNotSignalled() throws {
     let tp = try fakeTaskpolicy()
     let p = try spawnWorker(["/bin/sleep", "30"], qos: .utility, log: tempLog(), taskpolicy: tp)
     p.kill()
@@ -142,6 +116,15 @@ private func fakeTaskpolicy() throws -> String {
     #expect(p.poll() == -SIGKILL && p.terminationSignal == SIGKILL)
     let ok = try spawnWorker(["/bin/sh", "-c", "exit 3"], qos: .utility, log: tempLog(), taskpolicy: tp)
     #expect(ok.waitUntilExit() == 3 && ok.poll() == 3 && ok.terminationSignal == nil)
+    #expect(!ok.signal(SIGTERM))  // reaped: its pid may be someone else's now
+    #expect(!ok.signal(SIGKILL, group: true))
+    ok.terminate()
+    ok.kill()
+    #expect(ok.poll() == 3)
+    // A taskpolicy that cannot start is an error, not a worker.
+    #expect(throws: WorkerError.self) {
+        try spawnWorker(["/bin/true"], qos: .utility, log: tempLog(), taskpolicy: "/nonexistent/taskpolicy")
+    }
 }
 
 // MARK: Task 11: a child with descriptors of its own (the window's server)

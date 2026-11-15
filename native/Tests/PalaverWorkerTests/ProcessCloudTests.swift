@@ -150,17 +150,14 @@ private func texts(_ paths: RecordingPaths) -> [String?]? { readJSON(paths.trans
     @Test func aMeetingKeptOnThisMacStaysHere() async throws {
         let t = Temp(); defer { t.remove() }
         let c = try Cloud(t)
+        #expect(CloudChoice.provider(folder: c.paths.folder, stores: c.h.stores) == "soniox")  // the service chosen in Settings
         try LocalOnly.set(c.paths.folder, on: true)
         #expect(CloudChoice.provider(folder: c.paths.folder, stores: c.h.stores) == nil)
         #expect(try await Pipeline.process(c.paths.folder, c.setup(fake(ENGINE)), notes: false) == 0)
         #expect(c.services.requests.isEmpty && c.calls.isEmpty)
         #expect(texts(c.paths) == ["Hallo.", "From this Mac."])
         #expect(readJSON(c.paths.transcription)?["system"]?["engine"] == .string("local"))
-    }
-
-    @Test func cloudChoiceIsTheServiceChosenInSettings() throws {
-        let t = Temp(); defer { t.remove() }
-        let c = try Cloud(t)
+        try LocalOnly.set(c.paths.folder, on: false)
         #expect(CloudChoice.provider(folder: c.paths.folder, stores: c.h.stores) == "soniox")
         for value in ["local", "anthropic", "nope"] {  // this Mac; a language model is no transcription service
             try PythonJSON.write(.object([("engines", .object([("transcription", .string(value))]))]), to: c.h.stores.settings,
@@ -221,6 +218,7 @@ private func texts(_ paths: RecordingPaths) -> [String?]? { readJSON(paths.trans
         try TranscriptionMarker.write(c.paths, track: "system", info: [("engine", .string("live"))])
         #expect(try await Pipeline.process(c.paths.folder, c.setup(fake(ENGINE)), notes: false) == 0)
         #expect(readJSON(c.paths.transcription)?["system"]?["engine"] == .string("local"))
+        #expect(!TranscriptionMarker.wantsCloud(c.paths) && c.h.said.contains("Skipping system transcription (already done)"))
         // A service chosen afterwards never sends it.
         try PythonJSON.write(.object([("engines", .object([("transcription", .string("soniox"))]))]), to: c.h.stores.settings,
                              indent: 2, ensureAscii: true)

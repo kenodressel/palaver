@@ -224,6 +224,26 @@ enum Parts {
         let stores = StorePaths(configDir: t.url.appendingPathComponent("config"), home: t.url.appendingPathComponent("home"))
         #expect(Continuation.stillRecording(a.folder, stores: stores).map(\.path) == [b.folder.path])
         #expect(P.exists(b.folder) && Continuation.parts(a.folder).map(\.path) == [b.folder.path])
+
+        // The first part itself still being recorded: its .part files grow, or a running app records into it.
+        let other = TempFolder("parts"); defer { other.remove() }
+        let growing = try P.crashed(other.url, P.T0, 3)  // .part files written just now
+        #expect(Continuation.stillRecording(growing.folder, stores: stores).map(\.path) == [growing.folder.path])
+
+        let finished = try P.part(other.url, try! P.T0.adding(seconds: 300), 3, live: false)
+        #expect(Continuation.stillRecording(finished.folder, stores: stores).isEmpty)
+        try FileManager.default.createDirectory(at: stores.daemonJson.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let running = Process()
+        running.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        running.arguments = ["-c", "import time; time.sleep(30)", "palaver", "menubar"]
+        try running.run()
+        defer { running.terminate(); running.waitUntilExit() }
+        try P.write(stores.daemonJson, #"{"state": "recording", "folder": "\#(finished.folder.path)", "pid": \#(running.processIdentifier)}"#)
+        #expect(Continuation.stillRecording(finished.folder, stores: stores).map(\.path) == [finished.folder.path])  // a running app records into it
+        try P.write(stores.daemonJson, #"{"state": "recording", "folder": "\#(finished.folder.path)", "pid": 999999999}"#)
+        #expect(Continuation.stillRecording(finished.folder, stores: stores).isEmpty)  // that app is gone
+        try P.write(stores.daemonJson, #"{"state": "stopped", "folder": "\#(finished.folder.path)", "pid": \#(running.processIdentifier)}"#)
+        #expect(Continuation.stillRecording(finished.folder, stores: stores).isEmpty)
     }
 
     @Test func test_a_first_part_the_app_died_recording_is_recovered_before_joining() throws {
@@ -251,28 +271,6 @@ enum Parts {
         #expect(!P.exists(a.parts) && P.exists(a.folder))  // left as it is: visible, can be trashed
         #expect(lines == ["WARNING \(a.id) has no audio; \(b.id) is the meeting now"])
         #expect(try Continuation.joinParts(head) == 1)
-    }
-
-    @Test func test_process_refuses_while_the_first_part_is_still_being_recorded() throws {
-        let t = TempFolder("parts"); defer { t.remove() }
-        let stores = StorePaths(configDir: t.url.appendingPathComponent("config"), home: t.url.appendingPathComponent("home"))
-        let growing = try P.crashed(t.url, P.T0, 3)  // .part files written just now
-        #expect(Continuation.stillRecording(growing.folder, stores: stores).map(\.path) == [growing.folder.path])
-
-        let finished = try P.part(t.url, try! P.T0.adding(seconds: 300), 3, live: false)
-        #expect(Continuation.stillRecording(finished.folder, stores: stores).isEmpty)
-        try FileManager.default.createDirectory(at: stores.daemonJson.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let running = Process()
-        running.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        running.arguments = ["-c", "import time; time.sleep(30)", "palaver", "menubar"]
-        try running.run()
-        defer { running.terminate(); running.waitUntilExit() }
-        try P.write(stores.daemonJson, #"{"state": "recording", "folder": "\#(finished.folder.path)", "pid": \#(running.processIdentifier)}"#)
-        #expect(Continuation.stillRecording(finished.folder, stores: stores).map(\.path) == [finished.folder.path])  // a running app records into it
-        try P.write(stores.daemonJson, #"{"state": "recording", "folder": "\#(finished.folder.path)", "pid": 999999999}"#)
-        #expect(Continuation.stillRecording(finished.folder, stores: stores).isEmpty)  // that app is gone
-        try P.write(stores.daemonJson, #"{"state": "stopped", "folder": "\#(finished.folder.path)", "pid": \#(running.processIdentifier)}"#)
-        #expect(Continuation.stillRecording(finished.folder, stores: stores).isEmpty)
     }
 
     @Test func test_names_given_while_recording_are_not_doubled_by_a_join_run_again() throws {

@@ -9,8 +9,10 @@ import PalaverDomain
 @testable import PalaverCloud
 
 @Suite struct APIKeyTests {
-    @Test func pastedWhitespaceIsDropped() throws {
-        #expect(try APIKey.checked("  sk-ant-secret-1234  \n") == "sk-ant-secret-1234")
+    /// Pasted whitespace is dropped; Latin-1 is odd, but it fits an HTTP header.
+    @Test(arguments: [("  sk-ant-secret-1234  \n", "sk-ant-secret-1234"), ("sk-ant-äöü", "sk-ant-äöü")])
+    func whatPassesIsKeptTrimmed(_ pasted: String, _ kept: String) throws {
+        #expect(try APIKey.checked(pasted) == kept)
     }
 
     @Test(arguments: ["", "   ", "two\nlines", String(repeating: "x", count: 5000)])
@@ -24,10 +26,6 @@ import PalaverDomain
         let e = thrown { try APIKey.checked(value) } as? KeyRefused
         #expect(e != nil && !(e?.text.contains(value) ?? true))
         #expect(e?.text.contains("space") == true || e?.text.contains("character") == true)
-    }
-
-    @Test func latin1IsFine() throws {
-        #expect(try APIKey.checked("sk-ant-äöü") == "sk-ant-äöü")  // odd, but it fits an HTTP header
     }
 }
 
@@ -102,8 +100,8 @@ final class TestKeychain {
 @Suite(.serialized) struct KeychainStoreTests {
     @Test func writeHasReadDeleteInAKeychain() throws {
         let kc = try TestKeychain()
-        let service = "palaver-test-\(UUID().uuidString)"
-        let keys = kc.store(service: service)
+        let service = "palaver-test-\(UUID().uuidString)", python = "palaver-py-test-\(UUID().uuidString)"
+        let keys = kc.store(service: service, legacy: [python])
         #expect(!keys.has("anthropic.api_key"))
         #expect(try keys.read("anthropic.api_key") == nil)
         try keys.write("anthropic.api_key", KEY)
@@ -113,6 +111,7 @@ final class TestKeychain {
         #expect(try keys.read("anthropic.api_key") == "sk-ant-replaced-0000")
         // Written here: the marker that it carries Palaver's access list.
         #expect(kc.attributes(service: service, account: "anthropic.api_key")?[kSecAttrGeneric] as? Data == KeychainStore.MARKER)
+        #expect(kc.attributes(service: python, account: "anthropic.api_key") == nil)  // a write makes no Python item
         try keys.delete("anthropic.api_key")
         try keys.delete("anthropic.api_key")  // none there: no error
         #expect(!keys.has("anthropic.api_key"))
@@ -165,13 +164,6 @@ final class TestKeychain {
         #expect(try keys.read("NOTION_TOKEN") == "secret_set_in_settings")
         #expect(kc.value(service: python, account: "NOTION_TOKEN") == "secret_from_python")
         #expect(logged.all.count == 1 && logged.all[0].contains("NOTION_TOKEN") && !logged.all[0].contains("secret_"))
-    }
-
-    @Test func aWriteMakesNoPythonItem() throws {
-        let kc = try TestKeychain()
-        let service = "palaver-test-\(UUID().uuidString)", python = "palaver-py-test-\(UUID().uuidString)"
-        try kc.store(service: service, legacy: [python]).write("NOTION_TOKEN", "secret_set_in_settings")
-        #expect(kc.attributes(service: python, account: "NOTION_TOKEN") == nil)
     }
 
     @Test func aRemovedKeyStaysRemovedWhileThePythonItemIsThere() throws {
@@ -278,16 +270,13 @@ final class Lines: @unchecked Sendable {
     static let ALL = ["Contents/MacOS/Palaver", "Contents/MacOS/palaver-server", "Contents/MacOS/palaver-worker",
                       "Contents/MacOS/palaver-lm", "Contents/Resources/bin/palaver"].map { "\(APP)/\($0)" }
 
-    @Test func theServerSharesWithTheAppTheWorkerAndThePalaverCommand() {
-        let trusted = KeychainStore.palaverExecutables(running: URL(fileURLWithPath: "\(Self.APP)/Contents/MacOS/palaver-server"),
+    /// The server shares with the app, the worker and the `palaver` command; that command (in Resources) with the
+    /// programs in MacOS.
+    @Test(arguments: ["Contents/MacOS/palaver-server", "Contents/Resources/bin/palaver"])
+    func eachProgramSharesWithAllTheOthers(_ running: String) {
+        let trusted = KeychainStore.palaverExecutables(running: URL(fileURLWithPath: "\(Self.APP)/\(running)"),
                                                        isExecutable: { Self.ALL.contains($0) })
-        #expect(trusted == Self.ALL.filter { !$0.hasSuffix("/palaver-server") })
-    }
-
-    @Test func thePalaverCommandInResourcesSharesWithTheProgramsInMacOS() {
-        let trusted = KeychainStore.palaverExecutables(running: URL(fileURLWithPath: "\(Self.APP)/Contents/Resources/bin/palaver"),
-                                                       isExecutable: { Self.ALL.contains($0) })
-        #expect(trusted == Self.ALL.filter { !$0.hasSuffix("/bin/palaver") })
+        #expect(trusted == Self.ALL.filter { !$0.hasSuffix("/" + running) })
     }
 
     @Test func aBuildFolderSharesWithPalaverCliAndNeverNamesTheAppTwice() {

@@ -551,35 +551,31 @@ private let matrix: [String: () -> Row] = [
         #expect(r.problems.isEmpty, "\(r.problems)")
     }
 
-    @Test func lostMicrophonePermissionIsAnAccessProblem() throws {
-        // The authorization status turns to denied (System Settings): the real status-to-error mapping
-        // makes it "access", seen at the next route poll; the track goes on (silent).
-        let r = try run(speakers(), [builtinMic()], seconds: 30, events: [(15.0, { _, av in av.status = FakeAVFoundation.denied })])
-        let first = try #require(r.statuses.first { $0.access[.mic] != nil })
-        #expect(first.access == [.mic: "access"])
-        #expect(first.now >= T0 + 15 && first.now <= T0 + 16.1)
-        #expect(r.av.problem == "access")
-        #expect(abs(Double(r.mic.count) / 16_000 - 30) <= 0.05)
-        // Opened only once it lasted 4 s, dated from when it was seen.
-        #expect(r.problems.map { "\($0.kind)/\($0.track)" } == ["access/mic"])
-        #expect(abs(r.problems[0].start - 15.0) <= 0.3)
-        #expect(r.events == ["audio_problem/access/mic"])  // the stop ends it without an "over" line, as in Python
-    }
-
-    @Test func aTapThatCannotBeRebuiltIsADeviceProblem() throws {
-        // kAudioHardwareIllegalOperationError on the rebuild: not proof of a lost permission, so "device".
+    @Test func lostMicrophonePermissionIsAnAccessProblemAndATapThatCannotBeRebuiltADeviceProblem() throws {
+        // Both at 15 s, each on its own track. The authorization status turns to denied (System Settings):
+        // the real status-to-error mapping makes it "access", seen at the next route poll; the track goes on
+        // (silent). The output switches and the rebuild gets kAudioHardwareIllegalOperationError: not proof of
+        // a lost permission, so "device".
+        let denied: Event = { _, av in av.status = FakeAVFoundation.denied }
         let refused: Event = { ca, av in
             switchToHeadphones(ca, av)
             ca.failAggregate = ProcessTapError("aggregate device creation failed", osStatus: 1_852_797_029)
         }
-        let r = try run(speakers(), [builtinMic()], seconds: 30, events: [(15.0, refused)])
-        let first = try #require(r.statuses.first { $0.access[.system] != nil })
-        #expect(first.access == [.system: "device"])
-        #expect(first.now >= T0 + 15 && first.now <= T0 + 16.1)
+        let r = try run(speakers(), [builtinMic()], seconds: 30, events: [(15.0, denied), (15.0, refused)])
+        let mic = try #require(r.statuses.first { $0.access[.mic] != nil })
+        #expect(mic.access[.mic] == "access")
+        #expect(mic.now >= T0 + 15 && mic.now <= T0 + 16.1)
+        #expect(r.av.problem == "access")
+        let system = try #require(r.statuses.first { $0.access[.system] != nil })
+        #expect(system.access[.system] == "device")
+        #expect(system.now >= T0 + 15 && system.now <= T0 + 16.1)
         #expect(abs(Double(r.mic.count) / 16_000 - 30) <= 0.05)  // the microphone records on
         #expect(abs(Double(r.system.count) / 16_000 - 15) <= 0.05)  // the system track ends where the tap was lost
-        #expect(r.problems.map { "\($0.kind)/\($0.track)" } == ["device/system"])
-        #expect(abs(r.problems[0].start - 15.0) <= 0.3)
+        // Opened only once they lasted 4 s, dated from when they were seen.
+        #expect(r.problems.map { "\($0.kind)/\($0.track)" }.sorted() == ["access/mic", "device/system"])
+        #expect(r.problems.allSatisfy { abs($0.start - 15.0) <= 0.3 })
+        // The stop ends them without an "over" line, as in Python.
+        #expect(r.events.sorted() == ["audio_problem/access/mic", "audio_problem/device/system"])
     }
 
     @Test func noMicrophoneForASecondWhileAirPodsSwitchEndsWell() throws {

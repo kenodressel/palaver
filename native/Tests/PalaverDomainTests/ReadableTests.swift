@@ -10,7 +10,7 @@ import Testing
         return (t, Glossary(path: t.url.appendingPathComponent("none.json")))
     }
 
-    @Test func test_filler_words_are_removed() {
+    @Test func test_filler_words_are_removed_stutters_collapse_and_numbers_get_their_space() {
         let cases: [(String, String)] = [
             ("Um, so we, uh, need a plan.", "So we need a plan."),
             ("Und dann, ähm, machen wir das.", "Und dann machen wir das."),
@@ -25,12 +25,7 @@ import Testing
             ("Um, wir starten den Rollout am Montag.", "Wir starten den Rollout am Montag."),
             ("Wie gehen wir damit um, wenn das passiert?", "Wie gehen wir damit um, wenn das passiert?"),
             (", äh, also wo stehen wir gerade?", "Also wo stehen wir gerade?"),
-        ]
-        for (raw, clean) in cases { #expect(Readable.cleanText(raw) == clean, "\(raw)") }
-    }
-
-    @Test func test_stutters_collapse() {
-        let cases: [(String, String)] = [
+            // stutters collapse
             ("If the the the tax ministry comes", "If the tax ministry comes"),
             ("I think uh we we can do that.", "I think we can do that."),
             ("And, and that was it.", "And that was it."),
@@ -43,6 +38,9 @@ import Testing
             ("Sorry, we have a Facebook, this one, this one.", "Sorry, we have a Facebook, this one."),
             ("Wie gesagt, wie gesagt, das passt.", "Wie gesagt, das passt."),
             ("I would say I would say we start.", "I would say we start."),
+            // numbers glued to words get their space; names with digits stay
+            ("Wir zahlen aktuell1040 für150 Millionen bis Ende2030.", "Wir zahlen aktuell 1040 für 150 Millionen bis Ende 2030."),
+            ("H100, MP3, GPT4, COVID19 und S3 bleiben.", "H100, MP3, GPT4, COVID19 und S3 bleiben."),
         ]
         for (raw, clean) in cases { #expect(Readable.cleanText(raw) == clean, "\(raw)") }
     }
@@ -71,12 +69,6 @@ import Testing
         #expect(out.map(\.start) == [0.0, 4.0, 5.0])
         #expect(out.map(\.text) == ["Wir starten am Montag.", "Genau.", "Und dann der Rollout."])
         #expect(utterances[4].text == "Und, äh, dann der Rollout.")  // input untouched
-    }
-
-    @Test func test_numbers_glued_to_words_get_their_space() {
-        #expect(Readable.cleanText("Wir zahlen aktuell1040 für150 Millionen bis Ende2030.")
-                == "Wir zahlen aktuell 1040 für 150 Millionen bis Ende 2030.")
-        #expect(Readable.cleanText("H100, MP3, GPT4, COVID19 und S3 bleiben.") == "H100, MP3, GPT4, COVID19 und S3 bleiben.")
     }
 
     @Test func test_readable_lines_carry_where_the_glossary_respelled() throws {

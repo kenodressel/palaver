@@ -130,7 +130,9 @@ private final class FakeConverter: RateConverter {
     }
 
     @Test func driftAboveToleranceReanchorsAndIsReported() {
-        // Every 10th 10 ms cycle lost: the accumulated drift passes 20 ms after the 3rd loss.
+        // Every 10th 10 ms cycle lost: the accumulated drift passes 20 ms after the 3rd loss. Small (10 ms)
+        // losses are judged against the anchor plus the accumulated input count, so past drifts never add
+        // up beyond the 30 ms of one re-anchor.
         var reported: [Double] = []
         var lines: [String] = []
         let r = TrackResampler(label: "system", onReanchor: { reported.append($0); return reported.count > 1 },
@@ -185,15 +187,5 @@ private final class FakeConverter: RateConverter {
         let out = run(r, chunks)
         #expect(reported == 0)
         #expect(out.reduce(0) { $0 + $1.samples.count } == 32_000)
-    }
-
-    @Test func pastDriftsDoNotAccumulate() {
-        // Small (10 ms) losses each below the tolerance are judged against the anchor plus the
-        // accumulated input count, so they cannot add up beyond 20 ms.
-        var drifts: [Double] = []
-        let r = TrackResampler(label: "t", onReanchor: { drifts.append($0); return true })
-        let chunks = chunked(sine(480_000, sr: 48_000), 0, 480, rate: 48_000)
-        _ = run(r, chunks.enumerated().filter { $0.offset % 10 != 9 }.map(\.element))
-        #expect(drifts.allSatisfy { $0 <= 0.0301 })
     }
 }

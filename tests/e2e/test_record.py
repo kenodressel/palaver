@@ -107,6 +107,19 @@ def test_while_muted_in_teams_the_recording_says_its_mic_is_not_recorded(page, a
     expect(pill).to_be_visible()
 
 
+def test_the_live_transcript_marks_where_the_mic_was_muted(page, app_server):
+    _recording_view(app_server, muted="teams")
+    (app_server.root / LIVE / "mic_muted.json").write_text(
+        '{"pending": false, "late": [], "muted": [[1.0, 4.0], [30.0, 30.0]], "app": "teams", "open": true}')
+    goto(page, app_server, f"#/{LIVE}")
+    marks = page.locator("#main .muted-gap")
+    expect(marks).to_have_count(2)
+    expect(marks.first).to_contain_text("Muted in Teams")
+    expect(marks.first).to_contain_text("your mic wasn't recorded")
+    expect(marks.last).to_contain_text("since")
+    expect(marks.first.locator(".mute-icon")).to_have_count(1)
+
+
 def test_todays_live_card_says_so_too(page, app_server):
     _recording_view(app_server, muted="teams")
     goto(page, app_server, "#/today")

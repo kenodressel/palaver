@@ -33,13 +33,19 @@ private func checkout(_ root: URL, version: String) {
         #expect(AppOptions.parse(["--config"]) == AppOptions())  // no value: nothing
     }
 
-    @Test func aBundleHasNoPythonAtAllAndItsVersionIsItsRuntimeJson() {
+    @Test func aBundleHasNoPythonAtAllAndItsVersionIsItsRuntimeJsonElseItsInfoPlist() throws {
         let root = temp()
         let app = root.appendingPathComponent("Palaver.app", isDirectory: true)
         write(app.appendingPathComponent("Contents/Resources/runtime.json"), #"{"version": "0.6.0rc1", "runtime": "no-python-1"}"#)
         let loc = AppLocation(executable: app.appendingPathComponent("Contents/MacOS/Palaver"))
         #expect(loc.bundle?.path == app.path && loc.checkout == nil)
         #expect(loc.version() == "0.6.0rc1")
+        // A release without runtime.json reads Info.plist.
+        let release = root.appendingPathComponent("Release/Palaver.app", isDirectory: true)
+        try FileManager.default.createDirectory(at: release.appendingPathComponent("Contents"), withIntermediateDirectories: true)
+        try PropertyListSerialization.data(fromPropertyList: ["CFBundleShortVersionString": "0.5.0"],
+                                           format: .xml, options: 0).write(to: release.appendingPathComponent("Contents/Info.plist"))
+        #expect(AppLocation(executable: release.appendingPathComponent("Contents/MacOS/Palaver")).version() == "0.5.0")
     }
 
     @Test func theHomeIsPalaverHomeElseHomeElseTheAccounts() {
@@ -83,16 +89,6 @@ private func checkout(_ root: URL, version: String) {
         let other = temp()
         write(other.appendingPathComponent("VERSION"), "1.0\n")
         #expect(AppLocation(executable: other.appendingPathComponent("bin/Palaver")).checkout == nil)
-    }
-
-    @Test func aReleaseWithoutRuntimeJsonReadsInfoPlist() throws {
-        let root = temp()
-        let app = root.appendingPathComponent("Palaver.app", isDirectory: true)
-        try FileManager.default.createDirectory(at: app.appendingPathComponent("Contents"), withIntermediateDirectories: true)
-        try PropertyListSerialization.data(fromPropertyList: ["CFBundleShortVersionString": "0.5.0"],
-                                           format: .xml, options: 0).write(to: app.appendingPathComponent("Contents/Info.plist"))
-        let loc = AppLocation(executable: app.appendingPathComponent("Contents/MacOS/Palaver"))
-        #expect(loc.version() == "0.5.0")
     }
 
     @Test func theSwiftProgramsAreTheBundlesTheCheckoutsBuildOrTheOverride() throws {

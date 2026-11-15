@@ -743,7 +743,10 @@ button.mn-time:hover, button.mn-time:focus-visible { background: var(--selected)
 .cut-hint { margin: 0 0 8px; color: var(--ink-2); font-size: 13px; }
 /* Where nothing was recorded: Palaver restarted (#47). */
 .gap { display: flex; align-items: center; gap: 12px; margin: 16px 0; color: var(--ink-3); font-size: 13px; }
-.gap: :before, .gap::after { content: ""; flex: 1; border-top: 1px dashed var(--rule); }
+.gap::before, .gap::after { content: ""; flex: 1; border-top: 1px dashed var(--rule); }
+.muted-gap { color: var(--ink-2); gap: 8px; }
+.muted-gap .mute-icon { flex: none; width: 14px; height: 14px; background: currentColor;
+  -webkit-mask: var(--mic-slash) center / contain no-repeat; mask: var(--mic-slash) center / contain no-repeat; }
 .turn.cut-here { box-shadow: inset 0 2px 0 var(--danger); }
 /* While the cut bar is open: what would go is dimmed (after the cut, or
    before it while "Everything before it" is pointed at). */

@@ -134,6 +134,7 @@ private final class Box<T>: @unchecked Sendable {
         defer { s.stop() }
         let (status, answer) = post(s, "/api/projects/suggest")
         #expect(status == 200 && answer["projects"]?.list.compactMap { $0["name"]?.stringValue } == ["Hiring"])
+        #expect(answer["undo"]?.stringValue?.isEmpty == false)
         #expect(post(s, "/api/undo", .object([("token", answer["undo"] ?? .null)])).0 == 200)
         #expect(s.get("/api/projects").json?["projects"] == .array([]))
     }
@@ -184,13 +185,6 @@ private final class Box<T>: @unchecked Sendable {
         let (status, body) = post(s, "/api/projects/suggest")
         #expect(status == 409 && dumps(body).contains("the language model is busy"))
         #expect(snapshots(s.app.outputDir) == [])
-    }
-
-    @Test func test_http_sorting_with_a_free_model_still_remembers_an_undo() throws {
-        let s = try modelServer { s, _ in try sort(s) }
-        defer { s.stop() }
-        let (status, answer) = post(s, "/api/projects/suggest")
-        #expect(status == 200 && answer["undo"]?.stringValue?.isEmpty == false)
     }
 
     // MARK: - the model's jobs across a server restart (test_webapp_remote.py)
@@ -502,23 +496,21 @@ private final class Folder {
         #expect(meeting == MEETING)
         #expect(inputs["lines"]?.list.last?["text"] == .string("Thanks Rico, the salary band is fine."))
         #expect(inputs["user"] == .string("Timo") && inputs["now"] == .double(15.0))
+        // The button says which model.
+        let r = s.get("/api/meetings/\(MEETING)/next-question")
+        #expect(r.status == 200 && r.json?["label"] == .string("Best next question (Gemma, on this Mac)"))
     }
 
+    /// The local model does not start without its memory during a call; a cloud model needs no free memory.
     @Test func test_the_local_model_does_not_start_without_its_memory_during_a_call() throws {
         let model = FakeModel()
-        let s = try coachServer(model, free: 6.0, recording: true)
+        let s = try coachServer(model, free: 1.0, recording: true)
         defer { s.stop() }
         let (status, answer) = post(s, "/api/meetings/\(MEETING)/next-question")
         #expect(status == 400)
         #expect(answer["error"] == .string("Not enough free memory for the local model during the call; choose a cloud model "
                                            + "in Settings → Language model, or ask after the call"))
         #expect(model.inputs.isEmpty)
-    }
-
-    @Test func test_a_cloud_model_needs_no_free_memory() throws {
-        let model = FakeModel()
-        let s = try coachServer(model, free: 1.0, recording: true)
-        defer { s.stop() }
         try SettingsFile.update([("engines", .object([("coach", .string("anthropic"))]))], stores: s.app.stores)
         #expect(post(s, "/api/meetings/\(MEETING)/next-question").0 == 200 && !model.inputs.isEmpty)
     }
@@ -637,13 +629,6 @@ private final class Folder {
         #expect(until(2) { killpg(pid, 0) != 0 && errno == ESRCH }, "the helper's group is still there")
     }
 
-    @Test func test_http_the_button_says_which_model() throws {
-        let s = try coachServer()
-        defer { s.stop() }
-        let r = s.get("/api/meetings/\(MEETING)/next-question")
-        #expect(r.status == 200 && r.json?["label"] == .string("Best next question (Gemma, on this Mac)"))
-    }
-
     @Test func test_the_local_model_during_a_call_needs_a_second_click() throws {
         let model = FakeModel()
         let s = try coachServer(model, recording: true)
@@ -681,27 +666,21 @@ private final class Folder {
         return try NextQuestionAPI.inputs(f.app, id: MEETING, coach: nil, context: { _ in [earlier] }, eventOf: { _ in event })
     }
 
-    @Test func test_a_cloud_engine_never_gets_a_meeting_kept_on_this_mac() throws {
+    /// A cloud engine never gets a meeting kept on this Mac; the local engine may read it; a meeting not kept here
+    /// goes to the cloud with its name in the log. `lastTime`: the earlier meetings' ids it gets, nil: not looked at.
+    @Test(arguments: [
+        ("anthropic", true, [MEETING], []),
+        (nil, true, [MEETING, EARLIER], [EARLIER]),
+        ("anthropic", false, [MEETING, EARLIER], nil),
+    ] as [(String?, Bool, [String], [String]?)])
+    func test_a_cloud_engine_never_gets_a_meeting_kept_on_this_mac(engine: String?, localOnly: Bool, meetings: [String],
+                                                                   lastTimeIds: [String]?) throws {
         let f = try Folder()
-        try f.choose("anthropic")
-        let inputs = try lastTime(f, localOnly: true)
-        #expect(inputs["last_time"] == .array([]))
-        #expect(!dumps(inputs).contains("SECRET"))
-        #expect(inputs["meetings"] == .strings([MEETING]))
-    }
-
-    @Test func test_the_local_engine_may_read_it() throws {
-        let f = try Folder()
-        let inputs = try lastTime(f, localOnly: true)
-        #expect(inputs["last_time"]?.list.map { $0["id"] } == [.string(EARLIER)])
-        #expect(inputs["meetings"] == .strings([MEETING, EARLIER]))
-    }
-
-    @Test func test_a_meeting_not_kept_here_goes_to_the_cloud_with_its_name_in_the_log() throws {
-        let f = try Folder()
-        try f.choose("anthropic")
-        let inputs = try lastTime(f, localOnly: false)
-        #expect(inputs["meetings"] == .strings([MEETING, EARLIER]))
+        if let engine { try f.choose(engine) }
+        let inputs = try lastTime(f, localOnly: localOnly)
+        if let lastTimeIds { #expect(inputs["last_time"]?.arrayValue?.compactMap { $0["id"]?.stringValue } == lastTimeIds) }
+        if meetings == [MEETING] { #expect(!dumps(inputs).contains("SECRET")) }
+        #expect(inputs["meetings"] == .strings(meetings))
     }
 
     @Test func test_the_button_names_the_model_and_where_it_runs() throws {

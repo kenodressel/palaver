@@ -5,9 +5,9 @@
 // 8956274) against a fake new bundle whose Contents/MacOS/Palaver is a sleeping script, and check the
 // Swift side's two defences: started-ok is written from the bundle's version even when Python never
 // answers, and an app whose bundle was put aside quits. Hermetic: a temp folder, a fake `open`, a
-// fake `sleep` on PATH that makes the script's 0.2 s waits short and a `pgrep` that looks for the started app only.
-// The script's wait for started-ok starts counting once the app ticked (`ticked`): 50 short waits are 10 s on a
-// Mac and half a second here, less than a busy machine may take to schedule the test's first tick.
+// fake `sleep` on PATH that makes the script's 0.2 s waits instant and a `pgrep` that looks for the started app only.
+// The script's wait for started-ok starts counting once the app ticked (`ticked`): 50 waits are 10 s on a Mac and
+// next to nothing here, less than a busy machine may take to schedule the test's first tick.
 import Darwin
 import Foundation
 import Testing
@@ -88,9 +88,9 @@ private struct OldSwap {
             fi
 
             """)
-        // The script's `sleep 0.2` (looked up on PATH), 20 times shorter, from the app's first tick on.
+        // The script's `sleep 0.2` (looked up on PATH): it waits for the app's first tick, then no more.
         executable(root.appendingPathComponent("fastbin/sleep"),
-                   "#!/bin/sh\nwhile [ ! -e \(sh(ticked.path)) ]; do /bin/sleep 0.01; done\nexec /bin/sleep 0.01\n")
+                   "#!/bin/sh\nwhile [ ! -e \(sh(ticked.path)) ]; do /bin/sleep 0.01; done\nexit 0\n")
         // Its `pgrep -f "$target/Contents/MacOS/"`: the app `open` started, while it runs. The real one reads every
         // process of the Mac, 150 times in the wait for a new app that never started: 10 to 20 s on a busy Mac.
         executable(root.appendingPathComponent("fastbin/pgrep"),
@@ -191,8 +191,8 @@ private final class SilentBackend: UpdateBackend, @unchecked Sendable {
                                      housekeeping: {}, updates: { false },
                                      quit: { quit.at = Date(); quit.wasAlive = isRunning(pid); kill(pid, SIGTERM) },
                                      bundleReplaced: { watch.replaced() }))
-        // Until the script ends: its waits are 200 starts of `sleep` (50 for started-ok, 150 for the app to go), a few
-        // seconds on a Mac, far longer when every core is busy.
+        // Until the script ends: its waits are 200 starts of `sleep` (50 for started-ok, 150 for the app to go), well
+        // under a second on a Mac, far longer when every core is busy.
         let end = Date().addingTimeInterval(180)
         while process.isRunning && Date() < end {
             ticker.tick()

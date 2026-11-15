@@ -284,18 +284,6 @@ private final class Clock: @unchecked Sendable {
 
     // MARK: wait time after my question
 
-    @Test func test_wait_time_after_my_question() {
-        let g = Gen()
-        let (mic, system) = g.tracks([g.speech(8), quiet(12)], [quiet(11), g.speech(9)], echoDb: -12)
-        let va = VoiceActivity()
-        feed(va, mic, system)
-        va.questions([7.9])
-        let q = va.snapshot()["question"]
-        #expect(q?["at"] == .double(7.9))
-        #expect(near(q?["wait"], 3.1, 0.3))
-        #expect(q?["answered"] == .bool(true) && q?["kept_talking"] == .bool(false))
-    }
-
     @Test func test_still_waiting_for_an_answer() {
         let g = Gen()
         let (mic, system) = g.tracks([g.speech(8), quiet(5)], [quiet(13)], echoDb: -12)
@@ -370,8 +358,8 @@ private final class Clock: @unchecked Sendable {
         let monitor = VoiceMonitor(folder: t.url)
         _ = monitor.poll()
         let q = monitor.snapshot()?["question"]
-        #expect(q?["at"] == .double(7.9) && q?["answered"] == .bool(true))
-        #expect(near(q?["wait"], 3.1, 0.3))
+        #expect(q?["at"] == .double(7.9) && q?["answered"] == .bool(true) && q?["kept_talking"] == .bool(false))
+        #expect(near(q?["wait"], 3.1, 0.3))  // the wait time after my question
         #expect(monitor.mine.map(\.text) == ["So that's the plan.", "When can you send the numbers?"])
     }
 

@@ -81,13 +81,14 @@ if (( ${#swift_specs} )); then
   swift_pid=$!
 fi
 if (( ${#py} )); then
-  workers=$(( jobs > 2 ? jobs - 1 : 1 )) dist=loadscope
-  e2e_files=${#${(M)py:#tests/e2e/*}}
-  if (( ${py[(I)tests]} || ${py[(I)tests/e2e]} )); then
-    :  # the suite: a module's tests on one worker, its browser and shared server made once
-  elif (( e2e_files )); then
-    dist=load  # a few e2e files: their tests spread over the workers (a module's fixtures once per worker)
-  elif (( ${#py} <= 2 )); then
+  # The tests spread over the workers, each taking the next when it is done (worksteal): a worker's WebKit serves
+  # every e2e test it runs, a module's shared server is made once per worker that runs one of its tests.
+  workers=$(( jobs > 2 ? jobs - 1 : 1 )) dist=worksteal
+  e2e=$(( ${py[(I)tests]} || ${py[(I)tests/e2e]} || ${#${(M)py:#tests/e2e/*}} ))
+  # An e2e worker mostly waits for its page (8 of them keep about 3.5 cores busy): a few more than the jobs, so the
+  # e2e tests, the longest part of a run that has them, take less than a minute.
+  (( e2e )) && workers=$(( jobs + 2 < cores - 2 ? jobs + 2 : (cores > 3 ? cores - 2 : 1) ))
+  if (( ! e2e && ${#py} <= 2 )); then
     workers=0  # a test file or two of the tooling: no workers to start
   fi
   ( PALAVER_E2E_REQUIRED=1 exec uv run --extra dev pytest -q $( (( workers )) && echo "-n $workers --dist $dist") $py ) &

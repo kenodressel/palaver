@@ -14,19 +14,14 @@ private func moment(_ zone: TimeZone) -> Date {
 }
 
 @Suite struct RecordingPathsTests {
-    @Test func test_new_recording_folder_uses_timestamp() throws {
+    @Test func test_new_recording_folder_uses_timestamp_and_appends_suffix_on_collision() throws {
         let tmp = TempFolder("paths"); defer { tmp.remove() }
         let folder = try RecordingPaths.newRecordingFolder(root: tmp.url, now: moment(.current))
         #expect(folder.deletingLastPathComponent().path == tmp.url.path)
         #expect(folder.lastPathComponent == "2026-04-17T14-30-00")
         #expect(FileManager.default.fileExists(atPath: folder.path))
-    }
-
-    @Test func test_new_recording_folder_appends_suffix_on_collision() throws {
-        let tmp = TempFolder("paths"); defer { tmp.remove() }
-        let first = try RecordingPaths.newRecordingFolder(root: tmp.url, now: moment(.current))
         let second = try RecordingPaths.newRecordingFolder(root: tmp.url, now: moment(.current))
-        #expect(first != second)
+        #expect(folder != second)
         #expect(FileManager.default.fileExists(atPath: second.path))
     }
 
@@ -35,22 +30,6 @@ private func moment(_ zone: TimeZone) -> Date {
         let tokyo = TimeZone(identifier: "Asia/Tokyo")!
         let folder = try RecordingPaths.newRecordingFolder(root: tmp.url, now: moment(tokyo), timeZone: tokyo)
         #expect(folder.lastPathComponent == "2026-04-17T14-30-00")
-    }
-
-    @Test func test_recording_paths_surfaces_all_files() {
-        let r = RecordingPaths(URL(fileURLWithPath: "/tmp/x", isDirectory: true))
-        let t = URL(fileURLWithPath: "/tmp/x", isDirectory: true)
-        #expect(r.micWav == t.appendingPathComponent("mic.wav"))
-        #expect(r.systemWav == t.appendingPathComponent("system.wav"))
-        #expect(r.meta == t.appendingPathComponent("meta.json"))
-        #expect(r.micSegments == t.appendingPathComponent("mic_segments.json"))
-        #expect(r.systemSegments == t.appendingPathComponent("system_segments.json"))
-        #expect(r.systemTurns == t.appendingPathComponent("system_turns.json"))
-        #expect(r.transcriptJson == t.appendingPathComponent("transcript.json"))
-        #expect(r.transcriptMd == t.appendingPathComponent("transcript.md"))
-        #expect(r.notionInfo == t.appendingPathComponent("notion.json"))
-        #expect(r.sessionLog == t.appendingPathComponent("session.log"))
-        #expect(r.id == "x" && r.folder == t)
     }
 
     @Test func everyFileHasItsPythonName() {
@@ -76,14 +55,13 @@ private func moment(_ zone: TimeZone) -> Date {
         #expect(names.count == 41)
         for (url, name) in names { #expect(url.path == "/m/2026-10-20T14-35-17/" + name) }
         #expect(r.live != r.stream && Set(names.map { $0.0 }).count == names.count)
+        let folder = URL(fileURLWithPath: "/m/2026-10-20T14-35-17", isDirectory: true)
+        #expect(r.id == "2026-10-20T14-35-17" && r.folder == folder && r.micWav == folder.appendingPathComponent("mic.wav"))
+        // A folder URL given without its trailing slash names the same files.
+        #expect(RecordingPaths(URL(fileURLWithPath: "/tmp/x")).micRawWav == URL(fileURLWithPath: "/tmp/x/mic_raw.wav"))
     }
 
-    @Test func test_mic_raw_wav_path() {
-        let paths = RecordingPaths(URL(fileURLWithPath: "/tmp/x"))
-        #expect(paths.micRawWav == URL(fileURLWithPath: "/tmp/x/mic_raw.wav"))
-    }
-
-    @Test func test_is_recording_folder_name() {
+    @Test func test_is_recording_folder_name_and_its_timestamp() {
         #expect(RecordingPaths.isRecordingFolderName("2026-10-20T14-35-17"))
         #expect(RecordingPaths.isRecordingFolderName("2026-10-20T14-35-17-2"))
         #expect(!RecordingPaths.isRecordingFolderName("notes"))
@@ -93,9 +71,7 @@ private func moment(_ zone: TimeZone) -> Date {
         #expect(RecordingPaths.isRecordingFolderName("٢٠٢٦-10-20T14-35-17"))
         #expect(!RecordingPaths.isRecordingFolderName("2026-10-20T14-35-17-"))
         #expect(!RecordingPaths.isRecordingFolderName("x2026-10-20T14-35-17"))
-    }
-
-    @Test func theTimestampIsTheNameWithoutItsSuffix() {
+        // The timestamp is the name without its suffix.
         #expect(RecordingPaths.recordingFolderTimestamp("2026-10-20T14-35-17") == "2026-10-20T14-35-17")
         #expect(RecordingPaths.recordingFolderTimestamp("2026-10-20T14-35-17-12") == "2026-10-20T14-35-17")
         #expect(RecordingPaths.recordingFolderTimestamp("notes") == nil)

@@ -76,13 +76,17 @@ struct ProjectsRoot {
         #expect(store.rejected("m1") == [])
     }
 
-    @Test func test_weaker_deciders_never_override_stronger_ones() throws {
+    @Test func test_weaker_deciders_never_override_stronger_ones_and_rules_keep_how_sure_they_were() throws {
         let root = ProjectsRoot(); defer { root.remove() }
         let store = root.store()
         let pid = try store.create("Northwind")
         try store.assign("m1", pid, by: "you")
         #expect(try !store.assign("m1", pid, by: "auto", why: "title"))
         #expect(store.ofMeeting("m1")[pid]?["by"]?.stringValue == "you")
+        // test_attribution.py's (#48): rules keep how sure they were.
+        #expect(try store.assign("m2", pid, by: "auto", why: "title", confidence: 0.72))
+        #expect(dumps(store.ofMeeting("m2").json)
+                == dumps(.object([(pid, .object([("by", .string("auto")), ("why", .string("title")), ("confidence", .double(0.72))]))])))
     }
 
     @Test func test_merging_projects_moves_their_meetings() throws {
@@ -103,25 +107,6 @@ struct ProjectsRoot {
         #expect(throws: ProjectValueError.self) { try store.merge(b, into: b) }
     }
 
-    @Test func test_deleting_a_project_frees_its_meetings() throws {
-        let root = ProjectsRoot(); defer { root.remove() }
-        let store = root.store()
-        let pid = try store.create("Northwind")
-        try store.assign("m1", pid)
-        try store.delete(pid)
-        #expect(store.ofMeeting("m1").isEmpty && store.projects.isEmpty)
-    }
-
-    // test_attribution.py's (#48).
-    @Test func test_rules_keep_how_sure_they_were() throws {
-        let root = ProjectsRoot(); defer { root.remove() }
-        let store = root.store()
-        let pid = try store.create("Northwind")
-        #expect(try store.assign("m1", pid, by: "auto", why: "title", confidence: 0.72))
-        #expect(dumps(store.ofMeeting("m1").json)
-                == dumps(.object([(pid, .object([("by", .string("auto")), ("why", .string("title")), ("confidence", .double(0.72))]))])))
-    }
-
     @Test func projectIdsAreEightLowercaseHex() throws {
         let root = ProjectsRoot(); defer { root.remove() }
         let store = root.store()
@@ -133,7 +118,7 @@ struct ProjectsRoot {
         #expect(store.projects.count == 64)
     }
 
-    @Test func aMissingProjectIsALookupErrorAndANameIsNeeded() throws {
+    @Test func aMissingProjectIsALookupErrorANameIsNeededAndDeletingFreesItsMeetings() throws {
         let root = ProjectsRoot(); defer { root.remove() }
         let store = root.store()
         #expect(throws: ProjectLookupError.self) { try store.assign("m1", "0badf00d") }
@@ -141,6 +126,12 @@ struct ProjectsRoot {
         #expect(throws: ProjectLookupError.self) { try store.update("0badf00d", name: "x") }
         #expect(store.ofMeeting("m1").isEmpty && store.rejected("m1").isEmpty)  // no entry made for nothing
         #expect(throws: ProjectValueError.self) { try store.create("  ") }
+        // Deleting a project frees its meetings; deleting it again is a lookup error.
+        let pid = try store.create("Northwind")
+        try store.assign("m1", pid)
+        try store.delete(pid)
+        #expect(store.ofMeeting("m1").isEmpty && store.projects.isEmpty)
+        #expect(throws: ProjectLookupError.self) { try store.delete(pid) }
     }
 
     @Test func saveWaitsForTheStoresLock() throws {

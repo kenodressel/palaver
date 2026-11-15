@@ -209,7 +209,7 @@ private func obj(_ fields: [(String, JSONValue)]) -> JSONValue { .object(fields)
 @Suite(.serialized) struct SetupRoutesTests {
     // MARK: - what the page shows
 
-    @Test func test_the_page_has_the_checks_and_the_recommendations() throws {
+    @Test func test_the_page_has_the_checks_and_the_recommendations_and_looking_changes_nothing() throws {
         let f = try Fixture()
         let page = try f.page()
         #expect(page["hardware"]?["chip"] == .string("Apple M4 Pro") && dumps(page["hardware"]?["memory_gb"]) == "48")
@@ -219,26 +219,61 @@ private func obj(_ fields: [(String, JSONValue)]) -> JSONValue { .object(fields)
         #expect(recs["language_model"]?["value"] == .string("local:\(GEMMA)"))
         #expect(dumps(recs["transcription"]?["downloads"]) == #"["speech"]"#)
         #expect(dumps(page["offer"]) == #"{"why": "first"}"#)  // no meetings, never set up
-    }
 
-    @Test func test_the_page_lists_the_downloads_with_their_sizes() throws {
-        let d = try Fixture().page()["downloads"]
+        // The downloads with their sizes.
+        let d = page["downloads"]
         #expect((d?["needed"]?.arrayValue ?? []).compactMap { $0["id"]?.stringValue } == ["speech", "gemma", "e5"])
         #expect(abs((d?["total_gb"]?.doubleValue ?? 0) - (0.5 + 8.3 + 0.47)) < 1e-9)
         #expect(d?["free_disk_gb"] == .double(120))
         #expect(dumps(d?["status"]) == #"{"running": false, "models": []}"#)  // nothing starts by itself
-    }
+        #expect(d?["hf_token"] == nil)  // the speech models come without an account
 
-    @Test func test_the_profile_is_prefilled_from_macos_and_the_calendar() throws {
-        let profile = try Fixture().page()["profile"]
-        // config.toml says "User"
+        // The profile is prefilled from macOS and the calendar (config.toml says "User").
+        let profile = page["profile"]
         #expect(profile?["name"] == .string("Timo Strauss") && profile?["name_from"] == .string("macOS"))
         #expect(profile?["organization"] == .string("KLOUD"))  // from the user's own address in the calendar
+
+        // The glossary seed comes from the calendar.
+        let seed = page["glossary"]?.arrayValue ?? []
+        let terms = Dictionary(uniqueKeysWithValues: seed.map { ($0["term"]!.stringValue!, $0["kind"]!.stringValue!) })
+        #expect(terms == ["Valerie Novak": "person", "Contoso": "organization", "Northwind": "title", "Anna Berg": "person"])
+
+        // The summary is the doctor in the window.
+        var by: [String: JSONValue] = [:]
+        for c in page["summary"]?.arrayValue ?? [] { by[c["name"]!.stringValue!] = c }
+        #expect(by["Microphone"]?["status"] == .string("ok"))
+        #expect(by["Speech models"]?["status"] == .string("warn") && by["Speech models"]?["fix"]?.stringValue?.contains("0.5 GB") == true)
+        #expect(by["Claude Code access"]?["status"] == .string("warn"))
+
+        // Storage and privacy say where things are.
+        let storage = page["storage"]
+        #expect(storage?["recordings"] == .string(f.app.outputDir.path))
+        #expect(storage?["audio_days"] == .int(0) && storage?["autostart"] == .bool(false))
+        #expect(dumps(.object((storage?["cloud"]?.arrayValue ?? []).map { ($0["feature"]!.stringValue!, $0["choice"]!) })) ==
+                #"{"notes": "local", "projects": "local", "coach": "local", "transcription": "local"}"#)
+
+        // The recommendations alone, for the settings page.
+        let out = try SetupAPI.recommendations(f.app)
+        #expect(out["hardware"]?["fingerprint"] == .string("Apple M4 Pro, 48 GB"))
+        let ids = Set((out["recommendations"]?.arrayValue ?? []).compactMap { $0["id"]?.stringValue })
+        #expect(ids.isSuperset(of: ["realtime", "live_processing", "language_model"]))
+
+        // Looking changes nothing.
+        _ = try SetupAPI.offer(f.app)
+        _ = f.app.probe.downloads.status()
+        _ = try SetupAPI.test(f.app, obj([]))
+        #expect(f.raw == .object([]))
+        #expect(f.probe.fetched.isEmpty && dumps(f.probe.downloads.status()) == #"{"running": false, "models": []}"#)
+        #expect(f.mac.started.isEmpty && f.probe.autostart() == false)
+        #expect(Glossary(path: f.stores.glossary).terms.isEmpty)
+        #expect(f.keys.calls.allSatisfy { $0.0 == "registry" })  // nothing added to Claude
     }
 
-    @Test func test_the_name_from_config_toml_is_kept() throws {
+    @Test func test_the_name_from_config_toml_is_kept_and_without_a_calendar_there_is_no_seed() throws {
         let f = try Fixture(userName: "Timo", calendar: false)
-        #expect(dumps(try f.page()["profile"]) == #"{"name": "Timo", "name_from": "config", "organization": null}"#)
+        let page = try f.page()
+        #expect(dumps(page["profile"]) == #"{"name": "Timo", "name_from": "config", "organization": null}"#)
+        #expect(page["glossary"] == .array([]))
     }
 
     @Test func test_connect_calendar_asks_macos_once_then_opens_system_settings() throws {
@@ -255,92 +290,37 @@ private func obj(_ fields: [(String, JSONValue)]) -> JSONValue { .object(fields)
         #expect(refused { try SetupAPI.calendar(f.app, obj([("action", .string("grant"))])) })
     }
 
-    @Test func test_the_glossary_seed_comes_from_the_calendar() throws {
-        let seed = try Fixture().page()["glossary"]?.arrayValue ?? []
-        let terms = Dictionary(uniqueKeysWithValues: seed.map { ($0["term"]!.stringValue!, $0["kind"]!.stringValue!) })
-        #expect(terms == ["Valerie Novak": "person", "Contoso": "organization", "Northwind": "title", "Anna Berg": "person"])
-    }
-
-    @Test func test_without_a_calendar_there_is_no_seed() throws {
-        let page = try Fixture(userName: "Timo", calendar: false).page()
-        #expect(page["glossary"] == .array([]) && page["profile"]?["organization"] == .null)
-    }
-
-    @Test func test_the_summary_is_the_doctor_in_the_window() throws {
-        var by: [String: JSONValue] = [:]
-        for c in try Fixture().page()["summary"]?.arrayValue ?? [] { by[c["name"]!.stringValue!] = c }
-        #expect(by["Microphone"]?["status"] == .string("ok"))
-        #expect(by["Speech models"]?["status"] == .string("warn") && by["Speech models"]?["fix"]?.stringValue?.contains("0.5 GB") == true)
-        #expect(by["Claude Code access"]?["status"] == .string("warn"))
-    }
-
-    @Test func test_storage_and_privacy_say_where_things_are() throws {
-        let f = try Fixture()
-        let s = try f.page()["storage"]
-        #expect(s?["recordings"] == .string(f.app.outputDir.path))
-        #expect(s?["audio_days"] == .int(0) && s?["autostart"] == .bool(false))
-        #expect(dumps(.object((s?["cloud"]?.arrayValue ?? []).map { ($0["feature"]!.stringValue!, $0["choice"]!) })) ==
-                #"{"notes": "local", "projects": "local", "coach": "local", "transcription": "local"}"#)
-    }
-
-    @Test func test_an_existing_user_is_not_offered_the_assistant() throws {
-        let f = try Fixture()
-        try f.meeting("2026-10-27T09-00-00")
-        f.probe.add("speech")
-        #expect(try SetupAPI.offer(f.app) == .null)
-    }
-
     @Test func test_an_existing_user_whose_meetings_wait_for_the_speech_models_is_told() throws {
         let f = try Fixture()
         try f.meeting("2026-10-27T09-00-00")
         #expect(dumps(try SetupAPI.offer(f.app)) ==
                 #"{"why": "missing", "models": ["speech"], "labels": {"speech": "Speech models"}}"#)
-    }
-
-    @Test func test_recommendations_alone_for_the_settings_page() throws {
-        let out = try SetupAPI.recommendations(try Fixture().app)
-        #expect(out["hardware"]?["fingerprint"] == .string("Apple M4 Pro, 48 GB"))
-        let ids = Set((out["recommendations"]?.arrayValue ?? []).compactMap { $0["id"]?.stringValue })
-        #expect(ids.isSuperset(of: ["realtime", "live_processing", "language_model"]))
+        // With the speech models here, an existing user is not offered the assistant.
+        f.probe.add("speech")
+        #expect(try SetupAPI.offer(f.app) == .null)
     }
 
     // MARK: - applying: only what the user clicked
 
-    @Test func test_looking_changes_nothing() throws {
-        let f = try Fixture()
-        _ = try f.page()
-        _ = try SetupAPI.recommendations(f.app)
-        _ = try SetupAPI.offer(f.app)
-        _ = f.app.probe.downloads.status()
-        _ = try SetupAPI.test(f.app, obj([]))
-        #expect(f.raw == .object([]))
-        #expect(f.probe.fetched.isEmpty && dumps(f.probe.downloads.status()) == #"{"running": false, "models": []}"#)
-        #expect(f.mac.started.isEmpty && f.probe.autostart() == false)
-        #expect(Glossary(path: f.stores.glossary).terms.isEmpty)
-        #expect(f.keys.calls.allSatisfy { $0.0 == "registry" })  // nothing added to Claude
-    }
-
     @Test func test_apply_switches() throws {
         let f = try Fixture()
-        _ = try f.apply([("realtime", .bool(false)), ("live_processing", .bool(false)), ("record_slack", .bool(false))])
+        let out = try f.apply([("realtime", .bool(false)), ("live_processing", .bool(false)), ("record_slack", .bool(false))])
         let s = SettingsFile.load(stores: f.stores)
         #expect(!s.realtime && !s.liveProcessing && !s.recordSlack)
+        // It answers with the new recommendations.
+        let rec = (out["recommendations"]?.arrayValue ?? []).first { $0["id"] == .string("realtime") }
+        #expect(rec?["current"] == .bool(false) && rec?["matches"] == .bool(false))
         #expect(refused("realtime must be true or false") { try f.apply([("realtime", .string("yes"))]) })
         #expect(refused("nothing to set for 'no_such'") { try f.apply([("no_such", .bool(true))]) })
         #expect(refused("nothing to change") { try SetupAPI.apply(f.app, obj([("changes", .object([]))])) })
     }
 
-    /// One apply asks the provider helper (a Python start) once, for the choices and the answer.
-    @Test func anApplyAsksTheRegistryOnce() throws {
-        let f = try Fixture()
-        let before = f.keys.calls.count
-        _ = try f.apply([("realtime", .bool(false)), ("language_model", .string("local"))])
-        #expect(f.keys.calls.dropFirst(before).map(\.0) == ["registry"])
-    }
-
     @Test func test_apply_the_local_model() throws {
         let f = try Fixture()
-        _ = try f.apply([("language_model", .string("local:\(GEMMA)"))])
+        let before = f.keys.calls.count
+        _ = try f.apply([("realtime", .bool(false)), ("language_model", .string("local:\(GEMMA)"))])
+        // One apply asks the provider helper (a Python start) once, for the choices and the answer.
+        #expect(f.keys.calls.dropFirst(before).map(\.0) == ["registry"])
         #expect(f.raw["local_model"] == .string(GEMMA))
         #expect(f.engines == #"{"notes": "local", "projects": "local"}"#)
         #expect(refused("no local model") { try f.apply([("language_model", .string("local:\(QWEN)"))]) })  // no longer offered
@@ -378,12 +358,6 @@ private func obj(_ fields: [(String, JSONValue)]) -> JSONValue { .object(fields)
         #expect(refused("claude_desktop must be true or false") { try f.apply([("claude_desktop", .string("yes"))]) })
     }
 
-    @Test func test_apply_answers_with_the_new_recommendations() throws {
-        let out = try Fixture().apply([("realtime", .bool(false))])
-        let rec = (out["recommendations"]?.arrayValue ?? []).first { $0["id"] == .string("realtime") }
-        #expect(rec?["current"] == .bool(false) && rec?["matches"] == .bool(false))
-    }
-
     @Test func test_profile_saves_the_name_and_the_organization() throws {
         let f = try Fixture()
         _ = try SetupAPI.setProfile(f.app, obj([("name", .string("Timo Strauß")), ("organization", .string("KLOUD"))]))
@@ -412,14 +386,7 @@ private func obj(_ fields: [(String, JSONValue)]) -> JSONValue { .object(fields)
         #expect(refused(#"how must be "done" or "skipped""#) { try SetupAPI.finish(f.app, obj([("how", .string("later"))])) })
     }
 
-    @Test func test_a_new_mac_offers_the_assistant_again() throws {
-        let f = try Fixture()
-        _ = try SetupAPI.finish(f.app, obj([("how", .string("done"))]))
-        f.probe.hw = Hardware(chip: "Apple M5 Max", memoryGB: 64, freeDiskGB: 500)
-        #expect(try SetupAPI.offer(f.app)["why"] == .string("changed"))
-    }
-
-    @Test func test_a_missing_model_offers_the_downloads() throws {
+    @Test func test_a_missing_model_or_a_new_mac_offers_the_assistant_again() throws {
         let f = try Fixture()
         for m in ["speech", "gemma"] { f.probe.add(m) }
         _ = try SetupAPI.finish(f.app, obj([("how", .string("done"))]))
@@ -427,6 +394,9 @@ private func obj(_ fields: [(String, JSONValue)]) -> JSONValue { .object(fields)
         f.probe.forget("gemma")
         #expect(dumps(try SetupAPI.offer(f.app)) ==
                 #"{"why": "missing", "models": ["gemma"], "labels": {"gemma": "Gemma 4 12B"}}"#)
+        // A new Mac offers the assistant again.
+        f.probe.hw = Hardware(chip: "Apple M5 Max", memoryGB: 64, freeDiskGB: 500)
+        #expect(try SetupAPI.offer(f.app)["why"] == .string("changed"))
     }
 
     // MARK: - downloads and the test recording: started by the user
@@ -458,13 +428,13 @@ private func obj(_ fields: [(String, JSONValue)]) -> JSONValue { .object(fields)
         #expect(done["checks"]?.arrayValue?.first?["detail"]?.stringValue?.contains("This is my test sentence") == true)
         #expect(refused(#"action must be "start" or "stop""#) { try SetupAPI.test(f.app, obj([("action", .string("go"))])) })
         #expect(try SetupAPI.test(f.app, obj([("action", .null)]))["state"] == .string("done"))  // null: no action
-    }
-
-    @Test func test_no_test_recording_during_a_meeting() throws {
-        let f = try Fixture()
-        f.mac.now = obj([("meeting", .string("2026-10-30T09-00-00")), ("text", .string("Teams call"))])
-        #expect(refused("being recorded") { try SetupAPI.test(f.app, obj([("action", .string("start"))])) })
-        #expect(f.mac.started.isEmpty)
+        // It never transcribes with a download or the cloud.
+        #expect(dumps(f.mac.started.last) == #"{"transcribe": "local"}"#)
+        f.keys.setKey("soniox")
+        _ = try f.apply([("transcription", .string("soniox"))])
+        _ = try SetupAPI.test(f.app, obj([("action", .string("start"))]))
+        _ = try SetupAPI.test(f.app, obj([("action", .string("stop"))]))
+        #expect(f.mac.started.count == 2 && dumps(f.mac.started.last) == #"{"transcribe": "cloud", "service": "Soniox"}"#)
     }
 
     @Test func test_the_menubar_recording_path_decides_too() throws {
@@ -473,20 +443,10 @@ private func obj(_ fields: [(String, JSONValue)]) -> JSONValue { .object(fields)
         #expect(try SetupAPI.test(f.app, obj([("action", .string("start"))]))["state"] == .string("recording"))
         _ = try SetupAPI.test(f.app, obj([("action", .string("stop"))]))
         #expect(try SetupAPI.test(f.app, obj([]))["state"] == .string("done"))
+        // No test recording during a meeting: nothing more is started.
         f.mac.now = obj([("meeting", .string("2026-10-30T09-00-00")), ("text", .string("Teams call"))])
         #expect(refused("being recorded") { try SetupAPI.test(f.app, obj([("action", .string("start"))])) })
-    }
-
-    @Test func test_the_test_never_transcribes_with_a_download_or_the_cloud() throws {
-        let f = try Fixture()
-        _ = try SetupAPI.test(f.app, obj([("action", .string("start"))]))
-        _ = try SetupAPI.test(f.app, obj([("action", .string("stop"))]))
-        #expect(dumps(f.mac.started.last) == #"{"transcribe": "local"}"#)
-        f.keys.setKey("soniox")
-        _ = try f.apply([("transcription", .string("soniox"))])
-        _ = try SetupAPI.test(f.app, obj([("action", .string("start"))]))
-        _ = try SetupAPI.test(f.app, obj([("action", .string("stop"))]))
-        #expect(f.mac.started.count == 2 && dumps(f.mac.started.last) == #"{"transcribe": "cloud", "service": "Soniox"}"#)
+        #expect(f.mac.started.count == 1)
     }
 
     @Test func test_transcription_stays_local_when_config_toml_sends_notes_to_claude() throws {
@@ -512,20 +472,11 @@ private func obj(_ fields: [(String, JSONValue)]) -> JSONValue { .object(fields)
         var by: [String: JSONValue] = [:]
         for c in try f.page()["summary"]?.arrayValue ?? [] { by[c["name"]!.stringValue!] = c }
         #expect(by["Notes and projects"]?["detail"]?.stringValue?.contains("none yet") == true)
-    }
-
-    @Test func test_gemma_chosen_on_16_gb_is_a_download_with_its_catch() throws {
-        let f = try Fixture()
-        f.probe.hw = Hardware(chip: "Apple M2 Pro", memoryGB: 16, freeDiskGB: 200)
+        // Gemma chosen on 16 GB is a download with its catch.
         _ = try f.apply([("language_model", .string("local:\(GEMMA)"))])
         let gemma = (try f.page()["downloads"]?["needed"]?.arrayValue ?? []).first { $0["id"] == .string("gemma") }
         #expect(gemma?["disk_gb"] == .double(8.3))
         #expect(gemma?["note"] == .string("needs 14 GB free while writing; this Mac has 16 GB"))
-    }
-
-    @Test func test_the_page_asks_for_no_hugging_face_token() throws {
-        let d = try Fixture().page()["downloads"]
-        #expect(d?["hf_token"] == nil)  // the speech models come without an account
     }
 
     @Test func test_a_deliberate_switch_is_chosen() throws {

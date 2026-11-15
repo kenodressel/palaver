@@ -19,7 +19,8 @@ public struct Response {
     /// `_send`: the body with its type, length and `Cache-Control: no-store`, then `extra`.
     public static func send(_ status: Int, _ body: Data, contentType: String, extra: [(String, String)] = []) -> Response {
         Response(status: status, headers: [("Content-Type", contentType), ("Content-Length", String(body.count)),
-                                           ("Cache-Control", "no-store")] + extra, body: body)
+                                           ("Cache-Control", "no-store"), ("X-Content-Type-Options", "nosniff")] + extra,
+                 body: body)
     }
 
     /// `_json`: `json.dumps(value, ensure_ascii=False)`.

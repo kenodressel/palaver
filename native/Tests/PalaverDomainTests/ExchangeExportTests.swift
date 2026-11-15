@@ -123,8 +123,13 @@ import Testing
         let meta = try Self.doc(out, "meeting/meta.json")
         #expect(meta["start"] == .string(Self.START) && meta["duration"] == .double(60) && meta["title"] == .string("Budget review"))
         #expect(meta["language"] == .string("de"))
+        #expect(meta["kept_on_this_mac"] == .bool(false))
+        // Where the meeting was held stays home.
+        #expect(try Self.doc(out, "meeting/calendar.json")["location"] == nil)
         // Nothing is left beside it.
         #expect(try FileManager.default.contentsOfDirectory(atPath: s.t.url.appendingPathComponent("out").path) == ["budget.zip"])
+        // The notes can be left out.
+        #expect(!(try Self.names(try s.export("x.zip", notes: false))).contains("meeting/notes.json"))
     }
 
     @Test func test_the_exporters_microphone_becomes_a_lane_named_after_them() throws {
@@ -177,16 +182,6 @@ import Testing
         #expect(shared["my_notes_hash"] == nil && shared["transcript_hash"] == nil && shared["decisions_mine"] == nil)
     }
 
-    @Test func test_where_the_meeting_was_held_stays_home() throws {
-        let s = try Setup(); defer { s.t.remove() }
-        #expect(try Self.doc(try s.export("budget.zip"), "meeting/calendar.json")["location"] == nil)
-    }
-
-    @Test func test_notes_can_be_left_out() throws {
-        let s = try Setup(); defer { s.t.remove() }
-        #expect(!(try Self.names(try s.export("x.zip", notes: false))).contains("meeting/notes.json"))
-    }
-
     @Test func test_voices_go_in_only_when_asked_and_only_of_people_named_by_hand_or_voice() throws {
         let s = try Setup(); defer { s.t.remove() }
         try Self.write(.object([("SPEAKER_01", .object([("name", .string("X")), ("rule", .string("calendar")), ("why", .string("")),
@@ -200,20 +195,16 @@ import Testing
         ])))
     }
 
+    /// A meeting kept on this Mac asks before it exports; the flag travels in meta.json, and the import keeps the
+    /// meeting on this Mac until lifted (`api.get_meeting`'s `local_only` is the marker; `api.set_local_only` is
+    /// `LocalOnly.set`). One not kept comes in as any other (ExchangeImportTests' first test).
     @Test func test_a_meeting_kept_on_this_mac_asks_before_it_exports() throws {
         let s = try Setup(); defer { s.t.remove() }
         try "{}".write(to: s.paths.localOnly, atomically: false, encoding: .utf8)
         #expect(throws: Exchange.KeptOnThisMac.self) { try s.export("x.zip") }
         #expect(!s.t.exists("x.zip"))
-        #expect(FileManager.default.fileExists(atPath: try s.export("x.zip", confirmLocal: true).path))
-    }
-
-    /// The flag in meta.json, and the import keeping the meeting on this Mac until lifted (`api.get_meeting`'s
-    /// `local_only` is the marker; `api.set_local_only` is `LocalOnly.set`).
-    @Test func test_keep_on_this_mac_travels_with_the_file_and_can_be_lifted_here() throws {
-        let s = try Setup(); defer { s.t.remove() }
-        try "{}".write(to: s.paths.localOnly, atomically: false, encoding: .utf8)
         let out = try s.export("x.zip", confirmLocal: true)
+        #expect(FileManager.default.fileExists(atPath: out.path))
         #expect(try Self.doc(out, "meeting/meta.json")["kept_on_this_mac"] == .bool(true))
         let mine = s.t.url.appendingPathComponent("timo", isDirectory: true)
         try Exchange.importPackage(mine, out, userName: "Timo", stores: s.stores, timeZone: TimeZone(identifier: "Europe/Berlin")!)
@@ -221,15 +212,6 @@ import Testing
         #expect(LocalOnly.isLocalOnly(here))
         try LocalOnly.set(here, on: false)
         #expect(!LocalOnly.isLocalOnly(here))
-    }
-
-    @Test func test_a_meeting_not_kept_on_this_mac_comes_in_as_any_other() throws {
-        let s = try Setup(); defer { s.t.remove() }
-        let out = try s.export("x.zip")
-        #expect(try Self.doc(out, "meeting/meta.json")["kept_on_this_mac"] == .bool(false))
-        let mine = s.t.url.appendingPathComponent("timo", isDirectory: true)
-        try Exchange.importPackage(mine, out, userName: "Timo", stores: s.stores)
-        #expect(!LocalOnly.isLocalOnly(mine.appendingPathComponent(Self.ID, isDirectory: true)))
     }
 
     @Test func test_a_meeting_still_being_processed_is_not_exported() throws {

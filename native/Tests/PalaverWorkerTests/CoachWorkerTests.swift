@@ -138,7 +138,7 @@ private func idleRecording(_ folder: URL) -> RecordingPaths {
         #expect(run.result == 0 && !exists(LiveCoachRunner.coachPath(folder)))
     }
 
-    @Test func test_nudge_switches_come_from_settings() throws {
+    @Test func test_nudge_switches_and_notifications_come_from_settings() throws {
         let t = Temp(); defer { t.remove() }
         let stores = StorePaths(configDir: t.file("config"), home: t.file("home"))
         var s = SettingsValues()
@@ -148,12 +148,12 @@ private func idleRecording(_ folder: URL) -> RecordingPaths {
         #expect(switches()["monologue"] == true)
         try SettingsFile.update([("nudge_monologue", .bool(false))], stores: stores)
         #expect(switches()["monologue"] == false)
-    }
-
-    @Test func test_the_coach_command_is_parsed() throws {
-        let o = try WorkerMain.parse(["coach", "/x/rec"])
-        #expect(o.command == "coach" && o.args == ["/x/rec"])
-        #expect(try WorkerMain.folderArgument(o).path == "/x/rec")
+        // Nudge notifications are on by default.
+        #expect(SettingsValues().nudgeNotify)
+        let show = LiveCoachRunner.notifySwitch(ttl: 0, stores: stores)
+        #expect(show())
+        try SettingsFile.update([("nudge_notify", .bool(false))], stores: stores)
+        #expect(!show())
     }
 
     @Test func test_coach_worker_ends_when_its_parent_is_gone() {
@@ -282,25 +282,11 @@ private func idleRecording(_ folder: URL) -> RecordingPaths {
         #expect(row["logger"] == .string("palaver.live_coach") && row["level"] == .string("INFO"))
         #expect(!row.encoded(indent: nil).contains("Valerie") && row["text"] == nil)  // what the nudge said stays out
         #expect(logRows(folder).count == 2)  // every nudge is logged
-    }
-
-    @Test func test_with_the_switch_off_a_nudge_is_only_logged() {
-        let t = Temp(); defer { t.remove() }
-        let sent = Sent()
-        let tell = LiveCoachRunner.nudgeNotifier(t.url, show: { false }, send: sent.add)
-        tell(Nudge(kind: "monologue", text: "3-min monologue", at: 400))
-        #expect(sent.all.isEmpty)
-        #expect(logRows(t.url).last?["kind"] == .string("monologue"))
-    }
-
-    @Test func test_nudge_notifications_are_on_by_default_and_follow_settings() throws {
-        let t = Temp(); defer { t.remove() }
-        let stores = StorePaths(configDir: t.file("config"), home: t.file("home"))
-        #expect(SettingsValues().nudgeNotify)
-        let show = LiveCoachRunner.notifySwitch(ttl: 0, stores: stores)
-        #expect(show())
-        try SettingsFile.update([("nudge_notify", .bool(false))], stores: stores)
-        #expect(!show())
+        // With the switch off, a nudge is only logged.
+        let quiet = LiveCoachRunner.nudgeNotifier(folder, show: { false }, send: sent.add)
+        quiet(Nudge(kind: "monologue", text: "3-min monologue", at: 400))
+        #expect(sent.all.count == 2)
+        #expect(logRows(folder).last?["kind"] == .string("monologue"))
     }
 
     @Test func test_nudges_are_told_from_a_running_coach_worker() {

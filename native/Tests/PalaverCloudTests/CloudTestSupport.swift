@@ -113,7 +113,14 @@ final class StubServer: @unchecked Sendable {
     var url: String { "http://127.0.0.1:\(port)" }
     var requests: [Got] { lock.withLock { kept } }
 
-    func stop() { shutdown(fd, SHUT_RDWR); close(fd) }
+    private var stopped = false
+
+    /// Once: a second close would close whatever another test opened under the same number since.
+    func stop() {
+        guard lock.withLock({ () -> Bool in defer { stopped = true }; return !stopped }) else { return }
+        shutdown(fd, SHUT_RDWR)
+        close(fd)
+    }
 
     private func serve() {
         while true {

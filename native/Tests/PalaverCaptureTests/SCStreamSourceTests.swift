@@ -73,7 +73,7 @@ private final class FakeScreenCaptureAPI: ScreenCaptureAPI, @unchecked Sendable 
         #expect(mic.isEmpty)
     }
 
-    @Test func contentTimeoutAndErrorTexts() {
+    @Test func contentTimeoutAndStartErrorTexts() {
         let api = FakeScreenCaptureAPI()
         let (source, _, _) = source(api)
         api.state.with { $0.content = .never }
@@ -91,12 +91,10 @@ private final class FakeScreenCaptureAPI: ScreenCaptureAPI, @unchecked Sendable 
         #expect(throws: ScreenCaptureError("addStreamOutput(mic) failed: nope")) {
             try source.start(captureMic: true, captureSystem: false)
         }
-    }
-
-    @Test func startErrorText() {
-        let api = FakeScreenCaptureAPI()
-        let (source, _, _) = source(api)
-        api.state.with { $0.start = [.now("Stream failed to start microphone")] }
+        api.state.with {
+            $0.makeError = nil
+            $0.start = [.now("Stream failed to start microphone")]
+        }
         #expect(throws: ScreenCaptureError("SCStream startCapture failed: Stream failed to start microphone")) {
             try source.start(captureMic: true, captureSystem: false)
         }

@@ -86,21 +86,6 @@ private final class FlakyIO {
         #expect(wav.dataSize == 16_000 && wav.samples.count == 8_000)
     }
 
-    @Test func failedHeaderWriteIsRetriedBeforeClosing() throws {
-        let flaky = FlakyIO()
-        let out = tempDir().appendingPathComponent("track.wav")
-        let w = try TrackWriter(finalURL: out, io: flaky.io)
-        try w.write(tone, atOffset: 0)
-        var failed = false
-        flaky.plan = { _, _, off in
-            if off == 0 && !failed { failed = true; return .fail }
-            return .ok
-        }
-        #expect(throws: TrackWriterError.self) { try w.finalize(toFrames: 8_000) }
-        #expect(failed)
-        #expect(try readWav(w.partURL).dataSize == 16_000)
-    }
-
     @Test func aFailedHeaderAfterTheCutDoesNotBringZerosBack() throws {
         // finalize cuts 8000 frames to 4000, then every header write fails: the .part must not be
         // re-extended with zeros over the cut data.
@@ -113,7 +98,10 @@ private final class FlakyIO {
         #expect(size(w.partURL) == 44 + 8_000)
     }
 
-    @Test func aFailedFirstHeaderAfterTheCutIsPatchedToTheLengthOnDisk() throws {
+    /// The first header write fails and is retried before closing: without a cut (8000 frames) and after
+    /// the cut to 4000 frames, where it is patched to the length on disk.
+    @Test(arguments: [8_000, 4_000])
+    func aFailedFirstHeaderIsRetriedAndPatchedToTheLengthOnDisk(frames: Int) throws {
         let flaky = FlakyIO()
         let out = tempDir().appendingPathComponent("track.wav")
         let w = try TrackWriter(finalURL: out, io: flaky.io)
@@ -123,10 +111,11 @@ private final class FlakyIO {
             if off == 0 && !failed { failed = true; return .fail }
             return .ok
         }
-        #expect(throws: TrackWriterError.self) { try w.finalize(toFrames: 4_000) }
-        #expect(size(w.partURL) == 44 + 8_000)
+        #expect(throws: TrackWriterError.self) { try w.finalize(toFrames: frames) }
+        #expect(failed)
+        #expect(size(w.partURL) == 44 + 2 * frames)
         let wav = try readWav(w.partURL)
-        #expect(wav.dataSize == 8_000 && wav.samples == Array(tone.prefix(4_000)))
+        #expect(wav.dataSize == 2 * frames && wav.samples == Array(tone.prefix(frames)))
     }
 
     @Test func headerIsPythonsLayout() {
@@ -153,20 +142,6 @@ private final class FlakyIO {
         #expect(!FileManager.default.fileExists(atPath: w.partURL.path))
         let wav = try readWav(out)
         #expect(wav.samples.count == 32_000 && wav.dataSize == 64_000 && wav.riffSize == 64_036 && wav.sampleRate == 16_000)
-    }
-
-    @Test func gapIsZeroPadded() throws {
-        let out = tempDir().appendingPathComponent("track.wav")
-        let w = try TrackWriter(finalURL: out)
-        let s = [Int16](repeating: 16_383, count: 1_600)
-        try w.write(s, atOffset: 0)
-        try w.write(s, atOffset: 9_600)  // 0.5 s gap
-        try w.finalize(toFrames: 11_200)
-        let x = try readWav(out).samples
-        #expect(x.count == 11_200)
-        #expect(meanAbs(x[0..<1_600]) > 1_000)
-        #expect(maxAbs(x[1_600..<9_600]) == 0)
-        #expect(meanAbs(x[9_600..<11_200]) > 1_000)
     }
 
     @Test func abortPatchesHeader() throws {

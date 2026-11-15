@@ -71,11 +71,8 @@ import Testing
         let listed = try #require(manifest["files"]?["audio/system.opus"])
         let data = try Self.entryData(out, "audio/system.opus")
         #expect(listed["sha256"] == .string(sha256Hex(data)) && listed["bytes"] == .int(data.count))
-    }
-
-    @Test func test_audio_comes_in_as_one_track_the_window_plays() throws {
-        let r = Import.Root(); defer { r.remove() }
-        try r.importInto(r.mine, try r.export(try Self.valerie(r), "x.zip", audio: true))
+        // The audio comes in as one track the window plays.
+        try r.importInto(r.mine, out)
         let info = try Wav16.info(r.here().systemWav)
         #expect(info.rate == Self.SR && abs(Double(info.frames) / Double(Self.SR) - 4) < 0.5 && info.channels == 1)
         #expect(!Import.exists(r.here().micWav))
@@ -101,24 +98,17 @@ import Testing
         #expect(Import.exists(r.here().systemWav) && !Import.exists(r.here().micWav))
     }
 
+    /// Audio is not decoded onto a nearly full disk; audio broken after its header, or no audio at all, is rejected.
     @Test func test_audio_is_not_decoded_onto_a_nearly_full_disk() throws {
         let r = Import.Root(); defer { r.remove() }
         let out = try r.export(try Self.valerie(r, audio: 2), "x.zip", audio: true)
         try r.rejected(out, "Not enough free disk space", freeBytes: { _ in Exchange.MIN_FREE_BYTES + 1000 })
-    }
 
-    @Test func test_audio_broken_after_its_header_is_rejected() throws {
-        let r = Import.Root(); defer { r.remove() }
-        let out = try r.export(try Self.valerie(r, audio: 2), "x.zip", audio: true)
         var opus = [UInt8](try Self.entryData(out, "audio/system.opus"))
         for i in 300..<opus.count { opus[i] = UInt8(((i - 300) * 37) % 256) }
         try r.rejected(try r.repack(out, "y.zip", change: ["audio/system.opus": Data(opus)]), "audio")
-    }
 
-    @Test func test_audio_that_is_not_audio_is_rejected() throws {
-        let r = Import.Root(); defer { r.remove() }
-        let out = try r.export(try Self.valerie(r, audio: 2), "x.zip", audio: true)
-        try r.rejected(try r.repack(out, "y.zip", change: ["audio/system.opus": Data("not audio at all".utf8)]), "can't be read")
+        try r.rejected(try r.repack(out, "z.zip", change: ["audio/system.opus": Data("not audio at all".utf8)]), "can't be read")
     }
 
     // MARK: - against Python

@@ -627,6 +627,13 @@ public final class CaptureRecorder: @unchecked Sendable {
         return lateLock.withLock { _late }.map { Double($0.lowerBound - start) / 1e9...Double($0.upperBound - start) / 1e9 }
     }
 
+    /// Every stretch the mic was not kept in, in seconds from the track's start: to the stop, or to now while recording.
+    public var mutedSeconds: [ClosedRange<Double>] {
+        guard let mute, let start = finished?.start ?? aligner?.startPts else { return [] }
+        let end = finished?.end ?? Int64((clock() * 1e9).rounded())
+        return mute.mutedRanges(from: start, to: end).map { Double($0.lowerBound - start) / 1e9...Double($0.upperBound - start) / 1e9 }
+    }
+
     /// After the stop: mute changes told since then (Teams' log comes late) silence the finished mic track.
     /// The caller waits for them first; nothing runs on the writer thread any more.
     public func silenceAfterStop() {

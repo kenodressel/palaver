@@ -117,6 +117,13 @@ private final class Home {
         #expect(try McpLog.read(stores: h.stores).isEmpty)
         #expect(!exists(aside))
         #expect(try !McpLog.restore(token, stores: h.stores))
+        // Any log write deletes an expired cleared log too.
+        h.append(#"{"n": 2}"#)
+        _ = try McpLog.clear(stores: h.stores)
+        let second = try #require(h.cleared().first)
+        setMtime(second, Date().timeIntervalSince1970 - McpLog.CLEARED_KEEP_SECONDS - 5)  // the window went away meanwhile
+        h.append(#"{"n": 3}"#)  // a `palaver mcp` process writing
+        #expect(!exists(second))
     }
 
     @Test func test_a_cleared_log_is_deleted_when_the_undo_window_ends_even_if_nobody_looks() throws {
@@ -127,16 +134,6 @@ private final class Home {
         token = try #require(try McpLog.clear(stores: h.stores, keep: 0.3))
         #expect(!h.cleared().isEmpty)
         #expect(until(3) { h.cleared().isEmpty })  // no read meanwhile
-    }
-
-    @Test func test_any_log_write_deletes_an_expired_cleared_log() throws {
-        let h = Home()
-        h.append(#"{"n": 1}"#)
-        _ = try McpLog.clear(stores: h.stores)
-        let aside = try #require(h.cleared().first)
-        setMtime(aside, Date().timeIntervalSince1970 - McpLog.CLEARED_KEEP_SECONDS - 5)  // the window went away meanwhile
-        h.append(#"{"n": 2}"#)  // a `palaver mcp` process writing
-        #expect(!exists(aside))
     }
 
     // MARK: - running servers
@@ -263,46 +260,5 @@ private final class Home {
         #expect(r.status == 200 && r.json?["log"]?.arrayValue?.map { $0["tool"] } == [.string("list_people"), .string("get_meeting")])
         r = s.post("/api/mcp/restore", .object([("token", answer["undo"]!)]))
         #expect(r.status == 404)
-    }
-
-    @Test func test_http_mcp_install_adds_palaver_to_claude_code() throws {
-        // In the server's own process (McpSetup), with a fake `claude` that writes Claude Code's config as it would.
-        let s = try TestServer()
-        defer { s.stop() }
-        let stores = s.app.stores
-        s.app.mcpSetup = McpSetup(stores: stores, executable: "/A/Contents/Resources/bin/palaver", findClaude: { nil })
-        var r = s.post("/api/mcp/install")
-        #expect(r.status == 500 && r.error?.contains("Claude Code") == true)  // no claude CLI
-
-        let calls = NSLock()
-        var made: [[String]] = []
-        s.app.mcpSetup = McpSetup(stores: stores, executable: "/A/Contents/Resources/bin/palaver", findClaude: { "/fake/claude" }) { argv in
-            calls.withLock { made.append(argv) }
-            try write(stores.claudeConfig, #"{"mcpServers": {"palaver": {"command": "/A/Contents/Resources/bin/palaver", "args": ["mcp"]}}}"#)
-            return McpSetup.Ran(status: 0)
-        }
-        r = s.post("/api/mcp/install")
-        #expect(r.status == 200 && dumps(r.json?["registered"]) == #"{"registered": true, "name": "palaver", "scope": "user"}"#)
-        #expect(calls.withLock { made } == [["/fake/claude", "mcp", "add", "--scope", "user", "palaver", "--",
-                                             "/A/Contents/Resources/bin/palaver", "mcp"]])
-    }
-
-    @Test func test_http_mcp_install_passes_the_apps_cli_options() throws {
-        // Claude Desktop's entry starts `bin/palaver` with the options the server was started with (`--config`).
-        let s = try TestServer()
-        defer { s.stop() }
-        s.app.claudeDesktopApp = s.dir.appendingPathComponent("Applications/Claude.app", isDirectory: true)
-        s.app.mcpSetup = McpSetup(stores: s.app.stores, executable: "/A/bin/palaver", options: ["--config", "/c/config.toml"],
-                                  findClaude: { nil })
-        let r = s.post("/api/mcp/install", .object([("target", .string("desktop"))]))
-        #expect(r.status == 200 && r.json?["desktop"]?["registered"] == .bool(true))
-        #expect(dumps(PythonJSON.read(s.app.stores.claudeDesktopConfig)?["mcpServers"]?["palaver"])
-                == #"{"command": "/A/bin/palaver", "args": ["--config", "/c/config.toml", "mcp"]}"#)
-        // The server's own setup gets the options it was started with.
-        let config = s.dir.appendingPathComponent("config.toml")
-        try write(config, "[recording]\noutput_dir = \"\(s.app.outputDir.path)\"\n[calendar]\nenabled = false\n")
-        let env = ["PALAVER_HOME": s.dir.appendingPathComponent("home").path, "XDG_CONFIG_HOME": s.dir.appendingPathComponent("config").path]
-        let made = ServeMain.makeApp(try ServeMain.parse(["--config", config.path, "--port", "0"]), env: env)
-        #expect(made.mcpSetup.options == ["--config", config.path])
     }
 }

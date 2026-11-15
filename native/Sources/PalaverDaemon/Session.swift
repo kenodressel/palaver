@@ -43,9 +43,12 @@ public protocol RecordingSessionLike: AnyObject {
     var mutedIn: String? { get }
     /// The call app whose mute can't be followed right now ("teams": no Accessibility, no readable log).
     var muteUnfollowed: String? { get }
+    /// Writes where the mic was not kept so far (`mic_muted.json`), so the meeting shows it while recorded; each tick.
+    func noteMute()
 }
 
 public extension RecordingSessionLike {
+    func noteMute() {}
     var mutedIn: String? { nil }
     var muteUnfollowed: String? { nil }
     var missing: [String] { [] }
@@ -74,9 +77,11 @@ public protocol SessionCapture: AnyObject {
     var hints: [(kind: String, track: String)] { get }
     var mutedIn: String? { get }
     var muteUnfollowed: String? { get }
+    func noteMute()
 }
 
 public extension SessionCapture {
+    func noteMute() {}
     var mutedIn: String? { nil }
     var muteUnfollowed: String? { nil }
 }
@@ -94,6 +99,11 @@ public final class LiveCapture: SessionCapture {
     /// the timeline's hold).
     var afterStopPoll = 0.5
     var afterStopWait: Double?
+    /// What `noteMute` wrote last; once stopped, only the stop writes `mic_muted.json`.
+    private let noted = NSLock()
+    private struct NotedMute: Equatable { var count: Int, open: Bool, end: Double? }
+    private var notedMute = NotedMute(count: 0, open: false, end: nil)
+    private var stopping = false
 
     /// `mute`: made with the session log's line writer (`CallMute.logger`), for a call recorded with
     /// `respect_call_mute` on.
@@ -131,6 +141,7 @@ public final class LiveCapture: SessionCapture {
     /// silences the finished mic track, and `mic_muted.json` says `pending` until it is done (`process` waits).
     public func stop() throws {
         guard let mute else { try recorder.stop(); return }
+        noted.withLock { stopping = true }
         mute.source.refresh()
         do { try recorder.stop() } catch {
             mute.source.stop()
@@ -139,15 +150,18 @@ public final class LiveCapture: SessionCapture {
         }
         let wait = mute.source.tellsLate ? afterStopWait ?? mute.timeline.delay : 0
         let (recorder, folder, poll) = (self.recorder, self.folder, afterStopPoll)
+        let app = gatesMic ? mute.timeline.app.rawValue : nil
         let finish: @Sendable () -> Void = {
             recorder.silenceAfterStop()
-            let late = recorder.lateSilenced
-            if !late.isEmpty || wait > 0 { try? MicMuted.write(.init(pending: false, late: late), folder: folder) }
+            let late = recorder.lateSilenced, muted = recorder.mutedSeconds
+            if !late.isEmpty || !muted.isEmpty || wait > 0 || app != nil {  // gating: the stretches, or that there were none
+                try? MicMuted.write(.init(pending: false, late: late, muted: muted, app: app), folder: folder)
+            }
             mute.source.stop()
             mute.timeline.close()
         }
         guard wait > 0 else { finish(); return }
-        try? MicMuted.write(.init(pending: true, late: recorder.lateSilenced), folder: folder)
+        try? MicMuted.write(.init(pending: true, late: recorder.lateSilenced, muted: recorder.mutedSeconds, app: app), folder: folder)
         let t = Thread {
             let deadline = Date().addingTimeInterval(wait)
             while Date() < deadline {
@@ -158,6 +172,19 @@ public final class LiveCapture: SessionCapture {
         }
         t.name = "palaver.mute-after-stop"
         t.start()
+    }
+
+    public func noteMute() {
+        guard gatesMic, let mute else { return }
+        let muted = recorder.mutedSeconds, open = mute.timeline.mutedNow
+        // A new stretch, an end, or an unmute is news; an open stretch growing is not (shown "since").
+        let key = NotedMute(count: muted.count, open: open, end: open ? nil : muted.last?.upperBound)
+        noted.withLock {
+            guard !stopping, key != notedMute else { return }
+            notedMute = key
+            try? MicMuted.write(.init(pending: false, late: [], muted: muted, app: mute.timeline.app.rawValue, open: open),
+                                folder: folder)
+        }
     }
 
     public var mutedIn: String? {
@@ -246,6 +273,7 @@ public final class RecordingSession: RecordingSessionLike {
     public var hints: [(kind: String, track: String)] { capture?.hints ?? [] }
     public var mutedIn: String? { recording ? capture?.mutedIn : nil }
     public var muteUnfollowed: String? { recording ? capture?.muteUnfollowed : nil }
+    public func noteMute() { if recording { capture?.noteMute() } }
 
     public func start() throws -> URL {
         let folder = try RecordingFolders.new(in: outputDir, at: wall(), timeZone: timeZone)

@@ -30,9 +30,7 @@ private func part(_ name: String) throws -> URL {
         var data = Data()
         for s in toneSamples(0.5, 1) { withUnsafeBytes(of: Int16(s.rounded()).littleEndian) { data.append(contentsOf: $0) } }
         #expect(abs(levelDbfs(data)! + 3) < 0.2)
-    }
-
-    @Test func digitalSilenceAndNothingAreNil() {
+        // Digital silence and nothing are nil.
         #expect(levelDbfs(Data(repeating: 0, count: 1600)) == nil)
         #expect(levelDbfs(Data()) == nil)
     }
@@ -45,19 +43,6 @@ private func part(_ name: String) throws -> URL {
         #expect(levelBar(-30).count == 8)
     }
 
-    @Test func reportsLevelsAndSilenceWithoutPrinting() throws {
-        let mic = try part("mic.part")
-        let now = Locked(0.0)
-        let tracker = LevelTracker(tracks: [("mic", mic)], clock: { now.get })
-        try append(mic, toneSamples(1, 0.1))
-        now.with { $0 = 1 }
-        var r = tracker.read()
-        #expect(r.count == 1 && r[0].label == "mic" && Int(r[0].db!.rounded()) == -23 && r[0].silentFor == 0)
-        now.with { $0 = 4 }
-        r = tracker.read()
-        #expect(r[0].db == nil && r[0].silentFor == 3)
-    }
-
     @Test func onlyNewlyWrittenAudioIsMeasured() throws {
         // The process tap stops writing during silence; re-reading the file tail would show stale audio.
         let mic = try part("mic.part"), system = try part("system.part")
@@ -67,6 +52,7 @@ private func part(_ name: String) throws -> URL {
         try append(system, toneSamples(1, 0.5))
         now.with { $0 = 1 }
         var r = tracker.read()
+        #expect(r.count == 2 && r[0].label == "mic" && r[1].label == "system" && r[0].silentFor == 0)
         #expect(Int(r[0].db!.rounded()) == -23 && Int(r[1].db!.rounded()) == -9)
         try append(mic, toneSamples(1, 0.1))  // system stops growing
         now.with { $0 = 6 }

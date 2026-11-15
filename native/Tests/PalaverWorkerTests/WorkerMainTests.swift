@@ -115,7 +115,13 @@ private struct Voices: Diarizing {
         #expect(refused?.1 == 4)
         #expect(refused?.0 == "error: waiting for Speech models, not downloaded yet; 2026-11-04T10-00-00 is transcribed once it is.")
         #expect(ProcessState.read(RecordingPaths(folder))?["reason"] == .string("models"))
+        #expect(ProcessState.read(RecordingPaths(folder))?["missing"] == .strings(["Speech models"]))
         #expect(WorkerMain.refusal(folder, WorkerMain.Options(), config: Config(), speechModelsHere: { true }) == nil)
+        // A dictionary named but not there: exit 2.
+        var o = WorkerMain.Options()
+        o.dictionary = t.file("nope.toml").path
+        let noDictionary = WorkerMain.refusal(folder, o, config: Config(), speechModelsHere: { true })
+        #expect(noDictionary?.1 == 2 && noDictionary?.0.contains("nope.toml") == true)
     }
 
     /// `palaver sync` starts `palaver-worker sync <folder>`: a folder without a transcript is exit 2; without a Notion

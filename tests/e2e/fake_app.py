@@ -76,7 +76,9 @@ def serve(path: Path, calls: dict) -> ControlServer:
     finally:
         os.umask(old)
     server.daemon_threads = True
-    threading.Thread(target=server.serve_forever, name="app-socket", daemon=True).start()
+    # A short poll: close() (shutdown) waits for it, once per test.
+    threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, name="app-socket",
+                     daemon=True).start()
     return ControlServer(server, path)
 
 

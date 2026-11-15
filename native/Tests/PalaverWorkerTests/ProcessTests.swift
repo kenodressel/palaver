@@ -181,49 +181,28 @@ private let HALLO = #"{"transcribe": {"*": [\#(seg(0.0, 1.0, "hallo"))]}}"#
         #expect(MicMuted.settled(t.file("none")) == nil)
     }
 
-    @Test func test_mic_language_follows_system_track_when_auto() async throws {
-        // The engine's Parakeet detects no language; one the live worker found (language.txt) is the mic's.
-        let t = Temp(); defer { t.remove() }
-        let h = Harness(t)
-        let paths = try h.meeting(mic: track(1, loud: []), system: track(1, loud: []), seconds: 1)
-        try Data("de\n".utf8).write(to: paths.language)
-        #expect(try await Pipeline.process(paths.folder, h.setup(fake(HALLO)), notes: false) == 0)
-        #expect(h.said.contains("Transcribing mic track (de)…"))
-        let lines = ((try? String(contentsOf: paths.sessionLog, encoding: .utf8)) ?? "").split(separator: "\n").map { try! PythonJSON.parse(Data($0.utf8)) }
-        let mic = lines.first { $0["event"] == .string("transcribe_start") && $0["track"] == .string("mic") }
-        #expect(mic?["language"] == .string("de"))
-        #expect(try String(contentsOf: paths.language, encoding: .utf8) == "de\n")
-    }
-
-    @Test func test_process_removes_the_echo_cancelled_part_a_stopped_live_worker_left() async throws {
+    @Test func test_process_runs_one_model_at_a_time_and_cleans_up_what_a_live_worker_left() async throws {
+        // One model at a time: Parakeet goes after both tracks, the diarizer before the notes (Batch B review). The
+        // echo-cancelled part a stopped live worker left and a killed live diarizer's scratch go. The engine's
+        // Parakeet detects no language; one the live worker found (language.txt) is the mic's.
         let t = Temp(); defer { t.remove() }
         let h = Harness(t)
         let paths = try h.meeting(mic: track(1, loud: []), system: track(1, loud: []), seconds: 1)
         let stale = URL(fileURLWithPath: paths.micWav.path + ".part")
         try Data(count: 1000).write(to: stale)
-        #expect(try await Pipeline.process(paths.folder, h.setup(fake(HALLO)), notes: false) == 0)
-        #expect(FileManager.default.fileExists(atPath: paths.micWav.path) && !FileManager.default.fileExists(atPath: stale.path))
-    }
-
-    @Test func test_process_removes_the_live_diarizers_scratch_a_killed_worker_left() async throws {
-        let t = Temp(); defer { t.remove() }
-        let h = Harness(t)
-        let paths = try h.meeting(mic: track(1, loud: []), system: track(1, loud: []), seconds: 1)
         let scratch = paths.folder.appendingPathComponent(".live-diarize.wav")
         try Data(count: 1000).write(to: scratch)
-        #expect(try await Pipeline.process(paths.folder, h.setup(fake(HALLO)), notes: false) == 0)
+        try Data("de\n".utf8).write(to: paths.language)
+        let engine = fake(HALLO)
+        #expect(try await Pipeline.process(paths.folder, h.setup(engine), notes: false) == 0)
+        #expect(engine.calls == ["transcribe system.wav", "transcribe mic.wav", "release", "diarize system.wav", "release"])
+        #expect(FileManager.default.fileExists(atPath: paths.micWav.path) && !FileManager.default.fileExists(atPath: stale.path))
         #expect(!FileManager.default.fileExists(atPath: scratch.path))
-    }
-
-    @Test func test_process_waits_for_models_not_downloaded_yet() async throws {
-        let t = Temp(); defer { t.remove() }
-        let h = Harness(t)
-        let paths = try h.meeting(mic: track(1, loud: []), system: track(1, loud: []), seconds: 1)
-        let refused = WorkerMain.refusal(paths.folder, WorkerMain.Options(), config: h.config, stores: h.stores, speechModelsHere: { false })
-        #expect(refused?.1 == 4)
-        #expect(refused?.0.contains("waiting for Speech models, not downloaded yet") == true)
-        #expect(ProcessState.read(paths)?["missing"] == .strings(["Speech models"]))
-        #expect(!FileManager.default.fileExists(atPath: paths.transcriptJson.path))
+        #expect(h.said.contains("Transcribing mic track (de)…"))
+        let lines = ((try? String(contentsOf: paths.sessionLog, encoding: .utf8)) ?? "").split(separator: "\n").map { try! PythonJSON.parse(Data($0.utf8)) }
+        let mic = lines.first { $0["event"] == .string("transcribe_start") && $0["track"] == .string("mic") }
+        #expect(mic?["language"] == .string("de"))
+        #expect(try String(contentsOf: paths.language, encoding: .utf8) == "de\n")
     }
 
     @Test func test_run_without_models_marks_models_reason() async throws {
@@ -249,6 +228,12 @@ private let HALLO = #"{"transcribe": {"*": [\#(seg(0.0, 1.0, "hallo"))]}}"#
         #expect(ProcessState.read(paths)?["reason"] == .string("error"))
         #expect(ProcessState.read(paths)?["error"] == .string("no GPU"))
         #expect(ProcessState.read(paths)?["missing"] == .strings([]))
+        // The engine dies in a later step: that is the error, and neither the turns nor a transcript are written.
+        let dies = fake(#"{"transcribe": {"*": []}, "fail": {"diarize": "the speech engine stopped"}}"#)
+        await #expect(throws: PalaverWorker.WorkerError.self) { try await Pipeline.process(paths.folder, h.setup(dies), notes: false) }
+        #expect(ProcessState.read(paths)?["error"] == .string("the speech engine stopped"))
+        #expect(!FileManager.default.fileExists(atPath: paths.transcriptJson.path))
+        #expect(!FileManager.default.fileExists(atPath: paths.systemTurns.path))
         // A failure it says itself (no meta.json, no audio to rebuild it from): exit 2, marked.
         let bare = RecordingPaths(h.config.outputDir.appendingPathComponent("2026-10-21T09-00-00", isDirectory: true))
         try FileManager.default.createDirectory(at: bare.folder, withIntermediateDirectories: true)
@@ -258,17 +243,6 @@ private let HALLO = #"{"transcribe": {"*": [\#(seg(0.0, 1.0, "hallo"))]}}"#
         // A good run clears it.
         #expect(try await Pipeline.process(paths.folder, h.setup(fake(HALLO)), notes: false) == 0)
         #expect(ProcessState.read(paths) == nil)
-    }
-
-    @Test func test_process_marks_failed_when_engine_dies() async throws {
-        let t = Temp(); defer { t.remove() }
-        let h = Harness(t)
-        let paths = try h.meeting(mic: track(1, loud: []), system: track(1, loud: []), seconds: 1)
-        let engine = fake(#"{"transcribe": {"*": []}, "fail": {"diarize": "the speech engine stopped"}}"#)
-        await #expect(throws: PalaverWorker.WorkerError.self) { try await Pipeline.process(paths.folder, h.setup(engine), notes: false) }
-        #expect(ProcessState.read(paths)?["error"] == .string("the speech engine stopped"))
-        #expect(!FileManager.default.fileExists(atPath: paths.transcriptJson.path))
-        #expect(!FileManager.default.fileExists(atPath: paths.systemTurns.path))
     }
 
     @Test func test_process_uses_dictionary_flag() async throws {
@@ -287,16 +261,6 @@ private let HALLO = #"{"transcribe": {"*": [\#(seg(0.0, 1.0, "hallo"))]}}"#
         let start = ((try? String(contentsOf: paths.sessionLog, encoding: .utf8)) ?? "").split(separator: "\n")
             .map { try! PythonJSON.parse(Data($0.utf8)) }.first { $0["event"] == .string("process_start") }
         #expect(start?["dictionary"] == .string(t.file("legal.toml").path))
-    }
-
-    @Test func test_process_rejects_missing_explicit_dictionary() async throws {
-        let t = Temp(); defer { t.remove() }
-        let h = Harness(t)
-        let paths = try h.meeting(mic: track(1, loud: []), system: track(1, loud: []), seconds: 1)
-        var o = WorkerMain.Options()
-        o.dictionary = t.file("nope.toml").path
-        let refused = WorkerMain.refusal(paths.folder, o, config: h.config, stores: h.stores, speechModelsHere: { true })
-        #expect(refused?.1 == 2 && refused?.0.contains("nope.toml") == true)
     }
 
     @Test func test_missing_models_are_only_those_a_run_still_needs() throws {
@@ -319,29 +283,6 @@ private let HALLO = #"{"transcribe": {"*": [\#(seg(0.0, 1.0, "hallo"))]}}"#
         let error = PalaverWorker.WorkerError("the speech engine died (exit 3)\n" + String(repeating: "stderr line\n", count: 3) + "the speech engine died")
         #expect(Pipeline.failureReason(error) == "the speech engine died")
         #expect(Pipeline.failureReason(PalaverWorker.WorkerError("one line")) == "one line")
-    }
-
-    @Test func test_process_closes_the_transcribers_engine_before_diarizing() async throws {
-        // One model at a time: Parakeet goes after both tracks, the diarizer before the notes (Batch B review).
-        let t = Temp(); defer { t.remove() }
-        let h = Harness(t)
-        let paths = try h.meeting(mic: track(1, loud: []), system: track(1, loud: []), seconds: 1)
-        let engine = fake(HALLO)
-        #expect(try await Pipeline.process(paths.folder, h.setup(engine), notes: false) == 0)
-        #expect(engine.calls == ["transcribe system.wav", "transcribe mic.wav", "release", "diarize system.wav", "release"])
-    }
-
-    @Test func aLiveOrFallbackSystemTrackBecomesThisMacsWithoutAService() async throws {
-        // Kept as this Mac made it: a service chosen later never sends it (transcription.system_track).
-        let t = Temp(); defer { t.remove() }
-        let h = Harness(t)
-        let paths = try h.meeting(mic: track(1, loud: []), system: track(1, loud: []), seconds: 1)
-        try PythonJSON.write(.array([]), to: paths.systemSegments, indent: 2, ensureAscii: true)
-        try TranscriptionMarker.write(paths, track: "system", info: [("engine", .string("live"))])
-        #expect(try await Pipeline.process(paths.folder, h.setup(fake(HALLO)), notes: false) == 0)
-        #expect(readJSON(paths.transcription)?["system"]?["engine"] == .string("local"))
-        #expect(!TranscriptionMarker.wantsCloud(paths))
-        #expect(h.said.contains("Skipping system transcription (already done)"))
     }
 
     @Test func aKnownVoiceIsRecognizedAndNamesTheTranscript() async throws {

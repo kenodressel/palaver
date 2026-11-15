@@ -284,15 +284,12 @@ private func withEvents() throws -> (CalendarEvent, CalendarEvent) {
         #expect(f.app.reviewCaches.needs.misses == made && f.app.reviewCaches.needs.hits == 1)  // not built again
         try write(.object([("SPEAKER_00", .string("Rico"))]), to: f.paths.speakers)  // named: built again
         #expect(kinds(try f.needs()) == ["review"])
-    }
-
-    @Test func test_live_and_unfinished_meetings_need_nothing_yet() throws {
-        let f = try Fixture()
+        // Live and unfinished meetings need nothing yet.
         try FileManager.default.removeItem(at: f.paths.transcriptJson)  // still being processed
         #expect(PythonJSON.dumps(try f.needs()) == #"{"count": 0, "meetings": []}"#)
     }
 
-    @Test func test_http_needs_and_undoing_a_dismissed_cut() throws {
+    @Test func test_http_needs_and_undoing_a_dismissed_cut_and_dont_know() throws {
         let s = try TestServer(userName: "Timo", meetings: { try pageMeeting($0) })
         defer { s.stop() }
         let r = s.get("/api/needs")
@@ -302,6 +299,16 @@ private func withEvents() throws -> (CalendarEvent, CalendarEvent) {
         #expect(exists(paths.cutDismissed))
         #expect(s.post("/api/meetings/\(MEETING)/cut-suggestion", .object([("dismiss", .bool(false))])).status == 200)
         #expect(!exists(paths.cutDismissed))
+
+        // "Don't Know" over HTTP.
+        let path = "/api/meetings/\(MEETING)/unknown"
+        let unknown = s.post(path, .object([("label", .string("SPEAKER_00")), ("on", .bool(true))]))
+        let answer = unknown.json ?? .null
+        #expect(unknown.status == 200 && answer["undo"]?.stringValue?.isEmpty == false && answer["speakers"]?[1]?["unknown"] == .bool(true))
+        #expect(s.post(path, .object([("label", .string("SPEAKER_00")), ("on", .string("yes"))])).status == 400)
+        #expect(s.post(path, .object([("label", .string("SPEAKER_09")), ("on", .bool(true))])).status == 404)
+        #expect(s.post("/api/undo", .object([("token", answer["undo"] ?? .null)])).status == 200)
+        #expect(!exists(paths.speakersUnknown))
     }
 
     @Test func test_confirming_a_guessed_name_can_be_undone() throws {
@@ -335,12 +342,10 @@ private func withEvents() throws -> (CalendarEvent, CalendarEvent) {
         #expect(try f.unnamed() == .int(1) && kinds(try f.needs()).contains("unnamed"))
         lane = try f.page()["speakers"]?[1]
         #expect(lane?["unknown"] == .bool(false))
-    }
 
-    @Test func test_dont_know_is_undone_with_its_token() throws {
-        let f = try Fixture()
-        let token = try PeopleAPI.setUnknown(f.app, id: MEETING, label: "SPEAKER_00", on: true)
-        #expect(try f.undo(token) == [MEETING])
+        // "Don't Know" is undone with its token.
+        let again = try PeopleAPI.setUnknown(f.app, id: MEETING, label: "SPEAKER_00", on: true)
+        #expect(try f.undo(again) == [MEETING])
         #expect(try !exists(f.paths.speakersUnknown) && f.unnamed() == .int(1))
     }
 
@@ -352,17 +357,15 @@ private func withEvents() throws -> (CalendarEvent, CalendarEvent) {
         #expect(read(f.paths.speakersUnknown) == .strings(["SPEAKER_00"]))
     }
 
-    @Test func test_naming_a_voice_nobody_knew_takes_it_out_of_dont_know() throws {
+    @Test func test_naming_a_voice_nobody_knew_takes_it_out_of_dont_know_and_its_undo_brings_it_back() throws {
         let f = try Fixture()
         _ = try PeopleAPI.setUnknown(f.app, id: MEETING, label: "SPEAKER_00", on: true)
         _ = try PeopleAPI.nameSpeaker(f.app, id: MEETING, label: "SPEAKER_00", name: "Rico")
         #expect(!exists(f.paths.speakersUnknown))
         _ = try PeopleAPI.nameSpeaker(f.app, id: MEETING, label: "SPEAKER_00", name: "")  // unnamed again: asked again
         #expect(try f.unnamed() == .int(1))
-    }
 
-    @Test func test_the_undo_of_a_naming_brings_dont_know_back() throws {
-        let f = try Fixture()
+        // The undo of a naming brings "Don't Know" back.
         _ = try PeopleAPI.setUnknown(f.app, id: MEETING, label: "SPEAKER_00", on: true)
         // Inferred later, then confirmed: the speaker-file snapshot of that confirmation holds speakers_unknown.json too.
         try f.inferCarla()
@@ -390,19 +393,6 @@ private func withEvents() throws -> (CalendarEvent, CalendarEvent) {
         #expect(try f.unnamed() == .int(1) && kinds(try f.needs()) == ["unnamed"])
     }
 
-    @Test func test_http_dont_know() throws {
-        let s = try TestServer(userName: "Timo", meetings: { try pageMeeting($0) })
-        defer { s.stop() }
-        let path = "/api/meetings/\(MEETING)/unknown"
-        let r = s.post(path, .object([("label", .string("SPEAKER_00")), ("on", .bool(true))]))
-        let answer = r.json ?? .null
-        #expect(r.status == 200 && answer["undo"]?.stringValue?.isEmpty == false && answer["speakers"]?[1]?["unknown"] == .bool(true))
-        #expect(s.post(path, .object([("label", .string("SPEAKER_00")), ("on", .string("yes"))])).status == 400)
-        #expect(s.post(path, .object([("label", .string("SPEAKER_09")), ("on", .bool(true))])).status == 404)
-        #expect(s.post("/api/undo", .object([("token", answer["undo"] ?? .null)])).status == 200)
-        #expect(!exists(RecordingPaths(s.app.outputDir.appendingPathComponent(MEETING, isDirectory: true)).speakersUnknown))
-    }
-
     // MARK: - test_attribution.py
 
     @Test func test_open_questions_list_overlapping_events_and_unsure_links() throws {
@@ -417,18 +407,10 @@ private func withEvents() throws -> (CalendarEvent, CalendarEvent) {
         #expect(found[0]["choices"]?.list.compactMap { $0["title"]?.stringValue } == ["Ad hoc", "Northwind"])
         #expect(found[1]["link"]?["label"] == .string("Speaker: Rico (voice 70% alike)"))
         #expect(found[1]["label"] == .string("SPEAKER_00"))
-    }
-
-    /// Python fails the test if `_speakers` (the page's lanes) is called, and on the second call if `_lane_links` is: here
-    /// the questions' own cache counts what it made.
-    @Test func test_open_questions_do_not_build_every_meeting() throws {
-        let f = try Fixture()
-        try write(.object([("SPEAKER_00", .object([("name", .string("Rico")), ("similarity", .double(0.7))]))]), to: f.paths.speakersAuto)
-        let first = try ReviewAPI.questions(f.app)
-        #expect(first.compactMap { $0["kind"]?.stringValue } == ["speaker"])
-        #expect(first.first?["link"]?["label"] == .string("Speaker: Rico (voice 70% alike)"))
+        // They do not build every meeting (Python failed the test if `_speakers`, the page's lanes, was called, and on
+        // the second call if `_lane_links` was): the questions' own cache counts what it made.
         #expect(f.app.reviewCaches.questions.misses == 1)
-        #expect(PythonJSON.dumps(.array(try ReviewAPI.questions(f.app))) == PythonJSON.dumps(.array(first)))
+        #expect(PythonJSON.dumps(.array(try ReviewAPI.questions(f.app))) == PythonJSON.dumps(.array(found)))
         #expect(f.app.reviewCaches.questions.misses == 1 && f.app.reviewCaches.questions.hits == 1)
     }
 }

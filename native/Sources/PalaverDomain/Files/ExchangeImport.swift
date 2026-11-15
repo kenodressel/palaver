@@ -410,7 +410,7 @@ extension Exchange {
             }
         }
         guard let record = ExchangeHints.loadRecord(paths) else {
-            throw ExchangeExportError(.type, "'NoneType' object has no attribute 'get'")
+            throw ExchangeExportError(.type, "Imported meeting record could not be loaded")
         }
         var voices: [JSONValue] = []
         for label in try items(record["voices_pending"] ?? .array([]), "voices_pending") {

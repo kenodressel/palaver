@@ -95,6 +95,13 @@ extension PeopleRoot {
         #expect(i["why"]?.stringValue?.contains("Only Anna Huber was invited") == true)
         #expect(r.names(m)["SPEAKER_00"] == "Anna Huber")
         #expect(try r.refresh() == 0)  // nothing new
+
+        // The window shows inferred names (its lane, `get_meeting`, is api.py's), and confirming makes them facts.
+        #expect(try Speakers.namesInEffect(m)["SPEAKER_00"] == "Anna Huber")
+        try r.nameSpeaker(m, "SPEAKER_00", "Anna Huber")  // ✓
+        #expect(try Speakers.loadSpeakerNames(m)["SPEAKER_00"] == "Anna Huber")
+        #expect(Inference.load(m).isEmpty)  // a fact now, no longer inferred
+        #expect(try r.bank.names() == PyDict([("Anna Huber", 1)]))  // now in the voice bank
     }
 
     @Test func test_a_room_of_several_people_is_never_inferred_to_be_someone() throws {
@@ -175,20 +182,6 @@ extension PeopleRoot {
         // ... and then the rest by elimination
         #expect(entry(a, "SPEAKER_01")?["name"]?.stringValue == "Ben Weiss")
         #expect(entry(b, "SPEAKER_01")?["name"]?.stringValue == "Dora Klein")
-    }
-
-    /// The domain half: the window's lane (`get_meeting`) is api.py's, ported with it.
-    @Test func test_the_window_shows_inferred_names_and_confirming_makes_them_facts() throws {
-        let r = PeopleRoot(); defer { r.remove() }
-        let m = r.inferMeeting("2026-10-20T10-00-00", [("SPEAKER_00", Self.ANNA, 600)], ["Anna Huber"])
-        _ = try r.refresh()
-        #expect(try Speakers.namesInEffect(m)["SPEAKER_00"] == "Anna Huber")
-        #expect(entry(m, "SPEAKER_00")?["rule"]?.stringValue == "calendar")
-
-        try r.nameSpeaker(m, "SPEAKER_00", "Anna Huber")  // ✓
-        #expect(try Speakers.loadSpeakerNames(m)["SPEAKER_00"] == "Anna Huber")
-        #expect(Inference.load(m).isEmpty)  // a fact now, no longer inferred
-        #expect(try r.bank.names() == PyDict([("Anna Huber", 1)]))  // now in the voice bank
     }
 
     // test_attribution.py

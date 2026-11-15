@@ -37,8 +37,14 @@ public struct ClaudeCLIModel: LanguageModel {
     }
 
     public func generate(prompt: String, schema: JSONValue, parse: @escaping AnswerParser) async throws -> JSONValue {
-        try await Asking.parsed(parse: parse, fail: { LMError("Claude Code CLI did not return a valid answer: \($0)") }) {
-            PythonJSON.dumps(try runner.run(prompt, schema: schema), ensureAscii: false)
+        let runner = self.runner
+        return try await Asking.parsed(
+            parse: parse,
+            fail: { LMError("Claude Code CLI did not return a valid answer: \(HTTPClient.redact($0, key: nil))") }
+        ) {
+            try await Task.detached(executorPreference: BlockingWorkExecutor.shared) {
+                PythonJSON.dumps(try runner.run(prompt, schema: schema), ensureAscii: false)
+            }.value
         }
     }
 }

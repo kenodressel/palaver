@@ -30,15 +30,11 @@ import Testing
         }
     }
 
-    @Test func test_the_users_title_wins_over_the_event_and_the_notes() throws {
-        let s = try Setup(event: "Weekly sync", notesTitle: "Budget talk"); defer { s.t.remove() }
-        try Titles.save(s.paths, "Budget with Anna")
-        #expect(s.resolve() == ["Budget with Anna", "you"])
-    }
-
-    @Test func test_the_event_comes_before_the_notes() throws {
+    @Test func test_the_event_comes_before_the_notes_and_the_users_title_wins_over_both() throws {
         let s = try Setup(event: "Weekly sync", notesTitle: "Budget talk"); defer { s.t.remove() }
         #expect(s.resolve() == ["Weekly sync", "calendar"])
+        try Titles.save(s.paths, "Budget with Anna")
+        #expect(s.resolve() == ["Budget with Anna", "you"])
     }
 
     @Test func test_the_notes_title_is_spelled_as_the_glossary_says() throws {
@@ -47,11 +43,6 @@ import Testing
         try g.add(term: "Atterkring", variants: ["Atterkrink"])
         try g.save()
         #expect(s.resolve() == ["Atterkring rollout", "notes"])
-    }
-
-    @Test func test_without_any_title_there_is_none() throws {
-        let s = try Setup(); defer { s.t.remove() }
-        #expect(s.resolve() == [nil, nil])
     }
 
     @Test func test_saving_an_empty_title_gives_it_back_to_the_event() throws {
@@ -114,12 +105,13 @@ import Testing
         #expect(s.resolve() == ["Weekly sync", "calendar"])
     }
 
-    @Test func theNotesFileIsWhatTheNotesSay() throws {
+    @Test func theNotesFileIsWhatTheNotesSayAndWithoutAnyTitleThereIsNone() throws {
         let s = try Setup(notesTitle: "T"); defer { s.t.remove() }
         #expect(NotesFile.load(s.paths)?["title"]?.stringValue == "T")
         try Data("{broken".utf8).write(to: s.paths.notes)
         #expect(NotesFile.load(s.paths) == nil)
         try FileManager.default.removeItem(at: s.paths.notes)
         #expect(NotesFile.load(s.paths) == nil)
+        #expect(s.resolve() == [nil, nil])  // without any title there is none
     }
 }

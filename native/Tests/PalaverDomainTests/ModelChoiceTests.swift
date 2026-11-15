@@ -79,10 +79,7 @@ private let GEMMA = "mlx-community/gemma-4-12B-it-OptiQ-4bit"
         for gone in ["evil/model", "mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit"] {
             #expect(!ModelChoice.LOCAL_MODELS.contains { Py.same($0.0, gone) })  // what choose_local_model refuses
         }
-    }
-
-    @Test func test_qwen_chosen_before_falls_back_to_the_default() throws {
-        let place = Place(); defer { place.remove() }
+        // Qwen, chosen before, falls back to the default.
         try SettingsFile.update([("local_model", .string("mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit"))], stores: place.stores)
         #expect(ModelChoice.localModel(config: cfg(), stores: place.stores) == cfg().notesLocalModel)
         #expect(ModelChoice.localModel(config: Config(), stores: place.stores) == GEMMA)
@@ -152,6 +149,9 @@ private let GEMMA = "mlx-community/gemma-4-12B-it-OptiQ-4bit"
         #expect(ModelChoice.choiceFor(feature: "coach", config: cfg(engine: "claude"), stores: place.stores) == "local")
         #expect(ModelChoice.defaultChoice(feature: "coach", config: cfg(engine: "claude")) == "local")
         #expect(ModelChoice.defaultChoice(feature: nil, config: cfg(engine: "claude")) == "claude-cli")
+        // ... and the setup assistant's bulk choice (`api.setup_registry`'s features not chosen on their own) leaves it alone.
+        let bulk = ModelChoice.features.filter { !$0.own && $0.uses == ModelChoice.LANGUAGE_MODEL }.map(\.id)
+        #expect(Set(bulk) == ["notes", "projects"])
         try SettingsFile.update([("engines", .string("anthropic"))], stores: place.stores)
         #expect(ModelChoice.choiceFor(feature: "notes", config: cfg(engine: "claude"), stores: place.stores) == "claude-cli")
     }

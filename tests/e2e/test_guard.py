@@ -10,7 +10,7 @@ import pytest
 
 pytestmark = pytest.mark.e2e
 
-CONFTEST = "from tests.e2e.conftest import browser, page, pytest_runtest_call  # noqa: F401\n"
+CONFTEST = "from tests.e2e.conftest import _webkit, browser, page, pytest_runtest_call  # noqa: F401\n"
 
 
 # Playwright looks for its browsers under HOME, which pytester changes.

@@ -101,7 +101,10 @@ private func refused(_ text: String, _ body: () throws -> Any) -> Bool {
     @Test func test_tools_answer_from_the_same_data_as_the_window() throws {
         let f = try Fixture()
         try f.meeting()
-        try f.notes { McpSetup.set(&$0, "summary", .string("SPEAKER_00 ran it.")) }
+        try f.notes {
+            McpSetup.set(&$0, "summary", .string("SPEAKER_00 ran it."))
+            McpSetup.set(&$0, "decisions_mine", .array([.int(0)]))
+        }
         _ = try PeopleAPI.nameSpeaker(f.app, id: MEETING, label: "SPEAKER_00", name: "Rico")
         try ProjectsAPI.setMeetingProject(f.app, id: MEETING, name: "Hiring")
         let m = f.tools
@@ -119,6 +122,7 @@ private func refused(_ text: String, _ body: () throws -> Any) -> Bool {
 
         let meeting = try m.getMeeting(meetingId: MEETING)
         #expect(meeting["notes"]?["summary"] == .string("Rico ran it.") && meeting["transcript"] == nil)
+        #expect(meeting["notes"]?["decisions_mine"] == .array([.int(0)]))  // which decisions came from the user's notes
         let part = try m.getMeeting(meetingId: MEETING, fromMinute: 0, toMinute: 0.01)  // the first 0.6 s
         #expect(strings(part["transcript"]) == ["[0:00] Timo: Hi Rico welcome."])
 
@@ -231,6 +235,8 @@ private func refused(_ text: String, _ body: () throws -> Any) -> Bool {
                        try m.searchMeetings(query: "Mara"), try m.searchMeetings(query: "secret deal")] {
             noSecrets(answer)  // not even as a name or project the query was read as
         }
+        // The window still finds them.
+        #expect(Set(ids(.array(try SearchAPI.search(f.app, "salary", userName: "Timo")))) == [MEETING, PRIVATE])
     }
 
     @Test func test_search_by_meaning_leaves_out_meetings_kept_on_this_mac() throws {
@@ -256,12 +262,7 @@ private func refused(_ text: String, _ body: () throws -> Any) -> Bool {
         #expect(ids(found["meetings"]) == [MEETING])  // and dropped if it came
     }
 
-    @Test func test_the_window_still_finds_meetings_kept_on_this_mac() throws {
-        let f = try Fixture()
-        try f.withAPrivateMeeting()
-        #expect(Set(ids(.array(try SearchAPI.search(f.app, "salary", userName: "Timo")))) == [MEETING, PRIVATE])
-    }
-
+    /// Also through the served tools; and the user's own notes go along unless it is kept on this Mac.
     @Test func test_get_meeting_says_it_is_kept_on_this_mac() throws {
         let f = try Fixture()
         try f.withAPrivateMeeting()
@@ -269,6 +270,19 @@ private func refused(_ text: String, _ body: () throws -> Any) -> Bool {
         #expect(dumps(try f.tools.getMeeting(meetingId: PRIVATE)) == expected)
         #expect(dumps(try f.tools.getMeeting(meetingId: PRIVATE, includeTranscript: true)) == expected)
         #expect(dumps(try f.tools.getMeeting(meetingId: PRIVATE, fromMinute: 0, toMinute: 5)) == expected)
+        // The served tools keep it out too.
+        let text = dumps(f.call("get_meeting", [("meeting_id", .string(PRIVATE)), ("include_transcript", .bool(true))]))
+        #expect(text.contains("kept on this Mac") && !text.contains("salary") && !text.contains("Confidential"))
+        // The user's own notes, unless kept on this Mac.
+        _ = try MyNotes.save(f.paths().folder, paragraphs: .array([
+            .object([("text", .string("Ask about the salary band")), ("at", .null)]),
+            .object([("text", .string("They said **yes**")), ("at", .int(14))])]))
+        _ = try MyNotes.save(f.paths(PRIVATE).folder, paragraphs: .array([.object([("text", .string("Confidential merger price")), ("at", .int(3))])]))
+        #expect(try f.tools.getMeeting(meetingId: MEETING)["my_notes"] == .string("Ask about the salary band\n[00:14] They said **yes**"))
+        let hidden = try f.tools.getMeeting(meetingId: PRIVATE)
+        #expect(hidden["kept_on_this_mac"] == .bool(true) && hidden["my_notes"] == nil && !dumps(hidden).contains("merger price"))
+        try f.meeting("2026-10-25T09-00-00")
+        #expect(try f.tools.getMeeting(meetingId: "2026-10-25T09-00-00")["my_notes"] == nil)
     }
 
     @Test func test_projects_people_and_next_steps_leave_them_out() throws {
@@ -291,34 +305,6 @@ private func refused(_ text: String, _ body: () throws -> Any) -> Bool {
         for answer in [projects, hiring, try m.openNextSteps(), try m.listPeople()] { noSecrets(answer) }
     }
 
-    @Test func test_the_served_tools_keep_them_out_too() throws {
-        let f = try Fixture()
-        try f.withAPrivateMeeting()
-        let text = dumps(f.call("get_meeting", [("meeting_id", .string(PRIVATE)), ("include_transcript", .bool(true))]))
-        #expect(text.contains("kept on this Mac") && !text.contains("salary") && !text.contains("Confidential"))
-    }
-
-    @Test func test_get_meeting_has_the_users_own_notes_unless_kept_on_this_mac() throws {
-        let f = try Fixture()
-        try f.withAPrivateMeeting()
-        _ = try MyNotes.save(f.paths().folder, paragraphs: .array([
-            .object([("text", .string("Ask about the salary band")), ("at", .null)]),
-            .object([("text", .string("They said **yes**")), ("at", .int(14))])]))
-        _ = try MyNotes.save(f.paths(PRIVATE).folder, paragraphs: .array([.object([("text", .string("Confidential merger price")), ("at", .int(3))])]))
-        #expect(try f.tools.getMeeting(meetingId: MEETING)["my_notes"] == .string("Ask about the salary band\n[00:14] They said **yes**"))
-        let hidden = try f.tools.getMeeting(meetingId: PRIVATE)
-        #expect(hidden["kept_on_this_mac"] == .bool(true) && hidden["my_notes"] == nil && !dumps(hidden).contains("merger price"))
-        try f.meeting("2026-10-25T09-00-00")
-        #expect(try f.tools.getMeeting(meetingId: "2026-10-25T09-00-00")["my_notes"] == nil)
-    }
-
-    @Test func test_get_meeting_keeps_which_decisions_came_from_the_users_notes() throws {
-        let f = try Fixture()
-        try f.meeting()
-        try f.notes { McpSetup.set(&$0, "decisions_mine", .array([.int(0)])) }
-        #expect(try f.tools.getMeeting(meetingId: MEETING)["notes"]?["decisions_mine"] == .array([.int(0)]))
-    }
-
     @Test func test_a_meeting_is_called_what_the_user_renamed_it_to() throws {
         let f = try Fixture()
         try f.meeting()
@@ -326,11 +312,8 @@ private func refused(_ text: String, _ body: () throws -> Any) -> Bool {
         #expect(try f.tools.listMeetings().arrayValue?.first?["title"] == .string("Offer for Rico"))
         #expect(try f.tools.getMeeting(meetingId: MEETING)["title"] == .string("Offer for Rico"))
         #expect(try f.tools.searchMeetings(query: "salary")["meetings"]?.arrayValue?.first?["title"] == .string("Offer for Rico"))
-    }
-
-    @Test func test_a_meeting_without_any_title_is_called_by_its_time() throws {
-        let f = try Fixture()
-        try f.meeting()
+        // Without any title (not renamed, no notes): called by its time.
+        _ = try ChangesAPI.setTitle(f.app, id: MEETING, title: .string("   "))
         try FileManager.default.removeItem(at: f.paths().notes)
         let expected = JSONValue.string(Titles.fallback("2026-10-27T16:03:07+01:00"))
         #expect(try f.tools.listMeetings().arrayValue?.first?["title"] == expected)

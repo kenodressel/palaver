@@ -85,28 +85,18 @@ import Testing
 
     // MARK: - test_undo.py
 
-    @Test func test_take_and_restore_metadata_only() throws {
-        let temp = TempFolder("undo"); defer { temp.remove() }
-        let paths = try recording(temp.url)
-        let token = try Undo.take(temp.url, "rename", meetings: [Self.ID])
-        #expect(wavs(snap(temp.url, token)).isEmpty)
-        write(paths.speakers, #"{"SPEAKER_00": "Bob"}"#)
-        try Undo.sealed(temp.url, token)
-        #expect(try Undo.restore(temp.url, token) == [Self.ID])
-        #expect(equal(json(paths.speakers), #"{"SPEAKER_00": "Anna"}"#))
-        #expect(exists(paths.systemWav))  // the audio was never copied, and is still there
-        #expect(!exists(snap(temp.url, token)))
-    }
-
-    @Test func test_metadata_only_restore_moves_the_audio_instead_of_copying_it() throws {
+    @Test func test_take_and_restore_metadata_only_moves_the_audio_instead_of_copying_it() throws {
         let temp = TempFolder("undo"); defer { temp.remove() }
         let paths = try recording(temp.url)
         try Wav16.write((0..<Self.SR).map { Int16(truncatingIfNeeded: $0) }, rate: Self.SR, to: paths.systemWav)  // bytes to recognise
         let audio = try [paths.micRawWav, paths.micWav, paths.systemWav].map { try Data(contentsOf: $0) }
         let token = try Undo.take(temp.url, "event", meetings: [Self.ID])
+        #expect(wavs(snap(temp.url, token)).isEmpty)  // the audio is never copied
         write(paths.speakers, #"{"SPEAKER_00": "Bob"}"#)
         try Undo.sealed(temp.url, token)
-        try Undo.restore(temp.url, token)
+        write(paths.folder.appendingPathComponent(".my-notes.lock"), "")  // the my-notes lock is no change to a meeting
+        #expect(try Undo.restore(temp.url, token) == [Self.ID])
+        #expect(!exists(snap(temp.url, token)))
         #expect(equal(json(paths.speakers), #"{"SPEAKER_00": "Anna"}"#))
         #expect(try [paths.micRawWav, paths.micWav, paths.systemWav].map { try Data(contentsOf: $0) } == audio)
         let replaced = temp.url.appendingPathComponent(".trash/\(Self.ID).undone-\(token.prefix(8))")
@@ -136,23 +126,17 @@ import Testing
         #expect(isDir(temp.url.appendingPathComponent(".trash/2026-10-20T15-00-00")))
     }
 
-    @Test func test_restore_puts_back_store_files() throws {
+    @Test func test_restore_puts_back_store_files_and_removes_one_that_did_not_exist() throws {
         let temp = TempFolder("undo"); defer { temp.remove() }
         let store = temp.url.appendingPathComponent("projects.json")
+        let added = temp.url.appendingPathComponent("glossary.json")
         write(store, #"{"a": 1}"#)
-        let token = try Undo.take(temp.url, "projects", stores: [store])
+        let token = try Undo.take(temp.url, "projects", stores: [store, added])
         write(store, #"{"a": 2}"#)
+        write(added, "{}")
         try Undo.restore(temp.url, token)
         #expect(text(store) == #"{"a": 1}"#)
-    }
-
-    @Test func test_restore_removes_a_store_file_that_did_not_exist() throws {
-        let temp = TempFolder("undo"); defer { temp.remove() }
-        let store = temp.url.appendingPathComponent("projects.json")
-        let token = try Undo.take(temp.url, "projects", stores: [store])
-        write(store, "{}")
-        try Undo.restore(temp.url, token)
-        #expect(!exists(store))
+        #expect(!exists(added))
     }
 
     @Test func test_speaker_files_of_all_meetings_only() throws {
@@ -184,16 +168,6 @@ import Testing
         #expect(changed { try Undo.restore(temp.url, token) })
         #expect(text(paths.speakers) == "{}")
         #expect(exists(snap(temp.url, token)))
-    }
-
-    @Test func test_the_my_notes_lock_is_no_change_to_a_meeting() throws {
-        let temp = TempFolder("undo"); defer { temp.remove() }
-        let paths = try recording(temp.url)
-        let token = try Undo.take(temp.url, "rename", meetings: [Self.ID])
-        write(paths.speakers, #"{"SPEAKER_00": "Bob"}"#)
-        try Undo.sealed(temp.url, token)
-        write(paths.folder.appendingPathComponent(".my-notes.lock"), "")
-        #expect(try Undo.restore(temp.url, token) == [Self.ID])
     }
 
     /// Python makes the temporary file vanish while the folder is copied (a monkeypatched `copytree`); Swift never

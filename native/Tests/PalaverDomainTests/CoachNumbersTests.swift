@@ -75,6 +75,12 @@ import Testing
         #expect(dumps(r["interruptions"]?["by_me_at"]?.arrayValue?.first) == #"{"start": 228.0, "who": "Valerie"}"#)
         #expect(dumps(r["quiet_invitees"]) == #"[{"name": "Carla", "seconds": 0}]"#)
         #expect(r["language"] == .string("de"))
+
+        // The highlights compare with what is usual.
+        let said = try Coach.highlights(try Coach.analyze(p, userName: "Timo", stores: place.stores), Self.usual)
+        #expect(said[0].hasPrefix("You talked 81 % of the time; in 1:1s you usually talk 50 %"))
+        #expect(said.contains { $0.hasPrefix("Longest stretch without anyone else: 3:20") })
+        #expect(said.contains { $0.contains("“halt”") })
     }
 
     @Test func test_a_room_of_several_people_leaves_out_talk_share_monologues_and_quiet_invitees() throws {
@@ -88,16 +94,6 @@ import Testing
         #expect(r["questions"]?["count"] == .int(1) && r["fillers"]?["hesitations"] == .int(1))  // my own track stays
         let said = try Coach.highlights(r, Self.usual)
         #expect(!said.contains { $0.hasPrefix("You talked") || $0.hasPrefix("Longest stretch") || $0.hasPrefix("Barely heard") })
-    }
-
-    @Test func test_highlights_compare_with_what_is_usual() throws {
-        let place = Place(); defer { place.remove() }
-        let p = place.meeting("2026-10-27T10-00-00", Self.LINES)
-        let r = try Coach.analyze(p, userName: "Timo", stores: place.stores)
-        let said = try Coach.highlights(r, Self.usual)
-        #expect(said[0].hasPrefix("You talked 81 % of the time; in 1:1s you usually talk 50 %"))
-        #expect(said.contains { $0.hasPrefix("Longest stretch without anyone else: 3:20") })
-        #expect(said.contains { $0.contains("“halt”") })
     }
 
     /// A hand-edited coach result or baseline with numbers past Int: the window's request fails, nothing traps.
@@ -192,12 +188,10 @@ import Testing
         #expect(weeks[1]["share"] == .double(0.4) && weeks[1]["wpm"] == .int(140))  // a meeting without pace leaves it out
         #expect(dumps(t["kinds"]) == #"[{"kind": "1:1", "meetings": 1, "share": 0.6, "wpm": 150, "fillers": 2.0}, "#
             + #"{"kind": "group", "meetings": 3, "share": 0.333, "wpm": 135, "fillers": 1.25}]"#)
-    }
-
-    @Test func test_only_the_last_weeks() throws {
-        let rows = (1...10).map { Self.row(String(format: "2026-%02d-01T10-00-00", $0), "group", 0.3, 140, 1.0) }
-        #expect(try Coach.trends(rows, weeks: 4)["weeks"]?.arrayValue?.count == 4)
-        #expect(try Coach.trends(rows, weeks: 4)["weeks"]?.arrayValue?.last?["week"] == .string("2026-09-28"))
+        // Only the last weeks.
+        let months = (1...10).map { Self.row(String(format: "2026-%02d-01T10-00-00", $0), "group", 0.3, 140, 1.0) }
+        #expect(try Coach.trends(months, weeks: 4)["weeks"]?.arrayValue?.count == 4)
+        #expect(try Coach.trends(months, weeks: 4)["weeks"]?.arrayValue?.last?["week"] == .string("2026-09-28"))
     }
 
     @Test func test_the_baseline_follows_the_recent_meetings() throws {

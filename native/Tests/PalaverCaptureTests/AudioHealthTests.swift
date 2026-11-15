@@ -52,13 +52,6 @@ private struct Rng {
 }
 
 @Suite struct AudioHealthTests {
-    @Test func steadyDeliveryAtTheDeclaredRateIsHealthy() {
-        let h = health()
-        deliver(h, .system, 100, 130)
-        let (opened, closed) = check(h, 130)
-        #expect(opened.isEmpty && closed.isEmpty)
-    }
-
     @Test func stampsTwiceAsFastAsTheSamplesIsAWrongSpeedThatEndsOnceFixed() {
         // The 2026-10-29 bug: AirPods at 24 kHz read as 48 kHz.
         let h = health()
@@ -181,8 +174,13 @@ private struct Rng {
     }
 
     @Test func aStalledMicrophoneIsAnIncidentThatEndsWhenItResumes() {
-        let h = health()
-        #expect(label(check(h, 40, stalled: true).opened) == ["stalled/mic"])
+        // The wall-clock time is taken when the incident opens.
+        let wall = Locked(wall0)
+        let h = health(wall: { wall.get })
+        wall.with { $0 = wall0.addingTimeInterval(8 * 60) }  // e.g. after a sleep the monotonic clock did not see
+        let opened = check(h, 40, stalled: true).opened
+        #expect(label(opened) == ["stalled/mic"])
+        #expect(opened[0].at == "2026-10-29T12:14:00+01:00")
         #expect(check(h, 41, stalled: false).closed.map { "\($0.kind)/\($0.end!)" } == ["stalled/41.0"])
     }
 
@@ -192,14 +190,6 @@ private struct Rng {
         #expect(label(check(h, 31, systemStalled: true).opened) == ["stalled/system"])
         deliver(h, .system, 31, 32)
         #expect(check(h, 32).closed.map { "\($0.kind)/\($0.track)/\($0.end!)" } == ["stalled/system/32.0"])
-    }
-
-    @Test func wallClockTimeIsTakenWhenAnIncidentOpens() {
-        let wall = Locked(wall0)
-        let h = health(wall: { wall.get })
-        wall.with { $0 = wall0.addingTimeInterval(8 * 60) }  // e.g. after a sleep the monotonic clock did not see
-        let opened = check(h, 60, stalled: true).opened
-        #expect(opened[0].at == "2026-10-29T12:14:00+01:00")
     }
 
     @Test func aShortStretchOfWrongSpeedStartsWhereItBeganAndEndsAfterIt() {

@@ -130,12 +130,14 @@ private final class Box<T>: @unchecked Sendable {
         #expect(job(d)?["error"]?.stringValue?.contains("incomplete") == true)
     }
 
-    @Test func test_download_progress_reads_the_configured_repo() {
+    @Test func test_download_progress_reads_the_configured_repo_in_the_units_of_the_model_size() {
+        // disk_gb is in GiB (as free disk and Settings → Storage): progress too, so a download isn't shown complete
+        // before its last 7 %.
         let seen = Box<[String]>([])
-        let d = SetupDownloads(fetch: { _, _ in }, progress: { repo in seen.update { $0.append(repo) }; return 0 },
+        let d = SetupDownloads(fetch: { _, _ in }, progress: { repo in seen.update { $0.append(repo) }; return 4 * 1_073_741_824 },
                                done: { _ in true }, repoOf: { $0.id == "gemma" ? "my/gemma" : $0.repo })
         d.setJob("gemma", state: "downloading")
-        _ = d.status()
+        #expect(job(d)?["done_gb"] == .double(4.0))
         #expect(seen.get == ["my/gemma"])
     }
 
@@ -156,14 +158,6 @@ private final class Box<T>: @unchecked Sendable {
         #expect(until { !FileManager.default.fileExists(atPath: marker.path) })
         try Data("999999".utf8).write(to: marker)  // a server that died while downloading
         #expect(!ModelCatalog.downloadsRunning(marker))
-    }
-
-    @Test func test_download_progress_counts_in_the_units_of_the_model_size() {
-        // disk_gb is in GiB (as free disk and Settings → Storage): progress too, so a download isn't shown complete
-        // before its last 7 %.
-        let d = SetupDownloads(fetch: { _, _ in }, progress: { _ in 4 * 1_073_741_824 }, done: { _ in true })
-        d.setJob("gemma", state: "downloading")
-        #expect(job(d)?["done_gb"] == .double(4.0))
     }
 
     @Test func downloadsAnswerAsPythonsAndRefuseAnUnknownModel() throws {
@@ -255,6 +249,12 @@ private final class Box<T>: @unchecked Sendable {
         #expect(ModelCatalog.modelHere(model("speech"), repo: "fluidaudio", speechHere: none.here, stores: p.stores))
         // an engine that answers: its ModelStore has the last word (the fake's hello has no models: not ready)
         #expect(!check(FAKE_ENGINE).here())
+        // An engine that crashes on hello means not ready; one not found leaves it to the files.
+        let crash = env(["FAKE_ENGINE_MODE": "crash"])
+        #expect(!SpeechCheck(stores: p.stores, enginePath: { try EnginePath.find(env: ["PALAVER_ENGINE": FAKE_ENGINE.path]) },
+                             env: crash).here())
+        let missing = p.dir.appendingPathComponent("no-engine").path
+        #expect(SpeechCheck(stores: p.stores, enginePath: { try EnginePath.find(env: ["PALAVER_ENGINE": missing]) }, env: crash).here())
     }
 
     @Test func test_speech_here_is_cached_for_a_while() throws {
@@ -275,17 +275,6 @@ private final class Box<T>: @unchecked Sendable {
         check.clear()
         _ = check.here()
         #expect(hellos.get == 3)
-    }
-
-    @Test func test_an_engine_that_crashes_on_hello_means_not_ready() throws {
-        let p = Place()
-        defer { p.remove() }
-        try p.speechFiles()
-        let crash = env(["FAKE_ENGINE_MODE": "crash"])
-        #expect(!SpeechCheck(stores: p.stores, enginePath: { try EnginePath.find(env: ["PALAVER_ENGINE": FAKE_ENGINE.path]) },
-                             env: crash).here())
-        let missing = p.dir.appendingPathComponent("no-engine").path  // not found: the files decide
-        #expect(SpeechCheck(stores: p.stores, enginePath: { try EnginePath.find(env: ["PALAVER_ENGINE": missing]) }, env: crash).here())
     }
 
     @Test func anEngineThatDiesSaysSoWithItsLastWords() throws {
@@ -392,18 +381,14 @@ private final class Box<T>: @unchecked Sendable {
         let probe = FakeProbe()
         #expect(probe.fetchMissingSpeech())
         #expect(until { probe.fetched.contains("speech") })
-    }
-
-    @Test func test_speech_models_already_here_are_not_fetched_again() {
-        let probe = FakeProbe(downloaded: ["speech"])
-        #expect(!probe.fetchMissingSpeech())
-        #expect(probe.fetched.isEmpty)
-    }
-
-    @Test func test_a_mac_without_apple_silicon_downloads_nothing() {
-        let probe = FakeProbe(hardware: Hardware(chip: "Intel Core i7", memoryGB: 16, freeDiskGB: 200))
-        #expect(!probe.fetchMissingSpeech())
-        #expect(probe.fetched.isEmpty)
+        // Already here: not fetched again.
+        let here = FakeProbe(downloaded: ["speech"])
+        #expect(!here.fetchMissingSpeech())
+        #expect(here.fetched.isEmpty)
+        // A Mac without Apple Silicon downloads nothing.
+        let intel = FakeProbe(hardware: Hardware(chip: "Intel Core i7", memoryGB: 16, freeDiskGB: 200))
+        #expect(!intel.fetchMissingSpeech())
+        #expect(intel.fetched.isEmpty)
     }
 
     @Test func test_the_installed_apps_server_fetches_them_at_start_a_checkouts_never() throws {
@@ -627,12 +612,13 @@ private final class Box<T>: @unchecked Sendable {
         #expect(probe.autostart() && FileManager.default.fileExists(atPath: p.stores.launchAgent.path))
     }
 
-    @Test func theTestProbeHoldsDownloadsUntilItsHoldFileGoes() throws {
+    @Test func theTestProbeHoldsDownloadsUntilItsHoldFileGoesAndRecordsEveryTry() throws {
         let p = Place()
         defer { p.remove() }
         let file = p.dir.appendingPathComponent("probe.json")
         try write(#"{"hold_downloads": true, "fail_once": ["gemma"]}"#, file)
         let probe = TestProbe(file: file, stores: p.stores)
+        #expect(!FileManager.default.fileExists(atPath: probe.fetchedFile.path))
         try write("", probe.holdFile)
         try probe.downloads.start(["speech"])
         usleep(200_000)
@@ -648,19 +634,7 @@ private final class Box<T>: @unchecked Sendable {
         try probe.downloads.start(["gemma"])
         #expect(until { job(probe.downloads, 1)?["state"] == .string("done") })
         #expect(probe.downloaded() == ["speech", "gemma"])
-    }
-
-    @Test func theTestProbeRecordsEveryDownloadTried() throws {
-        let p = Place()
-        defer { p.remove() }
-        let file = p.dir.appendingPathComponent("probe.json")
-        try write(#"{"fail_once": ["gemma"]}"#, file)
-        let probe = TestProbe(file: file, stores: p.stores)
-        #expect(!FileManager.default.fileExists(atPath: probe.fetchedFile.path))
-        try probe.downloads.start(["gemma"])
-        #expect(until { job(probe.downloads)?["state"] == .string("failed") })
-        try probe.downloads.start(["gemma"])
-        #expect(until { job(probe.downloads)?["state"] == .string("done") })
-        #expect(try String(contentsOf: probe.fetchedFile, encoding: .utf8) == "gemma\ngemma\n")  // the failed try too
+        // It records every download tried, the failed one too.
+        #expect(try String(contentsOf: probe.fetchedFile, encoding: .utf8) == "speech\ngemma\ngemma\n")
     }
 }

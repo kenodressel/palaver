@@ -132,18 +132,24 @@ func sha256Hex(_ data: Data) -> String { SHA256.hash(data: data).map { String(fo
 
     // MARK: - The tests of test_exchange.py that are about the zip
 
-    @Test func test_not_a_zip_is_rejected() throws {
+    @Test func test_not_a_zip_or_a_zip_that_is_not_an_exported_meeting_is_rejected() throws {
         let temp = TempFolder("zip"); defer { temp.remove() }
         let bad = temp.url.appendingPathComponent("x.zip")
         try Data("hello".utf8).write(to: bad)
         try Self.rejected(bad, "not a zip")
+        let other = temp.url.appendingPathComponent("photos.zip")
+        var b = ZipBuilder()
+        b.add("photos/beach.jpg", Data([0xFF, 0xD8]))
+        try b.write(other)
+        try Self.rejected(other, "not a meeting exported from Palaver")
     }
 
-    @Test func test_a_file_not_matching_its_checksum_is_rejected() throws {
+    @Test func test_a_file_not_matching_its_checksum_is_rejected_also_under_a_folder() throws {
         let temp = TempFolder("zip"); defer { temp.remove() }
         let transcript = Data(#"[{"start": 0, "end": 1, "text": "forged", "label": "SPEAKER_00"}]"#.utf8)
-        try Self.rejected(try Self.repack(temp.url.appendingPathComponent("x.zip"), change: ["meeting/transcript.json": transcript]),
-                          "does not match its checksum")
+        let forged = try Self.repack(temp.url.appendingPathComponent("x.zip"), change: ["meeting/transcript.json": transcript])
+        try Self.rejected(forged, "does not match its checksum")
+        try Self.rejected(try Self.inFolder(forged, temp.url.appendingPathComponent("g.zip"), "m"), "does not match its checksum")
     }
 
     @Test func test_a_path_out_of_the_folder_is_rejected() throws {
@@ -170,15 +176,6 @@ func sha256Hex(_ data: Data) -> String { SHA256.hash(data: data).map { String(fo
                           "not part of an exported meeting")
     }
 
-    @Test func test_a_zip_that_is_not_an_exported_meeting_says_so() throws {
-        let temp = TempFolder("zip"); defer { temp.remove() }
-        let other = temp.url.appendingPathComponent("photos.zip")
-        var b = ZipBuilder()
-        b.add("photos/beach.jpg", Data([0xFF, 0xD8]))
-        try b.write(other)
-        try Self.rejected(other, "not a meeting exported from Palaver")
-    }
-
     @Test func test_only_one_folder_around_the_meeting_is_taken() throws {
         let temp = TempFolder("zip"); defer { temp.remove() }
         let t = temp.url
@@ -199,13 +196,6 @@ func sha256Hex(_ data: Data) -> String { SHA256.hash(data: data).map { String(fo
                           "unsafe path")
         try Self.rejected(try Self.inFolder(Self.python, t.appendingPathComponent("d.zip"), "m", extra: [("m/.DS_Store/x.json", Data("{}".utf8))]),
                           "not part of an exported meeting")
-    }
-
-    @Test func test_a_changed_file_under_the_folder_fails_its_checksum() throws {
-        let temp = TempFolder("zip"); defer { temp.remove() }
-        let forged = try Self.repack(temp.url.appendingPathComponent("f.zip"), change: [
-            "meeting/transcript.json": Data(#"[{"start": 0, "end": 1, "text": "x", "label": "SPEAKER_00"}]"#.utf8)])
-        try Self.rejected(try Self.inFolder(forged, temp.url.appendingPathComponent("g.zip"), "m"), "does not match its checksum")
     }
 
     @Test func test_finder_entries_do_not_count_as_files_but_are_capped() throws {
@@ -241,28 +231,19 @@ func sha256Hex(_ data: Data) -> String { SHA256.hash(data: data).map { String(fo
         #expect(throws: ZipError.self) { try ZipReader(url: big, maxDirectoryBytes: ExchangeZip.MAX_DIRECTORY_BYTES) }
     }
 
-    @Test func test_a_file_larger_than_any_meeting_is_rejected_before_it_is_read() throws {
+    /// A file larger than any meeting (rejected before it is read), too many entries, a file too large, too much in
+    /// total.
+    @Test(arguments: [("maxFileBytes", 1000, "The file is too large"), ("maxEntries", 5, "at most 5"),
+                      ("maxJSONBytes", 100, "too large"), ("maxTotalBytes", 500, "too large")] as [(String, Int, String)])
+    func test_a_zip_over_a_cap_is_rejected(cap: String, value: Int, message: String) throws {
         var caps = ExchangeZip.Caps.standard
-        caps.maxFileBytes = 1000
-        try Self.rejected(Self.python, "The file is too large", caps)
-    }
-
-    @Test func test_too_many_entries_are_rejected() throws {
-        var caps = ExchangeZip.Caps.standard
-        caps.maxEntries = 5
-        try Self.rejected(Self.python, "at most 5", caps)
-    }
-
-    @Test func test_a_file_too_large_is_rejected() throws {
-        var caps = ExchangeZip.Caps.standard
-        caps.maxJSONBytes = 100
-        try Self.rejected(Self.python, "too large", caps)
-    }
-
-    @Test func test_too_much_in_total_is_rejected() throws {
-        var caps = ExchangeZip.Caps.standard
-        caps.maxTotalBytes = 500
-        try Self.rejected(Self.python, "too large", caps)
+        switch cap {
+        case "maxFileBytes": caps.maxFileBytes = value
+        case "maxEntries": caps.maxEntries = value
+        case "maxJSONBytes": caps.maxJSONBytes = value
+        default: caps.maxTotalBytes = value
+        }
+        try Self.rejected(Self.python, message, caps)
     }
 
     @Test func test_an_entry_larger_than_its_header_says_is_rejected() throws {

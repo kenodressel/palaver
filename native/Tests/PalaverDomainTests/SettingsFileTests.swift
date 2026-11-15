@@ -51,17 +51,14 @@ import Testing
         #expect(try String(contentsOf: s.settings, encoding: .utf8) == "{\n  \"live_processing\": false\n}\n")
     }
 
-    @Test func test_user_name_from_settings() throws {
+    @Test func test_user_name_from_settings_is_read_again_by_long_running_parts() throws {
         let s = stores()
         #expect(SettingsFile.userName(stores: s) == nil)
         try SettingsFile.update([("user_name", .string("  Anna Huber "))], stores: s)
         #expect(SettingsFile.userName(stores: s) == "Anna Huber")
         try SettingsFile.update([("user_name", .string(""))], stores: s)
         #expect(SettingsFile.userName(stores: s) == nil)
-    }
-
-    @Test func test_the_name_is_read_again_by_long_running_parts() throws {
-        let s = stores()
+        // The name is read again by long-running parts.
         #expect(SettingsFile.currentUserName(default: "Timo", stores: s) == "Timo")
         try SettingsFile.update([("user_name", .string("Timo Strauß"))], stores: s)
         #expect(SettingsFile.currentUserName(default: "Timo", stores: s) == "Timo Strauß")

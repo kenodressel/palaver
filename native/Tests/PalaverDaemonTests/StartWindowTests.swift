@@ -54,12 +54,10 @@ import PalaverCore
         #expect(FileManager.default.fileExists(atPath: m.path))
         #expect(!StartWindow.claimAtStart(settings: s, outputDir: out, marker: m))  // the next start: quiet
         #expect(!StartWindow.opensAtStart(settings: s, outputDir: out, marker: m))
-    }
-
-    @Test func aQuietStartLeavesNoMarker() throws {
-        let m = marker()
+        // A quiet start leaves no marker.
+        let quiet = marker()
         #expect(!StartWindow.claimAtStart(settings: try settings(#"{"setup": {"done": "x"}}"#),
-                                          outputDir: tempDir(), marker: m))
-        #expect(!FileManager.default.fileExists(atPath: m.path))
+                                          outputDir: tempDir(), marker: quiet))
+        #expect(!FileManager.default.fileExists(atPath: quiet.path))
     }
 }

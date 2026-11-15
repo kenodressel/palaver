@@ -102,9 +102,8 @@ private func fakeTaskpolicy() throws -> String {
         #expect(MemoryMeasure.sizeText(gb * GB) == text)
     }
 
-    @Test func sizeTextOfNothing() { #expect(MemoryMeasure.sizeText(nil) == "\u{2014}") }
-
     @Test func costTextIsTheStatusLinePart() {
+        #expect(MemoryMeasure.sizeText(nil) == "\u{2014}")
         #expect(MemoryMeasure.costText(total: Int(5.4 * GB)) == "Palaver 5.4 GB")
         #expect(MemoryMeasure.costText(total: nil) == nil)
     }
@@ -150,12 +149,9 @@ private func fakeTaskpolicy() throws -> String {
 }
 
 @Suite struct MemoryBudgetTests {
-    @Test func theSpeechBudgetsAreTheEngines() {
-        let b = MemoryBudgets()
-        #expect((b.live, b.stream, b.process) == (2.0, 1.5, 4.0))
-    }
-
     @Test func budgetsFromConfigWithDefaultsAndOverrides() {
+        let speech = MemoryBudgets()
+        #expect((speech.live, speech.stream, speech.process) == (2.0, 1.5, 4.0))  // the speech budgets are the engines'
         let b = MemoryBudgets(config: ["live_gb": 4, "process_gb": 9], notes: 20)
         #expect((b.live, b.stream, b.process) == (4.0, 1.5, 9.0))
         #expect(b.notes == 20.0)  // an unknown notes model gets the most
@@ -192,6 +188,7 @@ private func fakeTaskpolicy() throws -> String {
 @Suite struct WatchdogTests {
     @Test func aWorkerUnderBudgetIsLeftAloneAndShown() {
         let w = Watch()
+        #expect(w.dog.costText() == nil && w.dog.status()!["total"] == .null)  // nothing measured before the first check
         w.used[11] = 3.6
         #expect(w.check(worker("live", "/r/m1", 11)) == [])
         let status = w.dog.status()!
@@ -212,12 +209,6 @@ private func fakeTaskpolicy() throws -> String {
         #expect(dog.status()!["budgets"]?["notes"] == .double(shown))
     }
 
-    @Test func nothingIsMeasuredBeforeTheFirstCheck() {
-        let w = Watch()
-        #expect(w.dog.costText() == nil)
-        #expect(w.dog.status()!["total"] == .null)
-    }
-
     @Test func liveOverBudgetForAWhileIsRestartedOnceNotifiedOnce() {
         let w = Watch()
         w.used[11] = 5.5
@@ -231,6 +222,9 @@ private func fakeTaskpolicy() throws -> String {
         #expect(w.check(live, after: 5) == [])
         #expect(w.check(live, after: MemoryRules.overSeconds) == [])  // 10 s, but only two samples
         #expect(w.check(live, after: 1) == ["restart|live|m1"])
+        // The first action carries the notification's text.
+        #expect(w.last[0].title == "Live transcription restarted")
+        #expect(w.last[0].message == "It used 5.5 GB, over its 5 GB budget. The recording goes on.")
         #expect(w.check(live, after: 5) == [])  // asked once; it is on its way out
         #expect(w.logs.joined().contains("over its 5 GB budget"))
         // The new worker goes over too: restarted again, without a second notification.
@@ -245,18 +239,6 @@ private func fakeTaskpolicy() throws -> String {
         let w = Watch()
         w.used[11] = 5.5
         for _ in 0..<10 { #expect(w.check(worker("live", "/r/m1", 11), after: 0.5) == []) }
-    }
-
-    @Test func firstActionCarriesTheNotificationText() {
-        let w = Watch()
-        w.used[11] = 5.5
-        let live = worker("live", "/r/m1", 11)
-        w.check(live)
-        w.now += MemoryRules.overSeconds
-        w.check(live)
-        let actions = w.dog.check([live], now: w.now)
-        #expect(actions.count == 1 && actions[0].title == "Live transcription restarted")
-        #expect(actions[0].message == "It used 5.5 GB, over its 5 GB budget. The recording goes on.")
     }
 
     @Test func liveThatKeepsPassingItsBudgetIsStoppedForGood() {
@@ -307,6 +289,7 @@ private func fakeTaskpolicy() throws -> String {
         w.free = 0.5
         w.used[60] = 3.0
         #expect(w.sustain(worker("notes", "/r/m1", 60)) == [])
+        #expect(w.asked == 0)  // free memory is only asked when a worker is over budget
     }
 
     @Test func pressureMustLastToo() {
@@ -320,13 +303,6 @@ private func fakeTaskpolicy() throws -> String {
         #expect(w.check(notes, after: 20) == [])  // the pressure passed
         w.free = 1.0
         #expect(w.sustain(notes) == ["requeue|notes|m1"])
-    }
-
-    @Test func freeMemoryIsOnlyAskedWhenAWorkerIsOverBudget() {
-        let w = Watch()
-        w.used[62] = 1.5
-        _ = w.sustain(worker("process", "/r/m1", 62))
-        #expect(w.asked == 0)
     }
 
     @Test func droppingSaysWhatToDo() {
@@ -392,16 +368,14 @@ private func fakeTaskpolicy() throws -> String {
         #expect(dog.budgets.notes == 14.0)
     }
 
+    /// A worker gone (no sample) is skipped, and the status forgets workers that are gone.
     @Test func aWorkerGoneIsSkipped() {
         let w = Watch()
         #expect(w.check(worker("stream", "/r/m1", 99)) == [])
         #expect(w.dog.status()!["workers"] == .array([]))
-    }
-
-    @Test func statusForgetsWorkersThatAreGone() {
-        let w = Watch()
         w.used[11] = 1.0
         w.check(worker("live", "/r/m1", 11))
+        #expect(w.dog.status()!["workers"]?.arrayValue?.count == 1)
         w.check()
         #expect(w.dog.status()!["workers"] == .array([]))
     }

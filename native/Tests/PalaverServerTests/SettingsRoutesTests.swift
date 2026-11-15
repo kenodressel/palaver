@@ -63,7 +63,7 @@ private final class QuietProvider: ProviderHelper {
 @Suite struct SettingsRoutesTests {
     // MARK: - settings (test_webapp.py, test_report_api.py, test_webapp_remote.py)
 
-    @Test func test_http_settings() throws {
+    @Test func test_http_settings_and_a_change_is_counted_by_its_key() throws {
         let s = try TestServer(meetings: { try meeting($0) })
         defer { s.stop() }
         var r = s.get("/api/settings")
@@ -71,6 +71,10 @@ private final class QuietProvider: ProviderHelper {
         r = s.post("/api/settings", .object([("realtime", .bool(false))]))
         #expect(r.status == 200 && r.json?["realtime"] == .bool(false))
         #expect(s.get("/api/settings").json?["realtime"] == .bool(false))
+        // A settings change is counted by its key.
+        let settings = Usage.read(s.app.stores.usage).filter { $0["kind"] == .string("setting") }
+        #expect(settings.count == 1)
+        #expect(settings.first?["id"] == .string("realtime") && settings.first?["value"] == .bool(false))
         r = s.post("/api/settings", .object([("realtime", .string("yes"))]))
         #expect(r.status == 400 && r.error == "bad request: realtime must be true or false")
     }
@@ -101,15 +105,6 @@ private final class QuietProvider: ProviderHelper {
         let t = try TestServer(settingsDefaults: noSlack)
         defer { t.stop() }
         #expect(t.get("/api/settings").json?["record_slack"] == .bool(false))
-    }
-
-    @Test func test_http_a_settings_change_is_counted_by_its_key() throws {
-        let s = try TestServer()
-        defer { s.stop() }
-        #expect(s.post("/api/settings", .object([("realtime", .bool(false))])).status == 200)
-        let settings = Usage.read(s.app.stores.usage).filter { $0["kind"] == .string("setting") }
-        #expect(settings.count == 1)
-        #expect(settings.first?["id"] == .string("realtime") && settings.first?["value"] == .bool(false))
     }
 
     @Test func test_http_a_record_switch_turned_off_stops_its_call_now() throws {

@@ -57,55 +57,44 @@ private func serve(_ handlers: [String: AppHandler], readTimeout: TimeInterval =
 
 // Serialized: these tests block threads of the cooperative pool while the handlers need it.
 @Suite(.serialized) struct AppSocketTests {
-@Test func aCallAnswersWithItsResult() {
-    let s = serve(["ping": { args in ["pid": 7, "echo": args] }])
-    defer { s.stop() }
+struct Boom: Error {}
+struct Described: LocalizedError { var errorDescription: String? { "division by zero" } }
+
+/// A result, null, a refusal, an unknown call (with Python's texts), a failing handler (an error, not a
+/// hang); stopping removes the socket.
+@Test func aCallAnswersWithItsResultOrSaysWhyNot() {
+    let s = serve(["ping": { args in ["pid": 7, "echo": args] }, "a": { _ in nil },
+                   "answer": { _ in throw CallRefused("not now") },
+                   "boom": { _ in throw Described() }, "bare": { _ in throw Boom() }])
     let r = call(s.path, "ping", ["x": 1])
     #expect((r?["ok"] as? [String: Any])?["pid"] as? Int == 7)
     #expect(((r?["ok"] as? [String: Any])?["echo"] as? [String: Int]) == ["x": 1])
-}
-
-@Test func nilResultIsNull() {
-    let s = serve(["a": { _ in nil }])
-    defer { s.stop() }
-    let r = call(s.path, "a")
-    #expect(r?.keys.contains("ok") == true && r?["ok"] is NSNull)
-}
-
-@Test func onlyThisUserCanReachTheSocket() throws {
-    let s = serve(["ping": { _ in nil }])
-    defer { s.stop() }
-    let mode = try FileManager.default.attributesOfItem(atPath: s.path)[.posixPermissions] as? Int
-    #expect(mode == 0o600)
-}
-
-@Test func aRefusedCallSaysWhy() {
-    let s = serve(["answer": { _ in throw CallRefused("not now") }])
-    defer { s.stop() }
-    let r = call(s.path, "answer")
-    #expect(r?["error"] as? String == "not now" && r?["refused"] as? Bool == true)
-}
-
-@Test func anUnknownCallIsRefusedWithPythonsText() {
-    let s = serve([:])
-    defer { s.stop() }
-    let r = call(s.path, "nope")
-    #expect(r?["error"] as? String == "unknown call 'nope'" && r?["refused"] as? Bool == true)
+    let null = call(s.path, "a")
+    #expect(null?.keys.contains("ok") == true && null?["ok"] is NSNull)
+    let refused = call(s.path, "answer")
+    #expect(refused?["error"] as? String == "not now" && refused?["refused"] as? Bool == true)
+    let unknown = call(s.path, "nope")
+    #expect(unknown?["error"] as? String == "unknown call 'nope'" && unknown?["refused"] as? Bool == true)
     let q = call(s.path, "it's")
     #expect(q?["error"] as? String == "unknown call \"it's\"")
     let none = rawCall(s.path, Data("{}\n".utf8))
     #expect(none?["error"] as? String == "unknown call None")
+    let failed = call(s.path, "boom")
+    #expect(failed?["error"] as? String == "division by zero" && failed?["refused"] as? Bool == false)
+    #expect(call(s.path, "bare")?["refused"] as? Bool == false)
+    s.stop()
+    #expect(!FileManager.default.fileExists(atPath: s.path))
 }
 
-struct Boom: Error {}
-struct Described: LocalizedError { var errorDescription: String? { "division by zero" } }
-
-@Test func aFailingCallIsAnErrorNotAHang() {
-    let s = serve(["boom": { _ in throw Described() }, "bare": { _ in throw Boom() }])
+/// Mode 0600, and accepted connections are close-on-exec (no child inherits one).
+@Test func onlyThisUserCanReachTheSocket() throws {
+    let s = serve(["ping": { _ in "pong" }])
     defer { s.stop() }
-    let r = call(s.path, "boom")
-    #expect(r?["error"] as? String == "division by zero" && r?["refused"] as? Bool == false)
-    #expect(call(s.path, "bare")?["refused"] as? Bool == false)
+    let mode = try FileManager.default.attributesOfItem(atPath: s.path)[.posixPermissions] as? Int
+    #expect(mode == 0o600)
+    #expect(s.lastAcceptedFlags == nil)
+    _ = call(s.path, "ping")
+    #expect((s.lastAcceptedFlags ?? 0) & FD_CLOEXEC != 0)
 }
 
 @Test func aStaleSocketFileIsReplaced() throws {
@@ -114,12 +103,6 @@ struct Described: LocalizedError { var errorDescription: String? { "division by 
     let s = serve(["ping": { _ in "pong" }], at: path)
     defer { s.stop() }
     #expect(call(path, "ping")?["ok"] as? String == "pong")
-}
-
-@Test func stoppingRemovesTheSocket() {
-    let s = serve([:])
-    s.stop()
-    #expect(!FileManager.default.fileExists(atPath: s.path))
 }
 
 @Test func anOversizeRequestIsAnErrorNotAHang() {
@@ -160,7 +143,13 @@ private final class Gauge: @unchecked Sendable {
 
 @Test func slowHandlersRunConcurrently() async {
     let gauge = Gauge()
-    let s = serve(["slow": { _ in gauge.enter(); defer { gauge.leave() }; try await Task.sleep(nanoseconds: 500_000_000); return "done" }])
+    // Each handler waits (5 s at most) until the other one runs too: only handlers that run at once both see 2.
+    let s = serve(["slow": { _ in
+        gauge.enter(); defer { gauge.leave() }
+        let end = Date().addingTimeInterval(5)
+        while gauge.peak < 2 && Date() < end { try await Task.sleep(nanoseconds: 10_000_000) }
+        return "done"
+    }])
     defer { s.stop() }
     async let a = Task.detached { call(s.path, "slow") }.value
     async let b = Task.detached { call(s.path, "slow") }.value
@@ -285,6 +274,9 @@ private func callsServer(_ a: FakeActions, children: @escaping @Sendable (Int32)
         #expect(r?["refused"] as? Bool == true)
         #expect((r?["error"] as? String)?.hasSuffix("is not a process Palaver started") == true)
     }
+    for pid: Any in [-1, 4_294_967_297, 9_999_999_999_999, 1.5, "12", true] {  // out of range, or no integer
+        #expect(call(s.path, "watch", ["folder": "/m/x", "pid": pid])?["refused"] as? Bool == true, "\(pid)")
+    }
     #expect(a.helpers.isEmpty)
     #expect(call(s.path, "watch", ["folder": "/m/x", "pid": Int(child.processIdentifier)])?["ok"] is NSNull)
     #expect(a.helpers.map { $0.1 } == [child.processIdentifier])
@@ -365,23 +357,6 @@ private func callsServer(_ a: FakeActions, children: @escaping @Sendable (Int32)
     defer { new.stop() }
     old.stop()
     #expect(call(path, "who")?["ok"] as? String == "new")
-}
-
-@Test func watchRefusesPidsOutOfRange() {
-    let a = FakeActions(); let s = callsServer(a); defer { s.stop() }
-    for pid: Any in [-1, 0, 4_294_967_297, 9_999_999_999_999, 1.5, "12", true] {
-        let r = call(s.path, "watch", ["folder": "/m/x", "pid": pid])
-        #expect(r?["refused"] as? Bool == true)
-    }
-    #expect(a.helpers.isEmpty)
-}
-
-@Test func acceptedConnectionsAreCloseOnExec() {
-    let s = serve(["ping": { _ in "pong" }])
-    defer { s.stop() }
-    #expect(s.lastAcceptedFlags == nil)
-    _ = call(s.path, "ping")
-    #expect((s.lastAcceptedFlags ?? 0) & FD_CLOEXEC != 0)
 }
 
 @Test func aPersistentAcceptErrorBacksOffAndLogsOnce() async {

@@ -31,6 +31,8 @@ private func refusal(_ work: () throws -> Void) -> String? { (thrown(work) as? S
         try s.configure("openai", [("model", .string("gpt-y"))])  // only what is given changes
         #expect(try s.settingsOf("openai")["endpoint"] == .string("https://acme.openai.azure.com/openai/v1"))
         #expect(home.saved["realtime"] == .bool(false) && home.saved["providers"]?["openai"]?["model"] == .string("gpt-y"))
+        try s.configure("openai", [("endpoint", .string("https://gw.test/v1?x=1"))])  // a query is taken
+        #expect(try s.settingsOf("openai")["endpoint"] == .string("https://gw.test/v1?x=1"))
     }
 
     @Test(arguments: ["ftp://x.test", "javascript:alert(1)", "api.openai.com", "", "http://api.openai.com/v1",
@@ -48,13 +50,6 @@ private func refusal(_ work: () throws -> Void) -> String? { (thrown(work) as? S
         #expect(refusal { try s.configure("openai", [("endpoint", .string("https://gw.test/v1#x"))]) }
                 == "the endpoint must not have a #fragment")
         #expect(refusal { try s.configure("openai", [("endpoint", .int(3))]) } == "the endpoint must be a URL")
-    }
-
-    @Test(arguments: ["http://localhost:11434/v1", "http://127.0.0.1:8000/v1", "https://gw.test/v1?x=1"])
-    func localHTTPGatewaysAndQueriesAreTaken(_ endpoint: String) throws {
-        let s = Home().settings
-        try s.configure("openai", [("endpoint", .string(endpoint))])
-        #expect(try s.settingsOf("openai")["endpoint"] == .string(endpoint))
     }
 
     @Test func badValuesAreRefused() {
@@ -148,14 +143,11 @@ private func refusal(_ work: () throws -> Void) -> String? { (thrown(work) as? S
         #expect(soniox["usd_per_hour"] == .double(0.10) && soniox["region"] == .string("eu") && soniox["privacy"]?.truthy == true)
     }
 
-    @Test func theChoiceDefaultsToWhatConfigTomlSays() {
-        let s = Home().settings
-        #expect(s.choice("notes", default: "local") == "local" && s.choice("notes", default: "claude-cli") == "claude-cli")
-    }
-
     @Test func chooseNeedsAReadyProvider() throws {
         let home = Home()
         let s = home.settings
+        // Nothing chosen: what config.toml says.
+        #expect(s.choice("notes", default: "local") == "local" && s.choice("notes", default: "claude-cli") == "claude-cli")
         #expect(refusal { try s.choose("notes", .string("anthropic")) } == "Anthropic API: Add the API key")
         #expect(home.saved["engines"] == nil)
         try home.keys.write("anthropic.api_key", KEY)
@@ -241,6 +233,7 @@ private func refusal(_ work: () throws -> Void) -> String? { (thrown(work) as? S
     func theKeyIsOptionalOnlyOnThisMac(_ endpoint: String) throws {
         let s = Home().settings
         try s.configure("openai", [("endpoint", .string(endpoint)), ("model", .string("llama"))])
+        #expect(try s.settingsOf("openai")["endpoint"] == .string(endpoint))  // a local http gateway is taken
         #expect(try s.problem("openai") == nil)
     }
 
@@ -265,11 +258,6 @@ private func refusal(_ work: () throws -> Void) -> String? { (thrown(work) as? S
 }
 
 @Suite struct EngineChoiceTests {
-    @Test func localByDefault() {
-        let s = Home().settings
-        #expect(EngineChoice.for(feature: "notes", settings: s) == .local(model: ModelChoice.DEFAULT_LOCAL_MODEL))
-    }
-
     @Test func configTomlClaudeMeansTheCLIAndItsAbsenceIsSaid() throws {
         let home = Home()
         home.config.notesEngine = "claude"
@@ -306,8 +294,9 @@ private func refusal(_ work: () throws -> Void) -> String? { (thrown(work) as? S
         #expect(EngineChoice.for(feature: "projects", meetings: [meeting], settings: home.settings) == .local(model: ModelChoice.DEFAULT_LOCAL_MODEL))
     }
 
-    @Test func pendingRunsNothing() throws {
+    @Test func localByDefaultAndPendingRunsNothing() throws {
         let home = Home()
+        #expect(EngineChoice.for(feature: "notes", settings: home.settings) == .local(model: ModelChoice.DEFAULT_LOCAL_MODEL))
         try home.settings.choose("notes", .string("pending"))
         #expect(EngineChoice.for(feature: "notes", settings: home.settings) == .unavailable(EngineChoice.PENDING_TEXT))
     }
@@ -335,6 +324,7 @@ private func refusal(_ work: () throws -> Void) -> String? { (thrown(work) as? S
 @Suite struct AccessLogTests {
     @Test func recordAndReadBackNewestFirst() throws {
         let home = Home()
+        #expect(AccessLog.recent(stores: home.stores).isEmpty)  // no log yet
         try AccessLog.record(.init(provider: "anthropic", host: "api.anthropic.com", model: "claude-opus-5-5", feature: "notes",
                                    meetings: ["2026-10-27T16-03-07"], chars: 12_345, ok: true, seconds: 12.34), stores: home.stores)
         try AccessLog.record(.init(provider: "openai", host: "acme.openai.azure.com", model: "gpt-x", feature: "projects",
@@ -350,6 +340,8 @@ private func refusal(_ work: () throws -> Void) -> String? { (thrown(work) as? S
         if case .object(let fields) = first {
             #expect(fields.map(\.0) == ["time", "provider", "host", "model", "feature", "meetings", "chars", "ok", "seconds"])
         }
+        let mode = try FileManager.default.attributesOfItem(atPath: home.stores.accessLog.path)[.posixPermissions] as? Int
+        #expect(mode == 0o600)  // private
     }
 
     @Test func brokenLinesAreSkippedAndTheLimitHolds() throws {
@@ -364,15 +356,6 @@ private func refusal(_ work: () throws -> Void) -> String? { (thrown(work) as? S
         try h.close()
         #expect(AccessLog.recent(3, stores: home.stores).compactMap { $0["chars"] } == [.int(4), .int(3), .int(2)])
         #expect(AccessLog.recent(nil, stores: home.stores).count == 5)
-    }
-
-    @Test func noLogReadsAsEmptyAndTheFileIsPrivate() throws {
-        let home = Home()
-        #expect(AccessLog.recent(stores: home.stores).isEmpty)
-        try AccessLog.record(.init(provider: "p", host: "h", model: "m", feature: "notes", meetings: [], chars: 1, ok: true, seconds: 0),
-                             stores: home.stores)
-        let mode = try FileManager.default.attributesOfItem(atPath: home.stores.accessLog.path)[.posixPermissions] as? Int
-        #expect(mode == 0o600)
     }
 
     @Test func whatWasSentForTranscriptionThisMonth() throws {

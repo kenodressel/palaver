@@ -81,6 +81,7 @@ private func reductionDB(_ mic: [Int16], _ out: [Int16], skip: Int = 6 * 16_000)
         let mic = system.map { clip(Double($0) * 0.5) }  // attenuated bleed, no near-end speech
         let (out, rate) = try run(mic: mic, system: system)
         #expect(rate == 16_000)
+        #expect(abs(out.count - mic.count) < 160)  // the output is as long as the input
         #expect(rms(out[8000...]) < 0.2 * rms(mic[8000...]))
     }
 
@@ -88,13 +89,6 @@ private func reductionDB(_ mic: [Int16], _ out: [Int16], skip: Int = 6 * 16_000)
         let mic = sine(220, 3)
         let (out, _) = try run(mic: mic, system: [Int16](repeating: 0, count: mic.count))
         #expect(rms(out[8000...]) > 0.3 * rms(mic[8000...]))
-    }
-
-    @Test func test_output_length_matches_input() throws {
-        let silence = [Int16](repeating: 0, count: 40_000)
-        let (out, rate) = try run(mic: silence, system: silence)
-        #expect(rate == 16_000)
-        #expect(abs(out.count - silence.count) < 160)
     }
 
     @Test func test_mic_longer_than_system_preserves_post_overlap_tail() throws {

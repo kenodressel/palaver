@@ -246,8 +246,9 @@ final class FakeAppSocket: @unchecked Sendable {
         }
     }
 
+    /// Once: a second close would close whatever another test opened under the same number since.
     func stop() {
-        lock.withLock { stopped = true }
+        guard lock.withLock({ () -> Bool in defer { stopped = true }; return !stopped }) else { return }
         shutdown(fd, SHUT_RDWR)
         close(fd)
         unlink(path.path)

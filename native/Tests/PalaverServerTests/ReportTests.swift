@@ -124,19 +124,17 @@ private struct Unzipped {
 }
 
 @Suite struct ReportTests {
-    @Test func test_the_zip_lands_on_the_desktop_named_by_the_minute_and_shown_in_finder() throws {
+    @Test func test_the_zip_lands_on_the_desktop_named_by_the_minute_with_its_manifest_crashes_and_timeline() throws {
         let w = World()
+        write(w.stores.accessLog, #"{"provider": "anthropic", "feature": "notes"}"# + "\n")
+        write(w.stores.mcpAccess, #"{"tool": "get_meeting"}"# + "\n")
         let written = try w.create()
         #expect(written.path.path == w.desktop.appendingPathComponent("Palaver report 2026-10-30 14-05.zip").path)
         #expect(written.size == (try FileManager.default.attributesOfItem(atPath: written.path.path)[.size] as? Int))
         #expect(try FileManager.default.contentsOfDirectory(atPath: w.desktop.path) == [written.path.lastPathComponent])  // no temp
-        let second = try w.create()
-        #expect(second.path.lastPathComponent == "Palaver report 2026-10-30 14-05 (2).zip")
-    }
 
-    @Test func test_the_manifest_lists_every_file_in_the_zip() throws {
-        let w = World()
-        let z = try Unzipped(try w.create().path)
+        // The manifest lists every file in the zip.
+        let z = try Unzipped(written.path)
         let manifest = try z.text("MANIFEST.txt")
         for name in z.names { #expect(manifest.contains(name), "\(name)") }
         for expected in ["report.json", "settings.json", "doctor.txt", "timeline.txt", "usage-summary.json", "usage/usage.jsonl",
@@ -146,6 +144,30 @@ private struct Unzipped {
         }
         #expect(manifest.hasPrefix("Palaver report, 2026-10-30 14:05 — bug\n\n"))
         #expect(manifest.contains("MANIFEST.txt") && manifest.hasSuffix("this list\n"))
+
+        // What left the Mac and what MCP clients read go in.
+        #expect(z.names.isSuperset(of: ["data/access-log.jsonl", "data/mcp-access.jsonl"]))
+
+        // Crash reports of Palaver's processes from the last 30 days.
+        #expect(z.names.filter { $0.hasPrefix("crash-reports/") }.sorted()
+                == ["crash-reports/palaver-worker-2026-10-29-101010.ips", "crash-reports/python3.13-2026-10-29-101010.ips"])
+
+        // The timeline merges the last week's problems and events by time.
+        let lines = try z.text("timeline.txt").components(separatedBy: "\n")
+        let text = lines.joined(separator: "\n")
+        #expect(!text.contains("too old for the timeline"))
+        let order = ["record_start trigger=teams", "mic stalled", "notes_failed", "record_start trigger=manual",
+                     "diarization exploded", "warning: notes failed", "app_start", "KeyError: 'speakers'"].map { needle in
+            lines.firstIndex { $0.contains(needle) } ?? -1
+        }
+        #expect(!order.contains(-1) && order == order.sorted(), "\(order)")
+        #expect(lines.contains { $0.contains("CRASH") && $0.contains("webapp") })
+        #expect(text.contains("meetings/\(OLD)") && text.contains("daemon.log"))
+        #expect(lines.contains { $0.contains("transcribe_done seconds=41.5 track=system") })
+
+        // A second one in the same minute gets its own name.
+        let second = try w.create()
+        #expect(second.path.lastPathComponent == "Palaver report 2026-10-30 14-05 (2).zip")
     }
 
     @Test func test_a_config_with_a_token_never_ends_up_in_the_zip() throws {
@@ -184,13 +206,17 @@ private struct Unzipped {
 
     @Test func test_every_meeting_gives_its_small_files_and_the_chosen_one_all_but_audio() throws {
         let w = World()
-        let names = try Unzipped(try w.create(Report.Form(meeting: OLD)).path).names
+        let names = try Unzipped(try w.create(Report.Form(kind: "bug", meeting: OLD)).path).names
         for n in ["session.log", "meta.json", "stream.json", "calendar.json"] { #expect(names.contains("meetings/\(NEW)/\(n)")) }
         #expect(!names.contains("meetings/\(NEW)/transcript.json"))  // not chosen
         for n in ["transcript.json", "notes.json", "audio_problems.json", "my-notes/pasted.png"] {
             #expect(names.contains("meetings/\(OLD)/\(n)"), "\(n)")
         }
         #expect(!names.contains { $0.hasSuffix(".wav") || $0.hasSuffix(".part") })
+        // Creating a report is counted.
+        let last = Usage.read(w.stores.usage).last!
+        #expect(last["kind"] == .string("report") && last["meeting"] == .bool(true) && last["via"] == .string("window"))
+        #expect(last["what"] == .string("bug") && last["audio"] == .bool(false))
     }
 
     @Test func test_the_chosen_meetings_audio_goes_in_only_when_ticked() throws {
@@ -200,35 +226,6 @@ private struct Unzipped {
         #expect(z.entries.first { $0.name == "meetings/\(OLD)/system.wav" }?.method == 0)  // stored
         #expect(try z.data("meetings/\(OLD)/system.wav").count == 3004)
         #expect(!z.names.contains("meetings/\(NEW)/system.wav.part"))  // another meeting's audio never
-    }
-
-    @Test func test_what_left_the_mac_and_what_mcp_clients_read_go_in() throws {
-        let w = World()
-        write(w.stores.accessLog, #"{"provider": "anthropic", "feature": "notes"}"# + "\n")
-        write(w.stores.mcpAccess, #"{"tool": "get_meeting"}"# + "\n")
-        let names = try Unzipped(try w.create().path).names
-        #expect(names.isSuperset(of: ["data/access-log.jsonl", "data/mcp-access.jsonl"]))
-    }
-
-    @Test func test_crash_reports_of_palaver_processes_from_the_last_30_days() throws {
-        let w = World()
-        let names = try Unzipped(try w.create().path).names.filter { $0.hasPrefix("crash-reports/") }.sorted()
-        #expect(names == ["crash-reports/palaver-worker-2026-10-29-101010.ips", "crash-reports/python3.13-2026-10-29-101010.ips"])
-    }
-
-    @Test func test_the_timeline_merges_the_last_weeks_problems_and_events_by_time() throws {
-        let w = World()
-        let lines = try Unzipped(try w.create().path).text("timeline.txt").components(separatedBy: "\n")
-        let text = lines.joined(separator: "\n")
-        #expect(!text.contains("too old for the timeline"))
-        let order = ["record_start trigger=teams", "mic stalled", "notes_failed", "record_start trigger=manual",
-                     "diarization exploded", "warning: notes failed", "app_start", "KeyError: 'speakers'"].map { needle in
-            lines.firstIndex { $0.contains(needle) } ?? -1
-        }
-        #expect(!order.contains(-1) && order == order.sorted(), "\(order)")
-        #expect(lines.contains { $0.contains("CRASH") && $0.contains("webapp") })
-        #expect(text.contains("meetings/\(OLD)") && text.contains("daemon.log"))
-        #expect(lines.contains { $0.contains("transcribe_done seconds=41.5 track=system") })
     }
 
     @Test func test_a_message_repeating_every_few_seconds_is_one_line_with_its_count() {
@@ -294,14 +291,6 @@ private struct Unzipped {
         #expect(((try? FileManager.default.contentsOfDirectory(atPath: w.desktop.path)) ?? []).isEmpty)
     }
 
-    @Test func test_creating_a_report_is_counted() throws {
-        let w = World()
-        try w.create(Report.Form(kind: "bug", meeting: OLD))
-        let last = Usage.read(w.stores.usage).last!
-        #expect(last["kind"] == .string("report") && last["meeting"] == .bool(true) && last["via"] == .string("window"))
-        #expect(last["what"] == .string("bug") && last["audio"] == .bool(false))
-    }
-
     @Test func test_the_form_accepts_a_bug_or_a_wish_and_nothing_else() throws {
         let form = try Report.Form(json: .object([("kind", .string("wish")), ("text", .string("x")), ("meeting", .string("")),
                                                   ("audio", .bool(true))]))
@@ -355,7 +344,7 @@ private struct Unzipped {
 
     // MARK: - the route
 
-    @Test func test_http_report_writes_the_zip_and_shows_it_in_finder() throws {
+    @Test func test_http_report_refuses_a_bad_form_and_writes_the_zip_and_shows_it_in_finder() throws {
         let dir = tempFolder("report-route")
         defer { try? FileManager.default.removeItem(at: dir) }
         let stores = StorePaths(configDir: dir.appendingPathComponent("config/palaver", isDirectory: true),
@@ -369,6 +358,16 @@ private struct Unzipped {
             write(root.appendingPathComponent(OLD).appendingPathComponent("transcript.json"), "[]")
         })
         defer { s.stop() }
+        // A bad form is refused, and nothing is written.
+        var bad = s.post("/api/report", .object([("kind", .string("rant"))]))
+        #expect(bad.status == 400 && bad.error == "bad request: kind is bug or wish")
+        bad = s.post("/api/report", .object([("meeting", .string("../secrets"))]))
+        #expect(bad.status == 400 && bad.error == "bad request: no meeting ../secrets")
+        bad = s.post("/api/report", .array([]))
+        #expect(bad.status == 400)
+        #expect(shown.urls.isEmpty && !s.log.contains("problem report written"))
+        #expect(!FileManager.default.fileExists(atPath: stores.home.appendingPathComponent("Desktop").path))
+
         let r = s.post("/api/report", .object([("kind", .string("bug")), ("text", .string("Speakers mixed up")),
                                                ("meeting", .string(OLD)), ("audio", .bool(false))]))
         #expect(r.status == 200)
@@ -434,27 +433,5 @@ private struct Unzipped {
                                 home: kc.dir.appendingPathComponent("home", isDirectory: true))
         let (_, scrubbed) = ReportSecrets.snapshot(configURL: stores.configToml, stores: stores, env: [:], keychain: found)
         #expect(scrubbed == ["sk-openai-saved-by-python"])
-    }
-
-    @Test func test_http_report_refuses_a_bad_form() throws {
-        let dir = tempFolder("report-route")
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let stores = StorePaths(configDir: dir.appendingPathComponent("config/palaver", isDirectory: true),
-                                home: dir.appendingPathComponent("home", isDirectory: true))
-        final class Shown: @unchecked Sendable { var urls: [URL] = [] }
-        let shown = Shown()
-        let report = SwiftReport(place: Report.Place(stores: stores, configURL: stores.configToml,
-                                                     outputDir: dir.appendingPathComponent("Meetings", isDirectory: true), env: [:]),
-                                 probe: { QuietReportProbe() }, reveal: { shown.urls.append($0) })
-        let s = try TestServer(report: report, dir: dir)
-        defer { s.stop() }
-        var bad = s.post("/api/report", .object([("kind", .string("rant"))]))
-        #expect(bad.status == 400 && bad.error == "bad request: kind is bug or wish")
-        bad = s.post("/api/report", .object([("meeting", .string("../secrets"))]))
-        #expect(bad.status == 400 && bad.error == "bad request: no meeting ../secrets")
-        bad = s.post("/api/report", .array([]))
-        #expect(bad.status == 400)
-        #expect(shown.urls.isEmpty && !s.log.contains("problem report written"))
-        #expect(!FileManager.default.fileExists(atPath: stores.home.appendingPathComponent("Desktop").path))
     }
 }

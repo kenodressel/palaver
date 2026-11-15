@@ -167,17 +167,6 @@ func httpGet(_ port: Int, _ target: String = "/", headers: [String: String] = [:
 
 @Suite(.enabled(if: haveVenv, "needs the worktree's venv (uv sync)"))
 struct WebSupervisorTests {
-    @Test func theServerRunsAsAChildOnTheAppsPort() throws {
-        let f = try FakeWeb()
-        defer { f.close() }
-        f.sup.start()
-        #expect(until { f.events.list == [false] })
-        #expect(f.sup.url() == "http://127.0.0.1:\(f.sup.port)/")
-        #expect(f.sup.url("2026-10-30T08-02-13") == "http://127.0.0.1:\(f.sup.port)/#/2026-10-30T08-02-13")
-        let pid = try #require(f.sup.pid)
-        #expect(httpGet(f.sup.port)?.body == "\(pid)" && pid != getpid())
-    }
-
     @Test func everyServerGetsTheAppsKeyAndTheKeyStaysAcrossRestarts() throws {
         let f = try FakeWeb("key")
         defer { f.close() }
@@ -226,12 +215,16 @@ struct WebSupervisorTests {
         #expect(httpGet(f.sup.port)?.body == new.map { "\($0)" })
     }
 
+    /// The server runs as a child on the app's port; stop ends it and starts no other.
     @Test func stopEndsTheServerAndStartsNoOther() throws {
         let f = try FakeWeb()
         defer { f.close() }
         f.sup.start()
         #expect(until { f.events.list == [false] })
+        #expect(f.sup.url() == "http://127.0.0.1:\(f.sup.port)/")
+        #expect(f.sup.url("2026-10-30T08-02-13") == "http://127.0.0.1:\(f.sup.port)/#/2026-10-30T08-02-13")
         let pid = try #require(f.sup.pid)
+        #expect(httpGet(f.sup.port)?.body == "\(pid)" && pid != getpid())
         f.sup.stop()
         #expect(!alive(pid))
         usleep(300_000)
@@ -362,16 +355,13 @@ struct WebSupervisorTests {
         first.close()
         let again = try WebListener.forWindow(ports: ports)  // the next start: the same port, the page keeps what it remembers
         #expect(again.port == ports[0])
+        // With all window ports taken, any free one will do.
+        let taken = try ports.dropFirst().map { try WebListener.listen(port: $0) }
+        let any = try WebListener.forWindow(ports: ports)
+        #expect(any.port != 0 && !ports.contains(any.port))
+        any.close()
+        taken.forEach { $0.close() }
         again.close()
-    }
-
-    @Test func withAllWindowPortsTakenAnyFreeOneWillDo() throws {
-        let ports = try freePorts(1)
-        let taken = try WebListener.listen(port: ports[0])
-        defer { taken.close() }
-        let sock = try WebListener.forWindow(ports: ports)
-        #expect(sock.port != 0 && sock.port != ports[0])
-        sock.close()
     }
 
     @Test func theListenerIsCloseOnExecAndOnLoopbackOnly() throws {

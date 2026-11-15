@@ -128,6 +128,11 @@ private let home = ProcessInfo.processInfo.environment["PALAVER_HOME"] ?? "<PALA
     #expect(t["a.b.text"] == .string("two\nlines"))
     #expect(t["a.b.after"] == .int(7))
     #expect(t["c.ok"] == .string("yes"))
+    // A byte order mark is stripped; escapes are honoured while skipping a list or an inline table.
+    let bom = Toml.parse("\u{FEFF}[user]\nname = \"Timo\"\n[x]\nlist = [\"a \\\" ]\", \"b\"]\nafter = 1\ninline = { s = \"\\\\\" }\nlast = 2\n")
+    #expect(bom["user.name"] == .string("Timo"))
+    #expect(bom["x.list"] == .other && bom["x.after"] == .int(1))
+    #expect(bom["x.inline"] == .other && bom["x.last"] == .int(2))
 }
 
 // MARK: settings.json
@@ -193,13 +198,6 @@ private func settingsFile(_ json: String?) throws -> URL {
     #expect(p.daemonJson.path.hasSuffix("palaver/daemon.json") && p.appSock.lastPathComponent == "app.sock")
     #expect(p.startedOk.lastPathComponent == "started-ok" && p.permissionsMarker.lastPathComponent == "permissions-requested")
     #expect(p.outputDir(Config()).path.hasSuffix("Meetings/Recordings"))
-}
-
-@Test func tomlStripsAByteOrderMarkAndHonoursEscapesWhileSkipping() {
-    let t = Toml.parse("\u{FEFF}[user]\nname = \"Timo\"\n[x]\nlist = [\"a \\\" ]\", \"b\"]\nafter = 1\ninline = { s = \"\\\\\" }\nlast = 2\n")
-    #expect(t["user.name"] == .string("Timo"))
-    #expect(t["x.list"] == .other && t["x.after"] == .int(1))
-    #expect(t["x.inline"] == .other && t["x.last"] == .int(2))
 }
 
 @Test func testsNeverReachTheRealHome() {

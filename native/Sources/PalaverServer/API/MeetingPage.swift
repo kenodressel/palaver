@@ -109,6 +109,7 @@ extension MeetingsAPI {
             ("shared", shared(app, paths, event)),
             ("shared_suggestion", try SharedMic.suggestion(paths, event: event, userName: userName)
                 .map { why -> JSONValue in .object([("why", .string(why))]) } ?? .null),
+            ("muted", try muted(paths, start: try start(paths, meta), recording: status == "recording")),
             ("removed", .array(Speakers.loadIgnored(paths).map { label -> JSONValue in
                 .object([("label", .string(label)), ("display", .string(labelDisplay(label)))])
             })),
@@ -364,6 +365,20 @@ extension MeetingsAPI {
                      ("text", .string(Lifecycle.problemText(p, start: start, timeZone: zone)))])
         }
         return [("recorded", .str(recorded)), ("gaps", .array(gaps)), ("audio_problems", .array(problems))]
+    }
+
+    /// Where the user was muted in the call and their mic not kept (`mic_muted.json`), shown in the transcript like a
+    /// pause; the last one goes on while it is still muted in a call being recorded.
+    static func muted(_ paths: RecordingPaths, start: JSONValue, recording: Bool) throws -> JSONValue {
+        guard let state = MicMuted.read(paths.folder), !state.muted.isEmpty, let iso = start.stringValue,
+              let date = WallTime.parse(iso, .current) else { return .array([]) }
+        let zone = Lifecycle.offsetZone(iso) ?? .current
+        return .array(try state.muted.enumerated().map { i, r -> JSONValue in
+            let open = recording && state.open && i == state.muted.count - 1
+            return .object([("start", .double(r.lowerBound)), ("end", open ? .null : .double(r.upperBound)),
+                            ("text", .string(try Lifecycle.mutedText(app: state.app, from: r.lowerBound, to: r.upperBound,
+                                                                     open: open, start: date, timeZone: zone)))])
+        })
     }
 
     /// api.last_failure: the meeting's last run that failed and was not done right since, from its session.log

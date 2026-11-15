@@ -214,9 +214,11 @@ final class Opened: @unchecked Sendable { var urls: [String] = [] }
     }
 
     @Test func onConnectEveryEarlierRecordingGetsItsEvent() {
-        let (a, cal, s, _, _) = attach()
+        let (a, cal, s, clock, _) = attach()
         a.check()
         #expect(s.all.isEmpty && !a.isConnected)  // not connected: nothing, and it asks nothing
+        clock.t += 1000; a.retryTick()
+        #expect(s.all.isEmpty)  // no retry before access is given
         cal.auth = .fullAccess
         a.check()
         #expect(a.isConnected && s.all.count == 1 && s.all[0].0 == "calendar-attach" && s.all[0].1 == [])
@@ -224,18 +226,8 @@ final class Opened: @unchecked Sendable { var urls: [String] = [] }
         #expect(s.all.count == 1)  // once
     }
 
-    @Test func theCalendarSwitchIsPythonsDecisionNotASecondGateHere() {
-        // [calendar].enabled is read by `palaver-worker calendar-attach` (it answers "skipped"): Swift starts it whenever
-        // access is given.
-        let (a, cal, s, clock, _) = attach()
-        cal.auth = .fullAccess
-        a.check()
-        s.workers[0].ended = true
-        clock.t += 400
-        a.retryTick()
-        #expect(s.all.count == 2 && s.all[1].1 == ["--since", "36"])
-    }
-
+    /// [calendar].enabled is read by `palaver-worker calendar-attach` (it answers "skipped"): Swift starts it whenever
+    /// access is given, no second gate here.
     @Test func theRetryRunsEveryFiveMinutesOverTheLast36HoursAndNotWhileTranscribing() {
         let (a, cal, s, clock, busy) = attach()
         cal.auth = .fullAccess
@@ -250,12 +242,6 @@ final class Opened: @unchecked Sendable { var urls: [String] = [] }
         #expect(s.all.count == 1)
         clock.t += 1; a.retryTick()
         #expect(s.all.count == 2 && s.all[1].1 == ["--since", "36"])
-    }
-
-    @Test func noRetryBeforeAccessIsGiven() {
-        let (a, _, s, clock, _) = attach()
-        clock.t += 1000; a.retryTick()
-        #expect(s.all.isEmpty)
     }
 
     @Test func aRunningAttachIsNotStartedTwice() {
@@ -295,6 +281,10 @@ final class FakeRequester: PermissionRequester, @unchecked Sendable {
         r.mic = .denied
         #expect(Permissions.requestAtLaunch(r, marker: marker) == [])
         #expect(r.requested == 1 && r.probes == 1)  // asked once per install
+        // An update removes the marker (updater.Installer.commit): the new build asks at its restart.
+        try FileManager.default.removeItem(at: marker)
+        Permissions.requestAtLaunch(r, marker: marker)
+        #expect(r.probes == 2)
     }
 
     @Test func aFailingProbeStillWritesTheMarkerSoItIsNotRepeatedEachStart() {
@@ -307,15 +297,6 @@ final class FakeRequester: PermissionRequester, @unchecked Sendable {
         #expect(exists(marker) && l.lines.count == 1)
     }
 
-    @Test func anUpdateRemovesTheMarkerSoTheNewBuildAsksAtItsRestart() {
-        // updater.Installer.commit does (tests/test_updater.py): here, that the marker decides.
-        let r = FakeRequester(), marker = tempDir().appendingPathComponent("permissions-requested")
-        r.mic = .authorized
-        Permissions.requestAtLaunch(r, marker: marker)
-        try? FileManager.default.removeItem(at: marker)
-        Permissions.requestAtLaunch(r, marker: marker)
-        #expect(r.probes == 2)
-    }
 }
 
 @Suite struct ExtraCallsTests {

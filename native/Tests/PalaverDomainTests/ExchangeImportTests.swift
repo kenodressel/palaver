@@ -187,7 +187,8 @@ import Testing
     /// Ported in part: what the window shows of it (`api.get_meeting`, `list_meetings`) is the server's.
     @Test func test_an_import_is_a_meeting_with_the_names_as_hints_named_by_the_exporter() throws {
         let r = Root(); defer { r.remove() }
-        let result = try r.importInto(r.mine, try r.exported())
+        let exported = try r.exported()
+        let result = try r.importInto(r.mine, exported)
         #expect(result.id == Self.ID && result.sender == Self.SENDER && result.matched == nil)
         let here = r.here()
         #expect(MeetingStatus.status(here) == "processed")
@@ -211,16 +212,18 @@ import Testing
         #expect(ExchangeHints.loadRecord(here)?["from"] == .string(Self.SENDER))
         let event = try #require(CalendarEvents.load(here))
         #expect(event.title == "Budget review" && CalendarEvents.loadLink(here)?.source == "imported")
+        #expect(event.attendees.filter(\.isSelf).map(\.name) == [Self.ME])  // the importer invited is themselves in the event
         #expect(!Self.exists(r.mine.appendingPathComponent(".importing")))
         #expect(try FileManager.default.contentsOfDirectory(atPath: r.mine.path) == [Self.ID])
         #expect(!Self.exists(here.speakerEmbeddings) && !Self.exists(here.importedVoices))
-    }
-
-    @Test func test_the_importer_invited_is_themselves_in_the_event() throws {
-        let r = Root(); defer { r.remove() }
-        try r.importInto(r.mine, try r.exported())
-        let event = try #require(CalendarEvents.load(r.here()))
-        #expect(event.attendees.filter(\.isSelf).map(\.name) == [Self.ME])
+        #expect(!LocalOnly.isLocalOnly(here.folder))  // not kept on the exporter's Mac: comes in as any other
+        // An earlier import of it is a collision that is not mine.
+        do {
+            try r.importInto(r.mine, exported)
+            Issue.record("imported twice")
+        } catch let c as Exchange.Collision {
+            #expect(c.match == ExchangeMatch(Self.ID, "event", false))
+        }
     }
 
     /// Ported in part: `api.get_meeting`'s `imported.title` is the server's.
@@ -249,6 +252,9 @@ import Testing
         ])))
         #expect(try r.bank.names().isEmpty)
         let paths = r.here()
+        // Pending voices are kept apart where nothing reads them.
+        #expect(!Self.exists(paths.speakerEmbeddings))
+        #expect(Self.keys(paths.importedVoices) == ["SPEAKER_00", "SPEAKER_01"])
         let learned = try Exchange.decideVoices(paths, add: true, userName: Self.ME, stores: r.stores)
         #expect(Py.stableSorted(learned, by: Py.less) == ["Carla", "Timo Strauß"])
         #expect(Set(try r.bank.names().keys) == ["Timo Strauß", "Carla"])
@@ -256,14 +262,6 @@ import Testing
         #expect(ExchangeHints.loadRecord(paths)?["voices"] == .string("added"))
         #expect(Set(Self.keys(paths.speakerEmbeddings)) == ["SPEAKER_00", "SPEAKER_01"])
         #expect(!Self.exists(paths.importedVoices))
-    }
-
-    @Test func test_pending_voices_are_kept_apart_where_nothing_reads_them() throws {
-        let r = Root(); defer { r.remove() }
-        try r.importInto(r.mine, try r.export(try Self.makeMeeting(r.t.url.appendingPathComponent("valerie")), "x.zip", voices: true))
-        let paths = r.here()
-        #expect(!Self.exists(paths.speakerEmbeddings))
-        #expect(Self.keys(paths.importedVoices) == ["SPEAKER_00", "SPEAKER_01"])
     }
 
     /// `api.name_speaker(…, "SPEAKER_01", "")` is the server's: here its two steps, the name rejected for the voice and
@@ -350,18 +348,6 @@ import Testing
                 == PythonJSON.dumps(.object([("meeting", .string(Self.ID)), ("how", .string("event"))])))
     }
 
-    @Test func test_an_earlier_import_of_it_is_a_collision_that_is_not_mine() throws {
-        let r = Root(); defer { r.remove() }
-        let exported = try r.exported()
-        try r.importInto(r.mine, exported)
-        do {
-            try r.importInto(r.mine, exported)
-            Issue.record("imported twice")
-        } catch let c as Exchange.Collision {
-            #expect(c.match == ExchangeMatch(Self.ID, "event", false))
-        }
-    }
-
     @Test func test_a_calendar_here_links_its_own_copy_of_the_event() throws {
         let r = Root(); defer { r.remove() }
         let mine = try CalendarEvent(json: Self.event(title: "Budget review (Timo's calendar)"))
@@ -376,65 +362,51 @@ import Testing
         #expect(CalendarEvents.load(other.here())?.title == "Budget review")
     }
 
-    @Test func test_the_exporters_project_is_a_hint_kept_with_the_import() throws {
-        let r = Root(); defer { r.remove() }
-        let out = try r.export(try Self.makeMeeting(r.t.url.appendingPathComponent("valerie")), "x.zip", projects: ["Northwind"])
-        try r.importInto(r.mine, out)
-        #expect(ExchangeHints.loadRecord(r.here())?["projects"] == .strings(["Northwind"]))
-        #expect(ProjectStore(path: r.stores.projects).ofMeeting(Self.ID).isEmpty)  // sorted here, not taken over
-    }
-
     // MARK: - the file is untrusted (deferred from Task 23)
 
+    /// A format of another version, a damaged manifest, a missing or unlisted file, a voice of someone not named and
+    /// times outside the meeting: each rejected with a clear message, nothing written.
     @Test func test_an_unknown_format_version_is_rejected_with_a_clear_message() throws {
         let r = Root(); defer { r.remove() }
-        try r.rejected(try r.repack(try r.exported(), "x.zip", manifest: [("format", .int(2))]),
-                       "format 2; this Palaver reads format 1. Update Palaver")
-        try r.rejected(try r.repack(try r.exported(), "y.zip", manifest: [("format", .int(0))]),
-                       "This file has format 0; this Palaver reads format 1.")
-    }
-
-    @Test func test_a_damaged_manifest_is_rejected() throws {
-        let r = Root(); defer { r.remove() }
         let exported = try r.exported()
+        try r.rejected(try r.repack(exported, "format-2.zip", manifest: [("format", .int(2))]),
+                       "format 2; this Palaver reads format 1. Update Palaver")
+        try r.rejected(try r.repack(exported, "format-0.zip", manifest: [("format", .int(0))]),
+                       "This file has format 0; this Palaver reads format 1.")
+
+        // A damaged manifest.
         let zip = try ZipReader(url: exported, maxDirectoryBytes: 1 << 20)
         let info = try #require(zip.entries.first { $0.name == "manifest.json" })
         var data = [UInt8](try Data(contentsOf: exported))
         let at = Int(info.headerOffset)
         let start = at + 30 + (Int(data[at + 26]) | Int(data[at + 27]) << 8) + (Int(data[at + 28]) | Int(data[at + 29]) << 8)
         for i in start + 5..<start + 25 { data[i] = 0xFF }
-        let damaged = r.t.url.appendingPathComponent("x.zip")
+        let damaged = r.t.url.appendingPathComponent("damaged.zip")
         try Data(data).write(to: damaged)
         try r.rejected(damaged, "damaged")
-    }
 
-    @Test func test_a_missing_required_file_is_rejected() throws {
-        let r = Root(); defer { r.remove() }
-        try r.rejected(try r.repack(try r.exported(), "x.zip", change: ["meeting/turns.json": nil]), "lacks 'meeting/turns.json'")
-    }
+        // A missing required file.
+        try r.rejected(try r.repack(exported, "missing.zip", change: ["meeting/turns.json": nil]), "lacks 'meeting/turns.json'")
 
-    @Test func test_a_file_the_manifest_does_not_list_is_rejected() throws {
-        let r = Root(); defer { r.remove() }
-        let out = try r.repack(try r.exported(), "x.zip", change: ["meeting/notes.json": nil], fix: false,
-                               extra: [("meeting/notes.json", Data("{}".utf8))])
-        try r.rejected(out, "'meeting/notes.json' is not listed")
-    }
+        // A file the manifest does not list.
+        let unlisted = try r.repack(exported, "unlisted.zip", change: ["meeting/notes.json": nil], fix: false,
+                                    extra: [("meeting/notes.json", Data("{}".utf8))])
+        try r.rejected(unlisted, "'meeting/notes.json' is not listed")
 
-    @Test func test_a_voice_of_someone_not_named_is_rejected() throws {
-        let r = Root(); defer { r.remove() }
+        // A voice of someone not named.
         let voice = JSONValue.object([("label", .string("SPEAKER_00")), ("name", .string("Anna")),
                                       ("embedding", .array(Self.vector(5).map { .double($0) }))])
-        try r.rejected(try r.repack(try r.exported(), "x.zip", change: ["voices/SPEAKER_00.json": Data(PythonJSON.dumps(voice).utf8)]),
+        try r.rejected(try r.repack(exported, "voice.zip", change: ["voices/SPEAKER_00.json": Data(PythonJSON.dumps(voice).utf8)]),
                        "voices/SPEAKER_00.json is not the voice of a person named in speakers.json.")
-    }
 
-    @Test func test_times_outside_the_meeting_are_rejected() throws {
-        let r = Root(); defer { r.remove() }
+        // Times outside the meeting.
         let turns = Data(#"[{"speaker": "SPEAKER_00", "start": 1, "end": 5000}]"#.utf8)
-        try r.rejected(try r.repack(try r.exported(), "x.zip", change: ["meeting/turns.json": turns]),
+        try r.rejected(try r.repack(exported, "times.zip", change: ["meeting/turns.json": turns]),
                        "turns.json[0] is not within the meeting.")
     }
 
+    /// A zip unpacked and compressed again in Finder imports, and so does a folder compressed by Finder (with its
+    /// .DS_Store and __MACOSX/ attribute files).
     @Test func test_a_zip_unpacked_and_compressed_again_in_finder_imports() throws {
         let r = Root(); defer { r.remove() }
         let out = try r.export(try Self.makeMeeting(r.t.url.appendingPathComponent("valerie"), audio: 2), "x.zip",
@@ -443,11 +415,7 @@ import Testing
         let result = try r.importInto(r.mine, again)
         #expect(result.id == Self.ID && result.sender == Self.SENDER && result.voices.count == 2)
         #expect(Self.exists(r.here().systemWav))  // the audio, read under the folder
-    }
 
-    @Test func test_a_folder_compressed_by_finder_imports() throws {
-        let r = Root(); defer { r.remove() }
-        let out = try r.export(try Self.makeMeeting(r.t.url.appendingPathComponent("valerie"), audio: 2), "x.zip", audio: true)
         let unpacked = r.t.url.appendingPathComponent("unpacked/2026-10-29 Q3 budget plan")
         func run(_ tool: String, _ args: [String]) throws {
             let p = Process()
@@ -461,11 +429,11 @@ import Testing
         try Data([0, 0, 0, 1] + Array("Bud1".utf8)).write(to: unpacked.appendingPathComponent(".DS_Store"))
         // An attribute becomes a ._ file in __MACOSX/.
         try run("/usr/bin/xattr", ["-w", "com.apple.metadata:kMDItemWhereFroms", "x", unpacked.appendingPathComponent("manifest.json").path])
-        let again = r.t.url.appendingPathComponent("again.zip")
-        try run("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", unpacked.path, again.path])
-        let names = try ZipReader(url: again, maxDirectoryBytes: 1 << 20).entries.map(\.name)
+        let compressed = r.t.url.appendingPathComponent("compressed.zip")
+        try run("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", unpacked.path, compressed.path])
+        let names = try ZipReader(url: compressed, maxDirectoryBytes: 1 << 20).entries.map(\.name)
         #expect(names.contains { $0.hasPrefix("__MACOSX/") })
-        #expect(try r.importInto(r.mine, again).id == Self.ID)
+        #expect(try r.importInto(r.t.url.appendingPathComponent("elsewhere", isDirectory: true), compressed).id == Self.ID)
     }
 
     // MARK: - voices and what follows
@@ -523,6 +491,9 @@ import Testing
         }
         let out = try r.export(try Self.makeMeeting(r.t.url.appendingPathComponent("valerie")), "x.zip", projects: ["Contoso", "northwind "])
         try r.importInto(r.mine, out)
+        // The exporter's projects are a hint kept with the import, sorted here, not taken over.
+        #expect(ExchangeHints.loadRecord(r.here())?["projects"] == .strings(["Contoso", "northwind "]))
+        #expect(ProjectStore(path: r.stores.projects).ofMeeting(Self.ID).isEmpty)
         try Exchange.settle(r.mine, Self.ID, userName: Self.ME, stores: r.stores)
         let assigned = ProjectStore(path: r.stores.projects).ofMeeting(Self.ID)
         #expect(PythonJSON.dumps(assigned.json) == PythonJSON.dumps(.object([(pid, .object([

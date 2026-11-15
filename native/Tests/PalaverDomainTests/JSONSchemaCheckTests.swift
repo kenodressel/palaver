@@ -49,6 +49,17 @@ import Testing
                                                   where: "meeting/transcript.json")
         let m = Self.message(transcript, Self.schema("meeting/transcript.json"), "meeting/transcript.json")
         #expect(m == "meeting/transcript.json[0].text is not string")
+
+        // A label that is not a speaker label.
+        let speakers = try JSONSchemaCheck.json(Data(#"[{"label": "../../x", "name": "Valerie", "how": "hand"}]"#.utf8),
+                                                where: "meeting/speakers.json")
+        #expect(Self.message(speakers, Self.schema("meeting/speakers.json"), "meeting/speakers.json")?
+            .contains("not in the expected form") == true)
+
+        // A number JSON can only write as Infinity.
+        let raw = #"{"label": "SPEAKER_00", "name": "Valerie", "embedding": [1e999"# + String(repeating: ", 0.5", count: 20) + "]}"
+        let voice = try JSONSchemaCheck.json(Data(raw.utf8), where: "voices/SPEAKER_00.json")
+        #expect(Self.message(voice, JSONSchemaCheck.VOICE, "voices/SPEAKER_00.json") == "voices/SPEAKER_00.json.embedding[0] is not a finite number")
     }
 
     @Test func test_unknown_keys_are_rejected() throws {
@@ -66,19 +77,6 @@ import Testing
         #expect(throws: ExchangeRejected("meeting/turns.json has NaN, which JSON can't have")) {
             try JSONSchemaCheck.json(Data(#"[{"speaker": "SPEAKER_00", "start": NaN, "end": 1}]"#.utf8), where: "meeting/turns.json")
         }
-    }
-
-    @Test func test_a_label_that_is_not_a_speaker_label_is_rejected() throws {
-        let speakers = try JSONSchemaCheck.json(Data(#"[{"label": "../../x", "name": "Valerie", "how": "hand"}]"#.utf8),
-                                                where: "meeting/speakers.json")
-        #expect(Self.message(speakers, Self.schema("meeting/speakers.json"), "meeting/speakers.json")?
-            .contains("not in the expected form") == true)
-    }
-
-    @Test func test_a_number_json_can_only_write_as_infinity_is_rejected() throws {
-        let raw = #"{"label": "SPEAKER_00", "name": "Valerie", "embedding": [1e999"# + String(repeating: ", 0.5", count: 20) + "]}"
-        let voice = try JSONSchemaCheck.json(Data(raw.utf8), where: "voices/SPEAKER_00.json")
-        #expect(Self.message(voice, JSONSchemaCheck.VOICE, "voices/SPEAKER_00.json") == "voices/SPEAKER_00.json.embedding[0] is not a finite number")
     }
 
     @Test(arguments: ["9999-12-31T23:59:59+14:00", "0001-01-01T00:00:00-12:00", "1970-01-01T00:00:00+00:00"])

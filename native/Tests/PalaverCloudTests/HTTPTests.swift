@@ -15,16 +15,14 @@ private func request(_ url: String = "https://api.example.com/v1/x", timeout: Do
 }
 
 @Suite struct HTTPPolicyTests {
-    @Test func a429WaitsAsLongAsTheProviderAsks() async throws {
-        let fake = FakeTransport(.answer(429, ["Retry-After": "7"], errorBody("slow down")), .answer(200, [:], "{\"ok\": true}"))
+    /// A 429 waits as long as the provider asks (capped); a server error then success waits the first backoff.
+    @Test(arguments: [(429, "7", 7.0), (429, "3600", HTTPClient.MAX_WAIT_SECONDS), (503, "", 2.0)]
+          as [(status: Int, retryAfter: String, wait: Double)])
+    func aRetryWaitsThenTheAnswerComes(_ c: (status: Int, retryAfter: String, wait: Double)) async throws {
+        let fake = FakeTransport(.answer(c.status, c.retryAfter.isEmpty ? [:] : ["Retry-After": c.retryAfter], errorBody("slow down")),
+                                 .answer(200, [:], "{\"ok\": true}"))
         let (data, _) = try await fake.client.send(request(), name: "P", key: KEY)
-        #expect(String(decoding: data, as: UTF8.self) == "{\"ok\": true}" && fake.waits == [7.0])
-    }
-
-    @Test func retryAfterIsCapped() async throws {
-        let fake = FakeTransport(.answer(429, ["Retry-After": "3600"], ""), .answer(200, [:], "{}"))
-        _ = try await fake.client.send(request(), name: "P", key: KEY)
-        #expect(fake.waits == [HTTPClient.MAX_WAIT_SECONDS])
+        #expect(String(decoding: data, as: UTF8.self) == "{\"ok\": true}" && fake.waits == [c.wait])
     }
 
     @Test(arguments: [408, 409, 500, 502, 503, 504, 529])
@@ -33,12 +31,6 @@ private func request(_ url: String = "https://api.example.com/v1/x", timeout: Do
         let e = await thrown { try await fake.client.send(request(), name: "P", key: KEY) } as? CloudError
         #expect(fake.requests.count == 3 && fake.waits == [2.0, 8.0])
         #expect(e?.message == "P failed after 3 tries: HTTP \(status)")
-    }
-
-    @Test func aServerErrorThenSuccess() async throws {
-        let fake = FakeTransport(.answer(503, [:], ""), .answer(200, [:], "{}"))
-        _ = try await fake.client.send(request(), name: "P", key: KEY)
-        #expect(fake.waits == [2.0])
     }
 
     @Test(arguments: [401, 403])
@@ -117,7 +109,8 @@ private func request(_ url: String = "https://api.example.com/v1/x", timeout: Do
         #expect(endpoint.requests.count == 1 && target.requests.isEmpty)
     }
 
-    @Test func aRefusedKeyAndRetryAfterOverTheWire() async throws {
+    /// A refused key over the wire: ProviderTestTests.aRefusedKeyFailsAndIsLoggedWithoutIt.
+    @Test func retryAfterOverTheWire() async throws {
         var calls = 0
         let server = try StubServer { _ in
             calls += 1
@@ -128,11 +121,6 @@ private func request(_ url: String = "https://api.example.com/v1/x", timeout: Do
         let answer = try await HTTPClient().sendJSON(request(server.url + "/v1/x"), name: "P", key: KEY)
         #expect(answer["ok"] == .bool(true) && server.requests.count == 2)
         #expect(server.requests[0].headers["x-api-key"] == KEY && server.requests[0].method == "POST")
-
-        let refusing = try StubServer { _ in .json(.object([("error", .object([("message", .string("invalid x-api-key \(KEY)"))]))]), status: 401) }
-        defer { refusing.stop() }
-        let e = await thrown { try await HTTPClient().send(request(refusing.url + "/v1/x"), name: "P", key: KEY) } as? CloudError
-        #expect(e?.message == "P refused the API key (HTTP 401); check or replace it in Settings" && refusing.requests.count == 1)
     }
 
     @Test func aSlowServerTimesOutAndIsTriedAgain() async throws {

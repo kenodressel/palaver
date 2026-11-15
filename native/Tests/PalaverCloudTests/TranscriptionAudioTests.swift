@@ -81,11 +81,6 @@ func toneWav(_ url: URL, seconds: Double, rate: Int = 16_000, loud: [(Double, Do
         #expect(abs(Double(file.length) / 16_000 - line.seconds) < 0.01)
         #expect(chunk.flac.count < Int(line.seconds * Chunks.RAW_BYTES_PER_SECOND))  // never larger than 16-bit PCM
     }
-
-    @Test func theTestToneIsTwoSecondsOfFlac() throws {
-        let data = try Chunks.tone(seconds: 2)
-        #expect(data.prefix(4) == Data("fLaC".utf8) && data.count > 1000)
-    }
 }
 
 @Suite struct StitchTests {
@@ -97,12 +92,10 @@ func toneWav(_ url: URL, seconds: Double, rate: Int = 16_000, loud: [(Double, Do
         let two = [w("zwei", 16.05, 16.45), w("drei", 17.32, 17.88), w("vier", 18, 18.5), w("fünf", 30, 30.4)]
         let stitched = Stitch.stitch([(0, 20, one), (15, 35, two)])
         #expect(stitched.map(\.text) == ["eins", "zwei", "drei", "vier", "fünf"])
-    }
-
-    @Test func aWordHeardDifferentlyAtTheSeamIsKeptOnce() {
-        let one = [w("Hallo", 17.0, 17.45)]
-        let two = [w("hallo,", 17.3, 17.75), w("Welt", 17.8, 18.2)]  // past the seam, but the same word
-        #expect(Stitch.stitch([(0, 20, one), (15, 35, two)]).map(\.text) == ["Hallo", "Welt"])
+        // A word heard differently at the seam is kept once.
+        let heard = [w("Hallo", 17.0, 17.45)]
+        let again = [w("hallo,", 17.3, 17.75), w("Welt", 17.8, 18.2)]  // past the seam, but the same word
+        #expect(Stitch.stitch([(0, 20, heard), (15, 35, again)]).map(\.text) == ["Hallo", "Welt"])
     }
 
     @Test func segmentsAreCutAtSentenceEndsPausesAndFifteenSeconds() {

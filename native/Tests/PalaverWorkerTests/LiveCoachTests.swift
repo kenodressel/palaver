@@ -43,11 +43,9 @@ private func durations(_ pairs: [(String, Double)]) -> PyDict<Double> { PyDict(p
         let nudge = n.update(talk(share: 0.72))
         #expect(nudge?.kind == "talk_share")
         #expect(nudge?.text == "You've talked 72 % of the last 10 min")
-    }
-
-    @Test func test_no_talk_share_nudge_in_the_first_minutes() {
-        let n = Nudges(clock: TestClock().callAsFunction)
-        #expect(n.update(talk(until: 200, share: 0.9, window: 200, me: 150)) == nil)
+        // None in the first minutes.
+        let early = Nudges(clock: TestClock().callAsFunction)
+        #expect(early.update(talk(until: 200, share: 0.9, window: 200, me: 150)) == nil)
     }
 
     @Test func test_monologue_nudge() {
@@ -82,10 +80,14 @@ private func durations(_ pairs: [(String, Double)]) -> PyDict<Double> { PyDict(p
         #expect(n.update(talk(share: 0.8, monologue: 200))?.kind == "monologue")
     }
 
-    @Test func test_a_nudge_is_shown_for_two_minutes_then_gone() {
+    @Test func test_a_nudge_is_shown_for_two_minutes_then_gone_and_is_fresh_once() {
         let clock = TestClock()
         let n = Nudges(clock: clock.callAsFunction)
         n.update(talk(monologue: 200))
+        #expect(n.fresh == Nudge(kind: "monologue", text: "3-min monologue", at: 900))
+        clock.now = 60
+        #expect(n.update(talk(monologue: 260))?.kind == "monologue")  // still shown ...
+        #expect(n.fresh == nil)  // ... but not new
         clock.now = 119
         #expect(n.update(talk())?.kind == "monologue")
         clock.now = 121
@@ -120,6 +122,8 @@ private func durations(_ pairs: [(String, Double)]) -> PyDict<Double> { PyDict(p
         #expect(Nudges.shareThreshold(parse(#"{"share_1on1": 0.8, "share_group": null}"#), "1:1") == 0.85)
         let n = Nudges(baseline: base, kind: "group", clock: TestClock().callAsFunction)
         #expect(n.update(talk(share: 0.62))?.text == "You've talked 62 % of the last 10 min")
+        // The kind of meeting by how many spoke.
+        #expect(Nudges.speechKind(1) == "1:1" && Nudges.speechKind(4) == "group" && Nudges.speechKind(0) == nil)
     }
 
     @Test func test_quiet_invitee_nudge() {
@@ -151,6 +155,10 @@ private func durations(_ pairs: [(String, Double)]) -> PyDict<Double> { PyDict(p
         #expect(n.update(talk(), speech: speech(wpm: 160, fillers: 1.6)) == nil)
         #expect(n.update(talk(), speech: speech(wpm: 190, fillers: 1.6))?.text
                 == "You're speaking fast: 190 words a minute (usual 140)")
+        // No pace or filler nudge without a baseline of enough meetings.
+        let few = Nudges(baseline: parse(#"{"meetings": 1, "wpm": 100.0, "fillers_per_minute": {"de": 0.5}}"#),
+                         clock: TestClock().callAsFunction)
+        #expect(few.update(talk(), speech: speech(wpm: 200, fillers: 6.0)) == nil)
     }
 
     @Test func test_filler_nudge_against_the_baseline_in_the_same_language() {
@@ -161,41 +169,26 @@ private func durations(_ pairs: [(String, Double)]) -> PyDict<Double> { PyDict(p
                 == "More filler words than usual: 4.0 a minute (usual 1.5), mostly “halt”")
     }
 
-    @Test func test_no_pace_or_filler_nudge_without_a_baseline() {
-        let n = Nudges(baseline: parse(#"{"meetings": 1, "wpm": 100.0, "fillers_per_minute": {"de": 0.5}}"#),
-                       clock: TestClock().callAsFunction)
-        #expect(n.update(talk(), speech: speech(wpm: 200, fillers: 6.0)) == nil)
-    }
-
     // MARK: who hasn't spoken
 
     @Test func test_an_invitee_not_among_the_named_voices_is_quiet() {
         let byVoice = durations([("SPEAKER_00", 300), ("SPEAKER_01", 120), ("SPEAKER_02", 4)])
         let names = PyDict([("SPEAKER_00", "Timo Strauß"), ("SPEAKER_01", "Anna")])
         #expect(Nudges.quietInvitees(["Valerie", "Timo Strauß"], talk: byVoice, names: names, elapsed: 700) == ["Valerie"])
-    }
-
-    @Test func test_unsure_when_a_voice_has_no_name() {
-        let byVoice = durations([("SPEAKER_00", 300), ("SPEAKER_01", 120)])
-        #expect(Nudges.quietInvitees(["Valerie"], talk: byVoice, names: PyDict([("SPEAKER_00", "Timo Strauß")]),
-                                     elapsed: 700).isEmpty)
-    }
-
-    @Test func test_unsure_early_or_with_little_call_audio() {
-        let names = PyDict([("SPEAKER_00", "Timo Strauß")])
-        #expect(Nudges.quietInvitees(["Valerie"], talk: durations([("SPEAKER_00", 300)]), names: names, elapsed: 300).isEmpty)
-        #expect(Nudges.quietInvitees(["Valerie"], talk: durations([("SPEAKER_00", 30)]), names: names, elapsed: 900).isEmpty)
-    }
-
-    @Test func test_invitees_matched_by_first_name() {
+        // Invitees are matched by first name.
         #expect(Nudges.quietInvitees(["Timo Strauß"], talk: durations([("SPEAKER_00", 300)]),
                                      names: PyDict([("SPEAKER_00", "Timo")]), elapsed: 900).isEmpty)
     }
 
-    @Test func test_speech_kind() {
-        #expect(Nudges.speechKind(1) == "1:1")
-        #expect(Nudges.speechKind(4) == "group")
-        #expect(Nudges.speechKind(0) == nil)
+    @Test func test_unsure_when_a_voice_has_no_name_two_share_one_early_or_with_little_call_audio() {
+        let byVoice = durations([("SPEAKER_00", 300), ("SPEAKER_01", 120)])
+        #expect(Nudges.quietInvitees(["Valerie"], talk: byVoice, names: PyDict([("SPEAKER_00", "Timo Strauß")]),
+                                     elapsed: 700).isEmpty)
+        let same = PyDict([("SPEAKER_00", "Timo Strauß"), ("SPEAKER_01", "Timo Strauß")])
+        #expect(Nudges.quietInvitees(["Valerie"], talk: byVoice, names: same, elapsed: 700).isEmpty)
+        let names = PyDict([("SPEAKER_00", "Timo Strauß")])
+        #expect(Nudges.quietInvitees(["Valerie"], talk: durations([("SPEAKER_00", 300)]), names: names, elapsed: 300).isEmpty)
+        #expect(Nudges.quietInvitees(["Valerie"], talk: durations([("SPEAKER_00", 30)]), names: names, elapsed: 900).isEmpty)
     }
 
     @Test func test_the_meeting_context_from_the_calendar() {
@@ -237,12 +230,6 @@ private func durations(_ pairs: [(String, Double)]) -> PyDict<Double> { PyDict(p
         #expect(Nudges.enabledKinds(s) == expected)
     }
 
-    @Test func test_unsure_when_two_voices_have_the_same_name() {
-        let byVoice = durations([("SPEAKER_00", 300), ("SPEAKER_01", 120)])
-        let names = PyDict([("SPEAKER_00", "Timo Strauß"), ("SPEAKER_01", "Timo Strauß")])
-        #expect(Nudges.quietInvitees(["Valerie"], talk: byVoice, names: names, elapsed: 700).isEmpty)
-    }
-
     @Test func test_pace_and_filler_nudges_come_back_only_well_below_the_threshold() {
         let base = parse(#"{"meetings": 6, "wpm": 140.0, "fillers_per_minute": {"de": 1.5, "en": null}}"#)
         let clock = TestClock()
@@ -256,17 +243,5 @@ private func durations(_ pairs: [(String, Double)]) -> PyDict<Double> { PyDict(p
         n.update(talk(), speech: speech(wpm: 150, fillers: 1.0))  // well under it
         clock.now = 1200
         #expect(n.update(talk(), speech: fast)?.kind == "pace")
-    }
-
-    // tests/test_coach_notifications.py, the nudges' part.
-
-    @Test func test_a_new_nudge_is_fresh_once() {
-        let clock = TestClock()
-        let n = Nudges(clock: clock.callAsFunction)
-        n.update(talk(monologue: 200))
-        #expect(n.fresh == Nudge(kind: "monologue", text: "3-min monologue", at: 900))
-        clock.now = 60
-        #expect(n.update(talk(monologue: 260))?.kind == "monologue")  // still shown ...
-        #expect(n.fresh == nil)  // ... but not new
     }
 }

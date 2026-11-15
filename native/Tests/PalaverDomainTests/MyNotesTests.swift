@@ -161,7 +161,7 @@ import UniformTypeIdentifiers
         #expect(MyNotes.imageText(d, name) == text)
     }
 
-    @Test func test_text_is_read_once_and_cached() throws {
+    @Test func test_text_is_read_once_and_cached_and_a_failed_reading_counts_as_no_text() throws {
         let d = folder()
         var calls = 0
         let name = try MyNotes.addImage(d, data: png())
@@ -170,14 +170,10 @@ import UniformTypeIdentifiers
         #expect(try MyNotes.readImage(d, name, recognize: recognize) == "Slide 3")
         #expect(try MyNotes.readImage(d, name, recognize: recognize) == "Slide 3")
         #expect(calls == 1)
-    }
-
-    @Test func test_a_failed_reading_counts_as_no_text() throws {
-        let d = folder()
-        let name = try MyNotes.addImage(d, data: png())
+        let failing = try MyNotes.addImage(d, data: png())
         struct Broken: Error {}
-        #expect(try MyNotes.readImage(d, name, recognize: { _ in throw Broken() }) == "")
-        #expect(MyNotes.imageText(d, name) == "")
+        #expect(try MyNotes.readImage(d, failing, recognize: { _ in throw Broken() }) == "")
+        #expect(MyNotes.imageText(d, failing) == "")
     }
 
     @Test func test_an_image_deleted_while_it_is_read_leaves_nothing_behind() throws {
@@ -334,16 +330,8 @@ import UniformTypeIdentifiers
         #expect(loaded(d) == #"[{"text": "mine, more", "at": null}]"#)
     }
 
-    @Test func test_writers_in_other_processes_wait_for_the_lock() throws {
-        let d = folder()
-        let held = try holdLock(d)
-        let start = Date()
-        _ = try save(d, #"[{"text": "after the other writer", "at": null}]"#)
-        #expect(Date().timeIntervalSince(start) > 0.4)
-        held.wait()
-    }
-
-    @Test(arguments: ["adopt", "join", "split", "remove_image", "clear"])
+    /// Writers in other processes wait for the lock: a save and every other writer.
+    @Test(arguments: ["save", "adopt", "join", "split", "remove_image", "clear"])
     func test_every_writer_takes_the_lock(call: String) throws {
         let t = folder(), a = t.appendingPathComponent("a"), b = t.appendingPathComponent("b")
         try FileManager.default.createDirectory(at: a, withIntermediateDirectories: true)
@@ -353,6 +341,7 @@ import UniformTypeIdentifiers
         let held = try holdLock(a, seconds: 0.8)
         let start = Date()
         switch call {
+        case "save": _ = try save(a, #"[{"text": "after the other writer", "at": null}]"#)
         case "adopt": _ = try MyNotes.adopt(a, b)
         case "join": try MyNotes.join(a, b, keep: b, offset: 10)
         case "split": try MyNotes.split(a, b, at: 40)
@@ -388,13 +377,11 @@ import UniformTypeIdentifiers
         #expect(loaded(d) == #"[{"text": "prep", "at": null}, {"text": "early", "at": 10}, {"text": "new", "at": 50}, {"text": "late", "at": 90}]"#)
         try MyNotes.putBack(d, paragraphs(#"[{"text": "early", "at": 10}]"#).arrayValue!)  // already there: not twice
         #expect(MyNotes.load(d).filter { $0.text == "early" }.count == 1)
-    }
-
-    @Test func test_an_untimed_paragraph_goes_back_after_its_neighbour() throws {
-        let d = folder()
-        _ = try save(d, #"[{"text": "a", "at": null}, {"text": "c", "at": null}]"#)
-        try MyNotes.putBack(d, paragraphs(#"[{"text": "b", "at": null}]"#).arrayValue!, after: paragraphs(#"{"text": "a", "at": null}"#))
-        #expect(MyNotes.load(d).map(\.text) == ["a", "b", "c"])
+        // An untimed paragraph goes back after its neighbour.
+        let e = folder()
+        _ = try save(e, #"[{"text": "a", "at": null}, {"text": "c", "at": null}]"#)
+        try MyNotes.putBack(e, paragraphs(#"[{"text": "b", "at": null}]"#).arrayValue!, after: paragraphs(#"{"text": "a", "at": null}"#))
+        #expect(MyNotes.load(e).map(\.text) == ["a", "b", "c"])
     }
 
     @Test func test_text_on_an_image_cannot_close_the_notes_block() throws {

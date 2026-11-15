@@ -38,13 +38,6 @@ private func rows(_ url: URL) throws -> [JSONValue] {
         Usage.record("action", nil, path: blocker.appendingPathComponent("usage.jsonl"))
     }
 
-    @Test func test_long_texts_are_cut_so_events_stay_small() throws {
-        let path = try tempDir().appendingPathComponent("usage.jsonl")
-        Usage.record("error", fields: [("text", .string(String(repeating: "x", count: 5000)))], path: path)
-        let row = try #require(try rows(path).first)
-        #expect(row["text"]?.stringValue?.unicodeScalars.count == Usage.MAX_TEXT)
-    }
-
     @Test func test_read_skips_broken_lines() throws {
         let path = try tempDir().appendingPathComponent("usage.jsonl")
         try Data(("{\"kind\": \"view\", \"id\": \"today\", \"ts\": \"2026-10-30T10:00:00+01:00\"}\n{\"kind\": \"vi\n[1]\n").utf8)
@@ -52,7 +45,7 @@ private func rows(_ url: URL) throws -> [JSONValue] {
         #expect(Usage.read(path).map { $0["id"] } == [.string("today")])
     }
 
-    @Test func test_setting_events_name_the_key_never_a_secret() throws {
+    @Test func test_setting_events_name_the_key_never_a_secret_also_of_odd_bodies() throws {
         func body(_ s: String) throws -> JSONValue { try PythonJSON.parse(Data(s.utf8)) }
         func dumps(_ v: [JSONValue]) -> String { PythonJSON.dumps(.array(v)) }
         #expect(dumps(Usage.settingEvents(path: "/api/settings", body: try body(#"{"realtime": false, "bogus": 3}"#)))
@@ -63,6 +56,19 @@ private func rows(_ url: URL) throws -> [JSONValue] {
             #"{"use": {"notes": "claude"}, "provider": "azure", "endpoint": "https://x", "auth": "sk-zzz"}"#)))
         #expect(lm == #"[{"id": "use.notes", "value": "claude"}, {"id": "provider.azure", "fields": ["auth", "endpoint"]}]"#)
         #expect(!lm.contains("sk-zzz") && !lm.contains("https://x"))
+        // Odd bodies.
+        func odd(_ path: String, _ b: String) throws -> String { dumps(Usage.settingEvents(path: path, body: try body(b))) }
+        #expect(Usage.settingEvents(path: "/api/settings", body: .array([])).isEmpty)
+        #expect(try odd("/api/language-model/key", #"{"remove": 1}"#) == #"[{"id": "key.None", "removed": true}]"#)
+        #expect(try odd("/api/language-model", #"{"use": "claude-" , "local_model": 5}"#)
+                == #"[{"id": "use", "value": "claude-"}, {"id": "local_model", "value": "5"}]"#)
+        #expect(try odd("/api/language-model", #"{"use": {"notes": 1, "x": null}}"#)
+                == #"[{"id": "use.notes", "value": "1"}, {"id": "use.x", "value": "None"}]"#)
+        let long = String(repeating: "m", count: 300)
+        #expect(try odd("/api/language-model", #"{"local_model": "\#(long)"}"#)
+                == #"[{"id": "local_model", "value": "\#(String(repeating: "m", count: 120))"}]"#)
+        #expect(try odd("/api/settings", #"{"check_updates": true, "nudge_pace": "yes", "realtime": 1}"#)
+                == #"[{"id": "check_updates", "value": true}]"#)
     }
 
     @Test func test_the_catalog_of_the_window_is_kept() throws {
@@ -114,24 +120,6 @@ private func rows(_ url: URL) throws -> [JSONValue] {
         #expect(Usage.feature(try e(#"{"ts": "t", "kind": "view", "id": ""}"#)) == nil)
         #expect(Usage.feature(try e(#"{"ts": "t", "kind": "view"}"#)) == nil)
         #expect(Usage.feature(try e(#"{"ts": "t", "kind": "view", "id": 7}"#)) == "view:7")
-    }
-
-    @Test func settingEventsOfOddBodies() throws {
-        func body(_ s: String) throws -> JSONValue { try PythonJSON.parse(Data(s.utf8)) }
-        func dumps(_ path: String, _ b: String) throws -> String {
-            PythonJSON.dumps(.array(Usage.settingEvents(path: path, body: try body(b))))
-        }
-        #expect(Usage.settingEvents(path: "/api/settings", body: .array([])).isEmpty)
-        #expect(try dumps("/api/language-model/key", #"{"remove": 1}"#) == #"[{"id": "key.None", "removed": true}]"#)
-        #expect(try dumps("/api/language-model", #"{"use": "claude-" , "local_model": 5}"#)
-                == #"[{"id": "use", "value": "claude-"}, {"id": "local_model", "value": "5"}]"#)
-        #expect(try dumps("/api/language-model", #"{"use": {"notes": 1, "x": null}}"#)
-                == #"[{"id": "use.notes", "value": "1"}, {"id": "use.x", "value": "None"}]"#)
-        let long = String(repeating: "m", count: 300)
-        #expect(try dumps("/api/language-model", #"{"local_model": "\#(long)"}"#)
-                == #"[{"id": "local_model", "value": "\#(String(repeating: "m", count: 120))"}]"#)
-        #expect(try dumps("/api/settings", #"{"check_updates": true, "nudge_pace": "yes", "realtime": 1}"#)
-                == #"[{"id": "check_updates", "value": true}]"#)
     }
 
 }

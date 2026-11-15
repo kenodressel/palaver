@@ -25,12 +25,10 @@ private func bytes<T>(_ values: [T]) -> Data { values.withUnsafeBytes { Data($0)
         let interleavedReading = PCM.decodeMono(bytes(left + right), channels: 2, bits: 32, isFloat: true,
                                                 nonInterleaved: false)!
         #expect(!zip(interleavedReading, left).allSatisfy { abs($0 - $1) < 1e-6 })
-    }
-
-    @Test func planarDifferentChannelsAverage() {
-        let left = [Float](repeating: 0.1, count: 50), right = [Float](repeating: -0.5, count: 50)
-        let out = PCM.decodeMono(bytes(left + right), channels: 2, bits: 32, isFloat: true, nonInterleaved: true)!
-        #expect(out.count == 50 && out.allSatisfy { abs($0 + 0.2) < 1e-6 })
+        // Different channels average.
+        let l = [Float](repeating: 0.1, count: 50), r = [Float](repeating: -0.5, count: 50)
+        let mixed = PCM.decodeMono(bytes(l + r), channels: 2, bits: 32, isFloat: true, nonInterleaved: true)!
+        #expect(mixed.count == 50 && mixed.allSatisfy { abs($0 + 0.2) < 1e-6 })
     }
 
     @Test func int16ScalesBy32768() {

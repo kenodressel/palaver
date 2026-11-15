@@ -24,19 +24,7 @@ import PalaverDomain
         #expect(named["next_steps"]?.arrayValue?.first?["owner"] == .string("Valerie"))
         #expect(home.said.contains("Writing notes with Gemma 4 12B on this Mac…"))
         #expect(home.said.contains("Wrote \(paths.notes.path) — Angebot für Contoso"))
-        // Up to date: the model is not asked again, unless --force.
-        let asked = fake.asked.count
-        #expect(try await run(["notes", paths.folder.path], home.context(fake)) == 0)
-        #expect(fake.asked.count == asked && home.said.last == "Notes are up to date")
-        let again = FakeModel(json: NOTES_ANSWER, ControlFallback.suggest)
-        #expect(try await run(["notes", paths.folder.path, "--force"], home.context(again)) == 0)
-        #expect(again.asked.first?.prompt == fake.asked.first?.prompt)
-    }
-
-    @Test func theRunIsInSessionLogAndTheUsageLog() async throws {
-        let home = Home()
-        let paths = home.meeting()
-        #expect(try await run(["notes", paths.folder.path], home.context(FakeModel(json: NOTES_ANSWER, ControlFallback.suggest))) == 0)
+        // The run is in session.log and the usage log.
         let events = home.events(paths)
         let start = try #require(events.first { $0["event"] == .string("notes_start") })
         #expect(start["engine"] == .string("local") && start["model"] == .string(ModelChoice.DEFAULT_LOCAL_MODEL))
@@ -46,6 +34,13 @@ import PalaverDomain
         #expect(events.contains { $0["event"] == .string("projects_start") } && events.contains { $0["event"] == .string("projects_done") })
         let used = home.usage().first { $0["kind"] == .string("notes") }
         #expect(used?["ok"] == .bool(true) && used?["engine"] == .string("local") && used?["model"] == .string(ModelChoice.DEFAULT_LOCAL_MODEL))
+        // Up to date: the model is not asked again, unless --force.
+        let asked = fake.asked.count
+        #expect(try await run(["notes", paths.folder.path], home.context(fake)) == 0)
+        #expect(fake.asked.count == asked && home.said.last == "Notes are up to date")
+        let again = FakeModel(json: NOTES_ANSWER, ControlFallback.suggest)
+        #expect(try await run(["notes", paths.folder.path, "--force"], home.context(again)) == 0)
+        #expect(again.asked.first?.prompt == fake.asked.first?.prompt)
     }
 
     @Test func aBrokenAnswerIsAskedForAgainAndRepaired() async throws {

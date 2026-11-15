@@ -94,18 +94,21 @@ private func prepCalendar(_ now: PyDateTime) -> (CalendarProvider, CalendarEvent
         let s = try server()
         defer { s.stop() }
         #expect(dumps(doc(s)) == #"{"paragraphs": [], "images": {}, "revision": ""}"#)
+        let old = doc(s)["revision"] ?? .null
         let paragraphs = JSONValue.array([p("Ask about the **budget**", nil), p("- yes", 4.5)])
         let (status, answer) = saveNotes(s, BASE, paragraphs)
         #expect(status == 200 && answer["saved"] == .int(2) && answer["revision"]?.truthy == true)
         #expect(try MeetingsAPI.getMeeting(app: s.app, id: MEETING)["my_notes_revision"] == answer["revision"])
         #expect(dumps(doc(s)["paragraphs"]) == dumps(paragraphs))
-        #expect(dumps(PythonJSON.read(s.app.outputDir.appendingPathComponent("\(MEETING)/my-notes.json"))) == dumps(paragraphs))
-    }
+        let file = s.app.outputDir.appendingPathComponent("\(MEETING)/my-notes.json")
+        #expect(dumps(PythonJSON.read(file)) == dumps(paragraphs))
 
-    @Test func test_http_my_notes_refuse_garbage() throws {
-        let s = try server()
-        defer { s.stop() }
-        saveNotes(s, BASE, .array([p("kept", nil)]))
+        // A save on an old revision is refused with the notes as they are.
+        let (stale, current) = post(s, "\(BASE)/my-notes", .object([("paragraphs", .array([p("mine", nil)])), ("revision", old)]))
+        #expect(stale == 409 && dumps(current["document"]?["paragraphs"]) == dumps(paragraphs))
+        #expect(current["document"]?["revision"]?.truthy == true && current["error"]?.truthy == true)
+
+        // Garbage is refused.
         let revision = doc(s)["revision"] ?? .null
         #expect(post(s, "\(BASE)/my-notes", .object([("paragraphs", .array([]))])).0 == 400)  // a save says what it was based on
         let bodies: [JSONValue] = [
@@ -116,7 +119,7 @@ private func prepCalendar(_ now: PyDateTime) -> (CalendarProvider, CalendarEvent
         ]
         for body in bodies { #expect(post(s, "\(BASE)/my-notes", body).0 == 400, "\(dumps(body))") }
         #expect(post(s, "/api/meetings/2026-01-01T00-00-00/my-notes", .object([("paragraphs", .array([])), ("revision", .string(""))])).0 == 404)
-        #expect(dumps(PythonJSON.read(s.app.outputDir.appendingPathComponent("\(MEETING)/my-notes.json"))) == dumps(.array([p("kept", nil)])))
+        #expect(dumps(PythonJSON.read(file)) == dumps(paragraphs))
     }
 
     @Test func test_http_a_pasted_image_is_stored_served_and_read() throws {
@@ -134,11 +137,8 @@ private func prepCalendar(_ now: PyDateTime) -> (CalendarProvider, CalendarEvent
         saveNotes(s, BASE, .array([p("", 3, image: name)]))
         #expect(dumps(doc(s)["images"]) == dumps(.object([(name, .object([("text", .string("Slide: Budget Q3"))]))])))
         #expect(vision.read == [name])
-    }
 
-    @Test func test_http_only_images_and_only_image_names() throws {
-        let s = try server()
-        defer { s.stop() }
+        // Only images, and only image names.
         #expect(upload(s, BASE, Data("<svg/>".utf8)).0 == 400)
         #expect(post(s, "\(BASE)/my-notes/images", .object([("data", .string("not base64 !!"))])).0 == 400)
         #expect(post(s, "\(BASE)/my-notes/images", .object([("data", .string(""))])).0 == 400)
@@ -147,12 +147,14 @@ private func prepCalendar(_ now: PyDateTime) -> (CalendarProvider, CalendarEvent
         #expect(s.get("\(BASE)/my-notes/images/..%2Fmeta.json").status == 404)
     }
 
-    @Test func test_http_deleting_an_image_can_be_undone() throws {
+    @Test func test_http_deleting_an_image_or_clearing_can_be_undone_also_after_typing() throws {
         let s = try server()
         defer { s.stop() }
         let name = try #require(upload(s, BASE, PNG).1["name"]?.stringValue)
-        let images = s.app.outputDir.appendingPathComponent("\(MEETING)/my-notes", isDirectory: true)
+        let folder = s.app.outputDir.appendingPathComponent(MEETING, isDirectory: true)
+        let images = folder.appendingPathComponent("my-notes", isDirectory: true)
         #expect(until { exists(images.appendingPathComponent("\(name).txt")) })
+        let read = dumps(.object([(name, .object([("text", .string("Slide: Budget Q3"))]))]))
         let paragraphs = [p("before", 1), p("", 2, image: name), p("after", 3)]
         saveNotes(s, BASE, .array(paragraphs))
         let (status, answer) = post(s, "\(BASE)/my-notes/images/\(name)/delete")
@@ -162,52 +164,30 @@ private func prepCalendar(_ now: PyDateTime) -> (CalendarProvider, CalendarEvent
         #expect(post(s, "/api/undo", .object([("token", answer["undo"] ?? .null)])).0 == 200)
         let again = doc(s)
         #expect(dumps(again["paragraphs"]) == dumps(.array(paragraphs)))
-        #expect(dumps(again["images"]) == dumps(.object([(name, .object([("text", .string("Slide: Budget Q3"))]))])))
+        #expect(dumps(again["images"]) == read)
         #expect(post(s, "\(BASE)/my-notes/images/img-0123456789ab.png/delete").0 == 404)
-    }
 
-    @Test func test_http_undoing_a_delete_keeps_what_was_typed_since() throws {
-        let s = try server()
-        defer { s.stop() }
-        let name = try #require(upload(s, BASE, PNG).1["name"]?.stringValue)
-        let images = s.app.outputDir.appendingPathComponent("\(MEETING)/my-notes", isDirectory: true)
-        #expect(until { exists(images.appendingPathComponent("\(name).txt")) })
+        // Undoing a delete keeps what was typed since.
         saveNotes(s, BASE, .array([p("before", 1), p("", 2, image: name)]))
-        let answer = post(s, "\(BASE)/my-notes/images/\(name)/delete").1
+        let deleted = post(s, "\(BASE)/my-notes/images/\(name)/delete").1
         saveNotes(s, BASE, .array([p("before", 1), p("typed since", 9)]))
-        #expect(post(s, "/api/undo", .object([("token", answer["undo"] ?? .null)])).0 == 200)
+        #expect(post(s, "/api/undo", .object([("token", deleted["undo"] ?? .null)])).0 == 200)
         let now = doc(s)
         #expect(dumps(now["paragraphs"]) == dumps(.array([p("before", 1), p("", 2, image: name), p("typed since", 9)])))
-        #expect(dumps(now["images"]) == dumps(.object([(name, .object([("text", .string("Slide: Budget Q3"))]))])))
-    }
+        #expect(dumps(now["images"]) == read)
 
-    @Test func test_http_clearing_my_notes_can_be_undone_also_after_typing() throws {
-        let s = try server()
-        defer { s.stop() }
-        let name = try #require(upload(s, BASE, PNG).1["name"]?.stringValue)
-        let folder = s.app.outputDir.appendingPathComponent(MEETING, isDirectory: true)
-        #expect(until { exists(folder.appendingPathComponent("my-notes/\(name).txt")) })
-        let paragraphs = JSONValue.array([p("mine", nil), p("", 2, image: name)])
-        saveNotes(s, BASE, paragraphs)
-        var (status, answer) = post(s, "\(BASE)/my-notes/clear")
-        #expect(status == 200 && answer["paragraphs"] == .array([]) && !exists(folder.appendingPathComponent("my-notes.json")))
-        _ = post(s, "/api/undo", .object([("token", answer["undo"] ?? .null)]))
-        #expect(dumps(doc(s)["paragraphs"]) == dumps(paragraphs))
+        // Clearing my notes can be undone, also after typing.
+        let mine = JSONValue.array([p("mine", nil), p("", 2, image: name)])
+        saveNotes(s, BASE, mine)
+        var (cleared, clearing) = post(s, "\(BASE)/my-notes/clear")
+        #expect(cleared == 200 && clearing["paragraphs"] == .array([]) && !exists(folder.appendingPathComponent("my-notes.json")))
+        _ = post(s, "/api/undo", .object([("token", clearing["undo"] ?? .null)]))
+        #expect(dumps(doc(s)["paragraphs"]) == dumps(mine))
 
-        (_, answer) = post(s, "\(BASE)/my-notes/clear")
+        (_, clearing) = post(s, "\(BASE)/my-notes/clear")
         saveNotes(s, BASE, .array([p("new words", 30)]))
-        #expect(post(s, "/api/undo", .object([("token", answer["undo"] ?? .null)])).0 == 200)  // put back beside the new words
+        #expect(post(s, "/api/undo", .object([("token", clearing["undo"] ?? .null)])).0 == 200)  // put back beside the new words
         #expect(dumps(doc(s)["paragraphs"]) == dumps(.array([p("mine", nil), p("", 2, image: name), p("new words", 30)])))
-    }
-
-    @Test func test_http_a_save_on_an_old_revision_is_refused_with_the_notes_as_they_are() throws {
-        let s = try server()
-        defer { s.stop() }
-        let old = doc(s)["revision"] ?? .null
-        saveNotes(s, BASE, .array([p("from the other window", nil)]))
-        let (status, answer) = post(s, "\(BASE)/my-notes", .object([("paragraphs", .array([p("mine", nil)])), ("revision", old)]))
-        #expect(status == 409 && dumps(answer["document"]?["paragraphs"]) == dumps(.array([p("from the other window", nil)])))
-        #expect(answer["document"]?["revision"]?.truthy == true && answer["error"]?.truthy == true)
     }
 
     @Test func test_http_notes_written_before_the_meeting() throws {

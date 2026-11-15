@@ -38,14 +38,8 @@ import Testing
             ev("Holiday", -600, 1000, allDay: true),
         ]
         #expect(C.match(events, F.at(1), F.at(59))?.title == "Receipt case study")
-    }
-
-    @Test func test_no_event_when_the_overlap_is_marginal() {
-        #expect(C.match([ev("Before", -60, 2, "Anna")], F.at(0), F.at(30)) == nil)
-    }
-
-    @Test func test_a_call_that_runs_long_still_matches() {
-        #expect(C.match([ev("Sync", 0, 30, "Anna")], F.at(2), F.at(55))?.title == "Sync")
+        #expect(C.match([ev("Before", -60, 2, "Anna")], F.at(0), F.at(30)) == nil)  // no event when the overlap is marginal
+        #expect(C.match([ev("Sync", 0, 30, "Anna")], F.at(2), F.at(55))?.title == "Sync")  // a call that runs long still matches
     }
 
     @Test func test_candidates_leave_out_the_user_rooms_and_declines() {
@@ -138,6 +132,9 @@ import Testing
     @Test func test_attach_stores_the_matched_event() throws {
         let root = Root(); defer { root.remove() }
         let paths = RecordingPaths(root.t.url)
+        // Without a match it leaves nothing.
+        #expect(try C.attach(paths, provider: { _, _ in [] }, start: F.T0, end: F.at(30), stores: root.stores) == nil)
+        #expect(C.load(paths) == nil)
         var seen: [(Date, Date)] = []
         let provider: CalendarProvider = { start, end in
             seen.append((start, end))
@@ -148,13 +145,6 @@ import Testing
         #expect(seen[0].0 < F.T0.date && seen[0].1 > F.at(58).date)  // searched around it
         let loaded = C.load(paths)
         #expect(loaded == event && loaded?.attendees[0].email == "valerie@x.com")
-    }
-
-    @Test func test_attach_without_a_match_leaves_nothing() throws {
-        let root = Root(); defer { root.remove() }
-        let paths = RecordingPaths(root.t.url)
-        #expect(try C.attach(paths, provider: { _, _ in [] }, start: F.T0, end: F.at(30), stores: root.stores) == nil)
-        #expect(C.load(paths) == nil)
     }
 
     @Test func test_attach_all_fills_in_earlier_recordings() throws {
@@ -199,6 +189,8 @@ import Testing
         #expect(try C.attach(paths, provider: provider, start: F.T0, end: F.at(30), stores: root.stores) == nil)
         #expect(try C.attachAll(outputDir: root.t.url, provider: provider, stores: root.stores) == 0)
         #expect(C.load(paths) == nil)
+        try #"{"none": true}"#.write(to: paths.calendar, atomically: false, encoding: .utf8)  // as stored before links had a source
+        #expect(C.dismissed(paths))
     }
 
     /// The coordinator's rule (Task 10): a calendar.json Swift cannot read, though Python may, is never overwritten.

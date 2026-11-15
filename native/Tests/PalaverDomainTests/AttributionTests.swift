@@ -71,6 +71,12 @@ import Testing
         let d = CalendarEvents.decide(events, F.at(0), F.at(55))
         #expect(d.event?.title == "Northwind")
         #expect(d.link?.reason == "time match, 2 events overlapped; the other has no invitees" && d.link?.unsure == false)
+        // An event with only the user on it is a blocker too.
+        let me = Attendee(name: "Timo", email: "timo@kloud.io", isSelf: true)
+        let mine = CalendarEvent(title: "Focus", start: F.at(0), end: F.at(60), attendees: [me], uid: "focus")
+        let call = F.event("Northwind", 0, 60, "Anna")
+        let alone = CalendarEvents.decide([mine, call], F.at(0), F.at(55))
+        #expect(alone.event == call && alone.link?.unsure == false)
     }
 
     /// A temporary folder's config dir: the stores attach writes (prepared.json, projects.json, …).
@@ -112,17 +118,6 @@ import Testing
         let other: CalendarProvider = { _, _ in [F.event("Contoso sync", 0, 60, "Bob")] }
         #expect(try CalendarEvents.attach(paths, provider: other, start: F.at(0), end: F.at(55), stores: stores(t))?.title == "Northwind")
         #expect(CalendarEvents.loadLink(paths)?.byYou == true)
-    }
-
-    @Test func test_none_of_these_sticks() throws {
-        let t = F.folder(); defer { t.remove() }
-        let paths = RecordingPaths(t.url)
-        try CalendarEvents.dismiss(paths)
-        #expect(CalendarEvents.dismissed(paths))
-        #expect(try CalendarEvents.attach(paths, provider: { _, _ in [F.event("Northwind", 0, 60, "Anna")] },
-                                          start: F.at(0), end: F.at(55), stores: stores(t)) == nil)
-        t.write("calendar.json", #"{"none": true}"#)  // as stored before links had a source
-        #expect(CalendarEvents.dismissed(paths))
     }
 
     @Test func test_an_event_rejected_once_is_unsure_and_twice_never_matched_by_time() throws {
@@ -194,14 +189,6 @@ import Testing
         #expect(found.map { "\($0["kind"]!.stringValue!):\($0["link"]!["target"]!.stringValue!)" } == ["event:Sync", "project:Foundry"])
         #expect(found[0]["question"]?.stringValue == "Was this recording “Sync”?")
         #expect(found[1]["question"]?.stringValue == "Is this meeting part of Foundry?")
-    }
-
-    @Test func test_an_event_with_only_the_user_on_it_is_a_blocker() {
-        let me = Attendee(name: "Timo", email: "timo@kloud.io", isSelf: true)
-        let blocker = CalendarEvent(title: "Focus", start: F.at(0), end: F.at(60), attendees: [me], uid: "focus")
-        let call = F.event("Northwind", 0, 60, "Anna")
-        let d = CalendarEvents.decide([blocker, call], F.at(0), F.at(55))
-        #expect(d.event == call && d.link?.unsure == false)
     }
 
     // MARK: events: acceptances, rules

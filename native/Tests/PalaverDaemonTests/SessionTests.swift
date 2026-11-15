@@ -176,6 +176,8 @@ func rows(_ url: URL) -> [[String: Any]] {
         #expect(source.calls == ["start"] && s.mutedIn == nil)
         timeline!.set(true, at: hostNanos() - 2_000_000_000)
         #expect(s.mutedIn == "teams" && s.muteUnfollowed == nil)
+        s.noteMute()  // each tick: where the mic is not kept so far, for the meeting while it is recorded
+        #expect(MicMuted.read(folder)?.open == true && MicMuted.read(folder)?.app == "teams")
         source.unfollowed = true  // no Accessibility, no readable log
         #expect(s.muteUnfollowed == "teams")
         _ = try s.stop(reason: "call_ended")
@@ -233,7 +235,7 @@ func rows(_ url: URL) -> [[String: Any]] {
         #expect(capture != nil)
         #expect(MicMuted.read(folder)?.pending == true)  // processing waits for what Teams' log still tells
         let settled = MicMuted.settled(folder)
-        #expect(settled == MicMuted.State(pending: false, late: []))
+        #expect(settled == MicMuted.State(pending: false, late: [], app: "teams"))
         for _ in 0..<200 where source.calls.last != "stop" { Thread.sleep(forTimeInterval: 0.01) }
         #expect(source.calls.filter { $0 == "refresh" }.count >= 3 && source.calls.last == "stop")
     }

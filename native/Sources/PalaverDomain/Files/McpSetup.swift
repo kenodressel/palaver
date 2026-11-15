@@ -380,13 +380,14 @@ public struct McpSetup: @unchecked Sendable {
             try Undo.makedirs(dir)
             let name = (target as NSString).lastPathComponent
             let mode = before?.mode ?? Self.NEW_FILE_MODE
-            let tmp = dir + "/.\(name).\(getpid()).tmp"
+            let nonce = UUID().uuidString.prefix(8)
+            let tmp = dir + "/.\(name).\(getpid()).\(nonce).tmp"
             defer { _ = unlink(tmp) }
             try Self.writeDurably(tmp, Array((PythonJSON.dumps(config, indent: 2, ensureAscii: false) + "\n").utf8), mode: mode)
             guard Self.stamp(target) == before else { continue }  // Claude wrote it meanwhile: read it again
             if backup, let data {
                 let bak = dir + "/\(name).bak"
-                let bakTmp = dir + "/.\(name).bak.\(getpid()).tmp"
+                let bakTmp = dir + "/.\(name).bak.\(getpid()).\(nonce).tmp"
                 defer { _ = unlink(bakTmp) }
                 try Self.writeDurably(bakTmp, Array(data), mode: mode)
                 guard Darwin.rename(bakTmp, bak) == 0 else { throw Failed("\(bak): \(String(cString: strerror(errno)))") }
@@ -458,7 +459,8 @@ public struct McpSetup: @unchecked Sendable {
         let inode: ino_t
         let mode: mode_t
         static func == (a: Stamp, b: Stamp) -> Bool {
-            a.mtime.tv_sec == b.mtime.tv_sec && a.mtime.tv_nsec == b.mtime.tv_nsec && a.size == b.size && a.inode == b.inode
+            a.mtime.tv_sec == b.mtime.tv_sec && a.mtime.tv_nsec == b.mtime.tv_nsec
+                && a.size == b.size && a.inode == b.inode && a.mode == b.mode
         }
     }
 
@@ -477,15 +479,18 @@ public struct McpSetup: @unchecked Sendable {
 
     /// Runs `argv` to its end with `env`; `Failed` when it can't start or takes longer than `timeout` s (it is killed).
     public static func runCommand(_ argv: [String], env: [String: String], timeout: Double) throws -> Ran {
+        guard let executable = argv.first, !executable.isEmpty else {
+            throw Failed("cannot start empty command")
+        }
         let p = Foundation.Process()
-        p.executableURL = URL(fileURLWithPath: argv[0])
+        p.executableURL = URL(fileURLWithPath: executable)
         p.arguments = Array(argv.dropFirst())
         p.environment = env
         let out = Pipe(), err = Pipe()
         p.standardOutput = out
         p.standardError = err
         p.standardInput = FileHandle.nullDevice
-        do { try p.run() } catch { throw Failed("cannot start \(argv[0]): \(error.localizedDescription)") }
+        do { try p.run() } catch { throw Failed("cannot start \(executable): \(error.localizedDescription)") }
         let group = DispatchGroup()
         var outData = Data(), errData = Data()
         DispatchQueue.global().async(group: group) { outData = out.fileHandleForReading.readDataToEndOfFile() }
@@ -494,8 +499,13 @@ public struct McpSetup: @unchecked Sendable {
         p.terminationHandler = { _ in ended.signal() }
         if ended.wait(timeout: .now() + timeout) == .timedOut {
             p.terminate()
-            _ = ended.wait(timeout: .now() + 5)
-            throw Failed("\((argv[0] as NSString).lastPathComponent) \(argv.dropFirst().prefix(2).joined(separator: " ")) "
+            if ended.wait(timeout: .now() + 5) == .timedOut, p.isRunning {
+                _ = Darwin.kill(p.processIdentifier, SIGKILL)
+                _ = ended.wait(timeout: .now() + 2)
+            }
+            // Bounded: a grandchild that inherited the pipes keeps the readers (and an unbounded wait) open.
+            _ = group.wait(timeout: .now() + 2)
+            throw Failed("\((executable as NSString).lastPathComponent) \(argv.dropFirst().prefix(2).joined(separator: " ")) "
                          + "took longer than \(Int(timeout)) s")
         }
         group.wait()

@@ -171,14 +171,6 @@ private final class Heard: Recognizer, @unchecked Sendable {
         #expect(texts(try await mic.add(audio(1)).draft) == ["ja"])
     }
 
-    @Test func test_window_transcriber_sends_base64_float32() async throws {
-        let t = Temp(); defer { t.remove() }
-        let heard = Heard([tok("▁cloud", 0.0, 0.1, 0.9)])
-        let engine = InProcessEngine(version: "t", modelsDir: t.file("models"), recognizer: { heard })
-        let words = try await engine.transcribeWindow([Float](repeating: 0, count: 16_000))
-        #expect(heard.samples == [16_000])
-        #expect(words.map { [$0.text, "\($0.start)", "\($0.end)", "\($0.confidence ?? -1)"] } == [["cloud", "0.0", "0.1", "0.9"]])
-    }
 
     @Test func test_how_long_a_word_waits_depends_on_how_sure_the_model_is() async throws {
         // Measured on recorded meetings: unsure words (below 0.85) differ from the final transcript 50–100 % of the
@@ -196,8 +188,13 @@ private final class Heard: Recognizer, @unchecked Sendable {
         }
     }
 
-    @Test func test_word_confidence_is_its_least_sure_piece() async throws {
+    @Test func test_the_window_transcriber_gets_the_samples_and_a_words_confidence_is_its_least_sure_piece() async throws {
         let t = Temp(); defer { t.remove() }
+        let heard = Heard([tok("▁cloud", 0.0, 0.1, 0.9)])
+        let one = InProcessEngine(version: "t", modelsDir: t.file("models"), recognizer: { heard })
+        let cloud = try await one.transcribeWindow([Float](repeating: 0, count: 16_000))
+        #expect(heard.samples == [16_000])
+        #expect(cloud.map { [$0.text, "\($0.start)", "\($0.end)", "\($0.confidence ?? -1)"] } == [["cloud", "0.0", "0.1", "0.9"]])
         let engine = InProcessEngine(version: "t", modelsDir: t.file("models"),
                                      recognizer: { Heard([tok(" Bud", 0.0, 0.2, 0.99), tok("get", 0.2, 0.4, 0.7)]) })
         let words = try await engine.transcribeWindow([Float](repeating: 0, count: 16_000))

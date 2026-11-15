@@ -96,25 +96,18 @@ private func openaiOK(_ payload: String = #"{"reply": "Hi"}"#, finish: String = 
         #expect(!(try String(contentsOf: home.stores.accessLog, encoding: .utf8)).contains(KEY))
     }
 
-    @Test(arguments: [("max_tokens", "cut off"), ("refusal", "declined")])
-    func cutOffOrDeclinedAnswersAreSaidSo(stop: String, said: String) async throws {
-        let server = try StubServer { _ in anthropicOK(stop: stop) }
+    /// Cut off or declined: said so, not asked again; a broken answer is asked for once more, then given up.
+    @Test(arguments: [(#"{"reply": "Hello there"}"#, "max_tokens", "cut off", 1), (#"{"reply": "Hello there"}"#, "refusal", "declined", 1),
+                      ("no json here", "end_turn", "Anthropic API did not return a valid answer", 2)]
+          as [(payload: String, stop: String, said: String, requests: Int)])
+    func answersThatAreNoAnswerAreSaidSo(_ c: (payload: String, stop: String, said: String, requests: Int)) async throws {
+        let server = try StubServer { _ in anthropicOK(c.payload, stop: c.stop) }
         defer { server.stop() }
         let home = Home()
         try home.keys.write("anthropic.api_key", KEY)
         try home.settings.configure("anthropic", [("endpoint", .string("http://127.0.0.1:\(server.port)"))])
         let e = await thrown { try await ProviderTest.run("anthropic", settings: home.settings) } as? CloudError
-        #expect(e?.message.contains(said) == true && server.requests.count == 1)
-    }
-
-    @Test func aBrokenAnswerIsAskedOnceMore() async throws {
-        let server = try StubServer { _ in anthropicOK("no json here") }
-        defer { server.stop() }
-        let home = Home()
-        try home.keys.write("anthropic.api_key", KEY)
-        try home.settings.configure("anthropic", [("endpoint", .string("http://127.0.0.1:\(server.port)"))])
-        let e = await thrown { try await ProviderTest.run("anthropic", settings: home.settings) } as? CloudError
-        #expect(e?.message.hasPrefix("Anthropic API did not return a valid answer") == true && server.requests.count == 2)
+        #expect(e?.message.contains(c.said) == true && server.requests.count == c.requests)
     }
 
     @Test func theTestNeedsAReadyLanguageModel() async throws {

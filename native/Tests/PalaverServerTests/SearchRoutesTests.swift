@@ -173,58 +173,22 @@ private final class Fixture {
 @Suite struct SearchRoutesTests {
     // MARK: - test_search_api.py
 
-    @Test func test_people_who_all_took_part() throws {
+    /// The queries that only read the two meetings, on one fixture.
+    @Test func test_people_organizations_words_and_decisions_are_found() throws {
         let f = try Fixture()
         try f.two()
+        // People who all took part.
         #expect(ids(try f.search("Rico")) == [MEETING, OTHER])
         #expect(ids(try f.search("Rico and Anna")) == [MEETING])
         #expect(ids(try f.search("Anna and Thomas")) == [])
         #expect(ids(try f.search("Anna or Thomas")) == [MEETING, OTHER])
-    }
 
-    @Test func test_an_invitee_took_part_but_a_speaker_ranks_first() throws {
-        let f = try Fixture()
-        try f.two()
-        #expect(ids(try f.search("Thomas")) == [OTHER])  // invited only
-        try f.name(MEETING, "SPEAKER_00", "")  // Rico no longer speaks in MEETING …
-        try f.invite(f.paths(), [("Rico Lanza", "rico@kloud.io")])  // … he is invited
-        // MEETING is newer, but in OTHER Rico spoke ("Rico" there is "Rico Lanza" here).
-        #expect(ids(try f.search("rico lanza")) == [OTHER, MEETING])
-    }
+        // An organization took part.
+        let org = try SearchAPI.page(f.app, "meetings with ACB people", userName: "Timo", today: TODAY)
+        #expect(ids(org["results"]?.list ?? []) == [OTHER])
+        #expect(org["understood"]?.list.compactMap { $0["kind"]?.stringValue } == ["org"])
 
-    @Test func test_an_organization_took_part() throws {
-        let f = try Fixture()
-        try f.two()
-        let page = try SearchAPI.page(f.app, "meetings with ACB people", userName: "Timo", today: TODAY)
-        #expect(ids(page["results"]?.list ?? []) == [OTHER])
-        #expect(page["understood"]?.list.compactMap { $0["kind"]?.stringValue } == ["org"])
-    }
-
-    @Test func test_a_project_and_a_time_range() throws {
-        let f = try Fixture()
-        try f.two()
-        _ = try ProjectsAPI.setMeetingProject(f.app, id: MEETING, name: "ÖNW")
-        _ = try ProjectsAPI.setMeetingProject(f.app, id: OTHER, project: ProjectStore(path: f.stores.projects).find("ÖNW"))
-        #expect(ids(try f.search("ÖNW")) == [MEETING, OTHER])
-        #expect(ids(try f.search("ÖNW last month")) == [OTHER])
-        #expect(ids(try f.search("önw since 2026-10-01")) == [MEETING])
-    }
-
-    @Test func test_people_and_words_together() throws {
-        let f = try Fixture()
-        try f.two()
-        let second = f.paths(OTHER)
-        try write(read(second.transcriptJson).changing(1) { $0.with("text", .string("Welcome to the pricing talk.")) },
-                  to: second.transcriptJson)
-        let found = try f.search("with Rico about pricing")
-        #expect(found.count == 1 && found[0]["id"] == .string(OTHER))
-        #expect(PythonJSON.dumps(found[0]["hits"] ?? .null)
-                == #"[{"start": 1.0, "speaker": "Rico", "text": "Welcome to the pricing talk."}]"#)
-    }
-
-    @Test func test_what_was_decided_shows_the_decision_first() throws {
-        let f = try Fixture()
-        try f.two()
+        // What was decided shows the decision first.
         var found = try f.search("what did we decide about the offer")
         #expect(found.count == 2)
         #expect(PythonJSON.dumps(found[0]["notes_hits"] ?? .null) == #"[{"kind": "decision", "text": "Make an offer"}]"#)
@@ -233,50 +197,20 @@ private final class Fixture {
         #expect(found.count == 2)
         #expect(found[0]["notes_hits"]?.list.compactMap { $0["kind"]?.stringValue } == ["decision", "step"])  // decisions, then next steps
         #expect(PythonJSON.dumps(found[0]["notes_hits"]?[1] ?? .null) == #"{"kind": "step", "text": "Send the offer", "owner": "Anna"}"#)
-    }
 
-    @Test func test_decisions_alone_list_the_meetings_decisions() throws {
-        let f = try Fixture()
-        try f.two()
-        let first = f.paths()
-        try write(read(first.notes).with("decisions", .array([])), to: first.notes)
-        let found = try f.search("in:decisions")
-        #expect(found.count == 1 && found[0]["id"] == .string(OTHER))
-        #expect(PythonJSON.dumps(found[0]["notes_hits"] ?? .null) == #"[{"kind": "decision", "text": "Make an offer"}]"#)
-    }
-
-    @Test func test_lines_a_person_said() throws {
-        let f = try Fixture()
-        try f.two()
-        var found = try f.search("where did Anna talk about salary")
+        // Lines a person said.
+        found = try f.search("where did Anna talk about salary")
         #expect(found.count == 1 && found[0]["id"] == .string(MEETING))
         #expect(found[0]["hits"]?.list.compactMap { $0["speaker"]?.stringValue } == ["Anna"])
         #expect(try f.search("where did Rico talk about salary") == [])  // Anna said it, not Rico
         found = try f.search("by:Anna")
         #expect(found.count == 1 && found[0]["hit_count"] == .int(1))  // all she said
-    }
 
-    @Test func test_reviewed_and_next_steps() throws {
-        let f = try Fixture()
-        try f.two()
-        try ReviewAPI.markReviewed(f.app, id: OTHER, done: true)
-        #expect(ids(try f.search("is:reviewed")) == [OTHER])
-        #expect(ids(try f.search("is:unreviewed")) == [MEETING])
-        let first = f.paths()
-        try write(read(first.notes).with("next_steps", .array([])), to: first.notes)
-        #expect(ids(try f.search("has:steps")) == [OTHER])
-    }
-
-    @Test func test_a_quoted_name_is_a_word() throws {
-        let f = try Fixture()
-        try f.two()
+        // A quoted name is a word.
         #expect(ids(try f.search(#""Rico" salary"#)) == [MEETING, OTHER])  // said in both
         #expect(try f.search(#""Tom""#) == [])  // nobody says Tom
-    }
 
-    @Test func test_the_page_gets_what_was_understood_and_whether_meaning_can_help() throws {
-        let f = try Fixture()
-        try f.two()
+        // The page gets what was understood and whether meaning can help.
         let page = try SearchAPI.page(f.app, "Rico last month salary", userName: "Timo", today: TODAY)
         #expect(PythonJSON.dumps(page["understood"] ?? .null) == PythonJSON.dumps(.array([
             .object([("kind", .string("person")), ("label", .string("Rico")), ("title", .string("Took part: named speaker or invited")),
@@ -287,6 +221,48 @@ private final class Fixture {
         #expect(page["words"] == .strings(["salary"]) && ids(page["results"]?.list ?? []) == [OTHER])
         #expect(page["meaning"] == .string("off"))  // no index yet in this folder
         #expect(try SearchAPI.page(f.app, "", userName: "Timo")["results"] == .array([]))
+    }
+
+    /// The queries that need the meetings changed, one change after the other on one fixture.
+    @Test func test_projects_reviews_decisions_words_and_invitees_as_the_meetings_change() throws {
+        let f = try Fixture()
+        try f.two()
+        // A project and a time range.
+        _ = try ProjectsAPI.setMeetingProject(f.app, id: MEETING, name: "ÖNW")
+        _ = try ProjectsAPI.setMeetingProject(f.app, id: OTHER, project: ProjectStore(path: f.stores.projects).find("ÖNW"))
+        #expect(ids(try f.search("ÖNW")) == [MEETING, OTHER])
+        #expect(ids(try f.search("ÖNW last month")) == [OTHER])
+        #expect(ids(try f.search("önw since 2026-10-01")) == [MEETING])
+
+        // Reviewed, and next steps.
+        try ReviewAPI.markReviewed(f.app, id: OTHER, done: true)
+        #expect(ids(try f.search("is:reviewed")) == [OTHER])
+        #expect(ids(try f.search("is:unreviewed")) == [MEETING])
+        let first = f.paths()
+        try write(read(first.notes).with("next_steps", .array([])), to: first.notes)
+        #expect(ids(try f.search("has:steps")) == [OTHER])
+
+        // Decisions alone list the meetings' decisions.
+        try write(read(first.notes).with("decisions", .array([])), to: first.notes)
+        var found = try f.search("in:decisions")
+        #expect(found.count == 1 && found[0]["id"] == .string(OTHER))
+        #expect(PythonJSON.dumps(found[0]["notes_hits"] ?? .null) == #"[{"kind": "decision", "text": "Make an offer"}]"#)
+
+        // People and words together.
+        let second = f.paths(OTHER)
+        try write(read(second.transcriptJson).changing(1) { $0.with("text", .string("Welcome to the pricing talk.")) },
+                  to: second.transcriptJson)
+        found = try f.search("with Rico about pricing")
+        #expect(found.count == 1 && found[0]["id"] == .string(OTHER))
+        #expect(PythonJSON.dumps(found[0]["hits"] ?? .null)
+                == #"[{"start": 1.0, "speaker": "Rico", "text": "Welcome to the pricing talk."}]"#)
+
+        // An invitee took part, but a speaker ranks first.
+        #expect(ids(try f.search("Thomas")) == [OTHER])  // invited only
+        try f.name(MEETING, "SPEAKER_00", "")  // Rico no longer speaks in MEETING …
+        try f.invite(f.paths(), [("Rico Lanza", "rico@kloud.io")])  // … he is invited
+        // MEETING is newer, but in OTHER Rico spoke ("Rico" there is "Rico Lanza" here).
+        #expect(ids(try f.search("rico lanza")) == [OTHER, MEETING])
     }
 
     /// Python replaces `api.search_meaning`; here the meeting is indexed with the fake encoder, which records what it is
@@ -309,6 +285,12 @@ private final class Fixture {
         #expect(r.json?["understood"]?.list.compactMap { $0["label"]?.stringValue } == ["Rico", "Anna"])
         r = s.get("/api/search/meaning?q=offer")
         #expect(r.status == 200 && Set(ids(r.json?.list ?? [])) == [MEETING, OTHER] && asked.queries == ["offer"])
+
+        // The window learns when the index is built: from the menu bar app, and nothing without one.
+        #expect(s.get("/api/search/status").json == .object([("indexing", .bool(false)), ("downloading", .bool(false))]))
+        let busy = try TestServer(recording: BusyApp(indexing: .object([("indexing", .bool(true)), ("downloading", .int(1))])))
+        defer { busy.stop() }
+        #expect(busy.get("/api/search/status").json == .object([("indexing", .bool(true)), ("downloading", .bool(true))]))
     }
 
     @Test func test_the_lines_of_a_meeting_are_made_readable_once_per_change() throws {
@@ -325,15 +307,6 @@ private final class Fixture {
         let found = try f.search("salary")
         #expect(f.app.searchCaches.linesMade == 3 && found.count == 2)
         #expect(found.first?["hits"]?[0]?["text"] == .string("Thanks Rico, the salary band is too low."))
-    }
-
-    @Test func test_the_window_learns_when_the_index_is_built() throws {
-        let s = try TestServer(recording: BusyApp(indexing: .object([("indexing", .bool(true)), ("downloading", .int(1))])))
-        defer { s.stop() }
-        #expect(s.get("/api/search/status").json == .object([("indexing", .bool(true)), ("downloading", .bool(true))]))
-        let none = try TestServer()  // no menu bar app
-        defer { none.stop() }
-        #expect(none.get("/api/search/status").json == .object([("indexing", .bool(false)), ("downloading", .bool(false))]))
     }
 
     /// At start the window's server makes every meeting readable for the search, after a delay, and never while a
@@ -371,14 +344,6 @@ private final class Fixture {
             let g = try Fixture(recording: BusyApp(busy: busy))
             #expect(Background.busyRecording(g.app) == busy)
         }
-    }
-
-    @Test func test_the_server_warms_the_search_at_start() throws {
-        let f = try Fixture()
-        let held = Latch()
-        defer { held.open() }
-        ServeMain.started(f.app, log: nil, port: 0, url: nil, readyFD: nil, warmClock: { _ in held.wait(5) })
-        #expect(f.app.background.warming != nil)
     }
 
     /// The warming thread exists before the ready line is written, and the line is written once. The ready pipe is
@@ -430,7 +395,7 @@ private final class Fixture {
 
     // MARK: - test_webapp.py
 
-    @Test func test_search_finds_transcript_lines_and_notes() throws {
+    @Test func test_search_finds_transcript_lines_and_notes_matching_words_from_their_start() throws {
         let f = try Fixture()
         try pageMeeting(f.out)
         var found = try SearchAPI.search(f.app, "SALARY", userName: "Timo")
@@ -438,15 +403,13 @@ private final class Fixture {
         found = try SearchAPI.search(f.app, "make an offer", userName: "Timo")
         #expect(found.count == 1 && found[0]["in_notes"] == .bool(true) && found[0]["hits"] == .array([]))
         #expect(try SearchAPI.search(f.app, "nothing like this", userName: "Timo") == [])
-    }
 
-    @Test func test_search_matches_words_from_their_start() throws {
-        let f = try Fixture()
-        let paths = try pageMeeting(f.out)
+        // Words match from their start.
+        let paths = f.paths()
         let transcript = read(paths.transcriptJson).changing(1) { $0.with("text", .string("Lass uns den Wortvorrat prüfen.")) }
             .changing(2) { $0.with("text", .string("Das RTV-Projekt läuft gut.")) }
         try write(transcript, to: paths.transcriptJson)
-        var found = try SearchAPI.search(f.app, "rtv", userName: "Timo")
+        found = try SearchAPI.search(f.app, "rtv", userName: "Timo")
         #expect(found.count == 1 && found[0]["hits"]?.list.compactMap { $0["text"]?.stringValue } == ["Das RTV-Projekt läuft gut."])  // not "Wortvorrat"
         #expect(try SearchAPI.search(f.app, "rojekt", userName: "Timo") == [])
         found = try SearchAPI.search(f.app, "projekt rtv", userName: "Timo")  // every word, any order
@@ -464,7 +427,7 @@ private final class Fixture {
 
     // MARK: - test_semantic.py, the window's halves
 
-    @Test func test_search_by_meaning_in_the_window() throws {
+    @Test func test_search_by_meaning_in_the_window_and_switched_off() throws {
         let f = try Fixture()
         _ = try f.semanticMeeting()
         try f.name(MEETING, "SPEAKER_00", "Mara")
@@ -482,17 +445,10 @@ private final class Fixture {
         #expect(try SearchAPI.meaning(f.app, "pricing since 2026-11-01", userName: "Timo", searcher: searcher,
                                       today: PyDate(2026, 12, 1)) == [])
         #expect(try SearchAPI.page(f.app, "pricing", userName: "Timo")["meaning"] == .string("ready"))
-    }
 
-    /// The window's half (`api.search_meaning`); the `ready` half is SearchIndexTests'.
-    @Test func test_search_by_meaning_can_be_switched_off() throws {
-        let f = try Fixture()
-        _ = try f.semanticMeeting()
-        f.app.background.modelFolder = { _ in f.dir }
-        _ = try SearchIndex.indexStale(outputDir: f.out, encoder: { FakeEncoder() })
+        // It can be switched off (the window's half, `api.search_meaning`; the `ready` half is SearchIndexTests').
         try SettingsFile.update([("search_meaning", .bool(false))], stores: f.stores)
         #expect(try SearchAPI.page(f.app, "pricing", userName: "Timo")["meaning"] == .string("off"))
-        let searcher = Searcher(outputDir: f.out, encoderFactory: { FakeEncoder() }, timer: nil)
         #expect(try SearchAPI.meaning(f.app, "pricing", userName: "Timo", searcher: searcher) == [])
     }
 }

@@ -128,13 +128,6 @@ private func readAll(_ fd: Int32) -> String {
         #expect(!p.log.contains("Valerie-k3y"))
     }
 
-    @Test func withoutAKeyItMakesItsOwn() throws {
-        let p = try ServerProcess(["--port", "0"], key: nil)
-        defer { p.stop() }
-        let line = p.firstLine()
-        #expect(try PyRegex(#"Open http://127\.0\.0\.1:\d+/\?key=[A-Za-z0-9_-]{43}"#).fullMatch(line) != nil, "\(line.count) chars")
-    }
-
     @Test func theEndToEndTestsServerAsksForNoKey() throws {
         let p = try ServerProcess(["--port", "0"], key: "Valerie-k3y", more: [ServeMain.TEST_NO_KEY: "1"])
         defer { p.stop() }
@@ -144,6 +137,11 @@ private func readAll(_ fd: Int32) -> String {
         let ping = Wire.send(port: port, Wire.request("GET", "/api/ping", headers: [("Host", "127.0.0.1:\(port)")]))
         #expect(ping.status == 200 && ping.text == #"{"ok": true}"#)
         #expect(ServeMain.serverKey([ServeMain.TEST_NO_KEY: ""]) != nil)  // empty: not set
+        // Without a key (or an empty one) it makes its own, which the ready line carries (portModeTakesTheKeyFromTheEnvironment).
+        for env in [[:], [ServeMain.KEY_ENV: ""]] as [[String: String]] {
+            let own = try #require(ServeMain.serverKey(env))
+            #expect(try PyRegex(#"[A-Za-z0-9_-]{43}"#).fullMatch(own) != nil, "\(own.count) chars")
+        }
     }
 
     @Test func theAppSocketIsTheOneGiven() throws {
@@ -208,25 +206,14 @@ private func readAll(_ fd: Int32) -> String {
         close(fds[0])
 
         // The process: the app's end of stdin closes, the server finishes and exits 0.
+        // Then stopping it closes nothing else: a closed descriptor's number goes to the next open: closing it a
+        // second time closed someone else's (a connection the server had just accepted: NIO's getpeername then
+        // failed with EBADF).
         let h = try handedOver()
         let p = try ServerProcess(["--listen-fd", "\(h.listen)", "--ready-fd", "\(h.readyWrite)"], key: "k", inherit: [h.listen, h.readyWrite])
-        defer { p.stop() }
         close(h.listen)
         close(h.readyWrite)
         #expect(readAll(h.readyRead) == "ready\n")  // written once it serves, then closed
-        close(h.readyRead)
-        p.closeStdin()
-        #expect(p.process.waitUntilExit(timeout: 10) == 0)
-    }
-
-    @Test func stoppingAfterTheAppLetGoClosesNothingElse() throws {
-        // A closed descriptor's number goes to the next open: closing it a second time closed someone
-        // else's (a connection the server had just accepted: NIO's getpeername then failed with EBADF).
-        let h = try handedOver()
-        let p = try ServerProcess(["--listen-fd", "\(h.listen)", "--ready-fd", "\(h.readyWrite)"], key: "k", inherit: [h.listen, h.readyWrite])
-        close(h.listen)
-        close(h.readyWrite)
-        #expect(readAll(h.readyRead) == "ready\n")
         close(h.readyRead)
         // The number is one only this test uses: in the parallel run, another suite's open could take a low one
         // between the close and the reuse below.

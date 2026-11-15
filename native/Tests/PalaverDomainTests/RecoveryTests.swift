@@ -16,23 +16,15 @@ import Testing
         return paths
     }
 
-    @Test func test_promote_part_files_renames_orphans() throws {
+    @Test func test_promote_part_files_renames_orphans_and_skips_when_final_already_present() throws {
         let t = TempFolder("recovery"); defer { t.remove() }
         let paths = RecordingPaths(t.url)
-        try silent(URL(fileURLWithPath: paths.micRawWav.path + ".part"), 0.5)
-        try silent(URL(fileURLWithPath: paths.systemWav.path + ".part"), 0.5)
-        try Recovery.promoteParts(paths)
-        #expect(!t.exists("mic_raw.wav.part") && !t.exists("system.wav.part"))
-        #expect(t.exists("mic_raw.wav") && t.exists("system.wav"))
-    }
-
-    @Test func test_promote_part_files_skips_when_final_already_present() throws {
-        let t = TempFolder("recovery"); defer { t.remove() }
-        let paths = RecordingPaths(t.url)
+        try silent(URL(fileURLWithPath: paths.systemWav.path + ".part"), 0.5)  // an orphan
         try silent(paths.micRawWav, 1.0)
         t.write("mic_raw.wav.part", "junk")
         let before = try Data(contentsOf: paths.micRawWav)
         try Recovery.promoteParts(paths)
+        #expect(!t.exists("system.wav.part") && t.exists("system.wav"))
         #expect(try Data(contentsOf: paths.micRawWav) == before)  // the final file is the source of truth
         #expect(t.text("mic_raw.wav.part") == "junk")  // left for the user to look at
     }
@@ -52,15 +44,11 @@ import Testing
         #expect(try String(contentsOf: paths.meta, encoding: .utf8).hasPrefix("{\n  \"start_time\": \"2026-04-29T14:30:00"))
     }
 
-    @Test func test_synthesize_meta_from_audio_returns_false_without_audio() throws {
+    @Test func test_synthesize_meta_from_audio_returns_false_without_audio_or_on_unparseable_folder() throws {
         let t = TempFolder("recovery"); defer { t.remove() }
-        let paths = try folder(t)
-        #expect(!Recovery.synthesizeMeta(paths))
-        #expect(!FileManager.default.fileExists(atPath: paths.meta.path))
-    }
-
-    @Test func test_synthesize_meta_from_audio_returns_false_on_unparseable_folder() throws {
-        let t = TempFolder("recovery"); defer { t.remove() }
+        let silentFolder = try folder(t)
+        #expect(!Recovery.synthesizeMeta(silentFolder))
+        #expect(!FileManager.default.fileExists(atPath: silentFolder.meta.path))
         let paths = try folder(t, "not-a-timestamp")
         try silent(paths.micRawWav, 1.0)
         #expect(!Recovery.synthesizeMeta(paths))

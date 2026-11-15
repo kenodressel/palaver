@@ -117,6 +117,11 @@ private final class Flag: @unchecked Sendable {
         #expect(gone.status == 400 && gone.error?.contains("no longer") == true)
         let none = s.post("/api/recording/stop")
         #expect(none.status == 400 && none.error == "bad request: 'meeting'")
+        // Says why the running recording records.
+        let why: JSONValue = .object([("meeting", .string(MEETING)),
+                                      ("text", .string("Recording · Teams call since 16:03 · mic AirPods (24 kHz)"))])
+        rec.why = why
+        #expect(s.get("/api/recording/question").json == .object([("question", asked), ("recording", why)]))
     }
 
     @Test func test_http_the_window_starts_and_stops_a_recording() throws {
@@ -139,6 +144,8 @@ private final class Flag: @unchecked Sendable {
         #expect(asked == ["start None", "stop \(MEETING)", "stop 2026-10-27T09-00-00"])
     }
 
+    /// No recording question, memory or live coach outside the menu bar app (none, and an app without them); updates
+    /// and uninstalling say the app is gone.
     @Test func test_http_no_recording_question_outside_the_menu_bar_app() throws {
         let s = try TestServer(meetings: { try meeting($0) })
         defer { s.stop() }
@@ -146,14 +153,16 @@ private final class Flag: @unchecked Sendable {
         #expect(s.post("/api/recording/stop", .object([("meeting", .string(MEETING))])).status == 400)
         let start = s.post("/api/recording/start")
         #expect(start.status == 400 && start.error?.contains("menu bar app") == true)
-    }
-
-    @Test func test_http_says_why_the_running_recording_records() throws {
-        let why: JSONValue = .object([("meeting", .string(MEETING)),
-                                      ("text", .string("Recording · Teams call since 16:03 · mic AirPods (24 kHz)"))])
-        let s = try TestServer(recording: FakeRecording(why: why), meetings: { try meeting($0) })
-        defer { s.stop() }
-        #expect(s.get("/api/recording/question").json == .object([("question", .null), ("recording", why)]))
+        #expect(s.post("/api/update/check").error == Remote.APP_GONE)
+        #expect(s.post("/api/uninstall", .object([("confirm", .bool(true))])).error == Remote.APP_GONE)
+        #expect(s.post("/api/uninstall").error == AppAPI.NEEDS_CONFIRMATION)  // the confirmation is asked first
+        let withoutThem = try TestServer(recording: FakeRecording())
+        defer { withoutThem.stop() }
+        for server in [s, withoutThem] {
+            let r = server.get("/api/memory")
+            #expect(r.status == 200 && r.json == .object([("memory", .null)]))
+            #expect(server.get("/api/recording/coach").json == .object([("coach", .null)]))
+        }
     }
 
     /// Stopped from the menu: the recorder is done (no .part, meta.json written), but the live worker takes another
@@ -190,18 +199,20 @@ private final class Flag: @unchecked Sendable {
         #expect(s.get("/api/meetings").json?.arrayValue?.map { $0["status"] } == [.string("failed")])
         let first = s.post("/api/meetings/\(MEETING)/transcribe")  // the meeting's page, as GET answers it
         #expect(first.status == 200 && first.json?["status"] == .string("processing"))
-        #expect(first.json?["id"] == .string(MEETING) && first.json?["untranscribed"] == .null)
+        #expect(first.json?["id"] == .string(MEETING) && first.json?["untranscribed"] == .null && first.json?["speakers"] != nil)
         #expect(first.json == s.get("/api/meetings/\(MEETING)").json)
         #expect(rec.queued.map(\.path) == [folder!.path])
         let again = s.post("/api/meetings/\(MEETING)/transcribe")  // already on its way
         #expect(again.status == 400 && again.error?.contains("transcribed already, or being transcribed") == true)
     }
 
-    /// The page and the Refused halves (the marker and `missing_models` are ProcessStateTests').
+    /// The page and the Refused halves (the marker and `missing_models` are ProcessStateTests'); asking starts the
+    /// missing download (test_setup_api.py), once.
     @Test func test_a_meeting_waiting_for_its_models_says_which() throws {
         let rec = FakeRecording()
         let here = Flag(false)
-        let s = try TestServer(recording: rec, speechHere: { here.value }, meetings: {
+        let probe = FakeProbe()
+        let s = try TestServer(recording: rec, probe: probe, speechHere: { here.value }, meetings: {
             _ = try untranscribed($0, ProcessState.models, missing: ["Speech models"])
         })
         defer { s.stop() }
@@ -212,24 +223,13 @@ private final class Flag: @unchecked Sendable {
         #expect(waiting.error == "Waiting for Speech models: not downloaded yet. Palaver downloads it now; "
                 + "the meeting is transcribed once it is done.")
         #expect(rec.queued.isEmpty)
-        here.value = true
-        #expect(s.post("/api/meetings/\(MEETING)/transcribe").status == 200 && rec.queued.count == 1)
-    }
-
-    /// test_setup_api.py: a meeting waiting for the speech models starts their download.
-    @Test func test_transcribe_again_starts_the_missing_download() throws {
-        let probe = FakeProbe()
-        let s = try TestServer(recording: FakeRecording(), probe: probe, speechHere: { false }, meetings: {
-            _ = try untranscribed($0, ProcessState.models, missing: ["Speech models"])
-        })
-        defer { s.stop() }
-        let r = s.post("/api/meetings/\(MEETING)/transcribe")
-        #expect(r.status == 400 && r.error?.contains("Palaver downloads it now") == true)
         #expect(until { probe.fetched == ["speech"] })
         // Here already: nothing more to fetch.
         #expect(s.post("/api/meetings/\(MEETING)/transcribe").status == 400)
         usleep(100_000)
         #expect(probe.fetched == ["speech"])
+        here.value = true
+        #expect(s.post("/api/meetings/\(MEETING)/transcribe").status == 200 && rec.queued.count == 1)
     }
 
     /// The server's own answer to whether the speech models are here is the probe's (the engine's, cached).
@@ -251,15 +251,6 @@ private final class Flag: @unchecked Sendable {
         #expect(until { probe.fetched == ["speech"] })
     }
 
-    @Test func test_a_transcribed_meeting_is_not_transcribed_again() throws {
-        let rec = FakeRecording()
-        let s = try TestServer(recording: rec, meetings: { try meeting($0) })
-        defer { s.stop() }
-        #expect(s.post("/api/meetings/\(MEETING)/transcribe").status == 400)
-        #expect(rec.queued.isEmpty)
-        #expect(s.get("/api/meetings/\(MEETING)").json?["untranscribed"] == .null)
-    }
-
     @Test func test_without_the_menu_bar_app_nothing_is_transcribed() throws {
         let s = try TestServer(meetings: { _ = try untranscribed($0, ProcessState.error) })
         defer { s.stop() }
@@ -267,21 +258,18 @@ private final class Flag: @unchecked Sendable {
         #expect(r.status == 400 && r.error == AppAPI.NOT_TRANSCRIBED_HERE)
     }
 
-    @Test func test_http_transcribe_again() throws {
-        let rec = FakeRecording()
-        let s = try TestServer(recording: rec, meetings: { _ = try untranscribed($0, ProcessState.error, error: "boom") })
-        defer { s.stop() }
-        let first = s.post("/api/meetings/\(MEETING)/transcribe")
-        #expect(first.status == 200 && first.json?["status"] == .string("processing") && rec.queued.count == 1)
-        #expect(first.json?["id"] == .string(MEETING) && first.json?["speakers"] != nil)
-        let again = s.post("/api/meetings/\(MEETING)/transcribe")
-        #expect(again.status == 400 && again.error?.contains("being transcribed") == true)
-    }
-
+    /// Only an untranscribed recording folder is transcribed again: not a transcribed meeting, an unknown one or a
+    /// path that leaves the folder.
     @Test func transcribeAgainOnlyReachesRecordingFolders() throws {
         let rec = FakeRecording()
-        let s = try TestServer(recording: rec, meetings: { _ = try untranscribed($0, ProcessState.error) })
+        let done = "2026-10-27T10-00-00"
+        let s = try TestServer(recording: rec, meetings: {
+            _ = try untranscribed($0, ProcessState.error)
+            try meeting($0, done)
+        })
         defer { s.stop() }
+        #expect(s.post("/api/meetings/\(done)/transcribe").status == 400)
+        #expect(s.get("/api/meetings/\(done)").json?["untranscribed"] == .null)
         let r = s.post("/api/meetings/2026-10-27T09-00-00/transcribe")
         #expect(r.status == 404 && r.error == "not found: 2026-10-27T09-00-00")
         #expect(s.post("/api/meetings/..%2F..%2Fetc/transcribe").status == 404)
@@ -323,27 +311,9 @@ private final class Flag: @unchecked Sendable {
 
     // MARK: - memory (test_memory_api.py), the live coach (test_live_coach_api.py)
 
-    @Test func test_http_memory_from_the_menu_bar_app() throws {
+    @Test func test_http_memory_and_the_live_coach_of_the_running_recording() throws {
         let mem: JSONValue = .object([("total", .int(5 << 30)), ("app", .int(1 << 28)), ("workers", .array([])),
                                       ("budgets", .object([("live", .double(5.0))]))])
-        let rec = FakeRecording()
-        rec.mem = mem
-        let s = try TestServer(recording: rec)
-        defer { s.stop() }
-        let r = s.get("/api/memory")
-        #expect(r.status == 200 && r.text == PythonJSON.dumps(.object([("memory", mem)]), ensureAscii: false))
-    }
-
-    @Test func test_http_no_memory_outside_the_menu_bar_app() throws {
-        for rec in [nil, FakeRecording()] as [RecordingRemote?] {
-            let s = try TestServer(recording: rec)
-            defer { s.stop() }
-            let r = s.get("/api/memory")
-            #expect(r.status == 200 && r.json == .object([("memory", .null)]))
-        }
-    }
-
-    @Test func test_http_the_live_coach_of_the_running_recording() throws {
         let coach: JSONValue = .object([
             ("meeting", .string(MEETING)), ("talk", .object([("speaking", .string("me")), ("share", .double(0.62))])),
             ("text", .string("You 62 % of the last 10 min")),
@@ -351,18 +321,13 @@ private final class Flag: @unchecked Sendable {
         ])
         let rec = FakeRecording()
         rec.live = coach
+        rec.mem = mem
         let s = try TestServer(recording: rec, meetings: { try meeting($0) })
         defer { s.stop() }
         let r = s.get("/api/recording/coach")
         #expect(r.status == 200 && r.text == PythonJSON.dumps(.object([("coach", coach)]), ensureAscii: false))
-    }
-
-    @Test func test_no_live_coach_outside_the_menu_bar_app() throws {
-        for rec in [nil, FakeRecording()] as [RecordingRemote?] {  // none, and an app without one
-            let s = try TestServer(recording: rec)
-            defer { s.stop() }
-            #expect(s.get("/api/recording/coach").json == .object([("coach", .null)]))
-        }
+        let m = s.get("/api/memory")
+        #expect(m.status == 200 && m.text == PythonJSON.dumps(.object([("memory", mem)]), ensureAscii: false))
     }
 
     // MARK: - updates and uninstalling (test_update_api.py)
@@ -430,14 +395,6 @@ private final class Flag: @unchecked Sendable {
         // Only a real tick counts.
         #expect(app.calls.map { "\($0.0) \(PythonJSON.dumps($0.1))" } == [
             #"uninstall {"models": false, "recordings": false}"#, #"uninstall {"models": true, "recordings": false}"#])
-    }
-
-    @Test func outsideTheAppUpdatesAndUninstallingSayItIsGone() throws {
-        let s = try TestServer()
-        defer { s.stop() }
-        #expect(s.post("/api/update/check").error == Remote.APP_GONE)
-        #expect(s.post("/api/uninstall", .object([("confirm", .bool(true))])).error == Remote.APP_GONE)
-        #expect(s.post("/api/uninstall").error == AppAPI.NEEDS_CONFIRMATION)  // the confirmation is asked first
     }
 
     // MARK: - notifications

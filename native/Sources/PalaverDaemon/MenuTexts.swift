@@ -62,8 +62,8 @@ public enum MenuText {
         if error { return "⚠️" }
         let state = status["state"]?.stringValue
         if state == "recording" {
-            var icon = truthy(status, "missing") || truthy(status, "warnings") ? "🔴⚠" : "🔴"  // never for a hint
-            if mutedIn(status) != nil { icon += "🔇" }  // the mic is not kept now (the icon gets its badge too)
+            // Never for a hint; muted in the call, the icon's mic-slash badge says so (🔇 is a speaker, not the mic).
+            let icon = truthy(status, "missing") || truthy(status, "warnings") ? "🔴⚠" : "🔴"
             return icon + (now.map { " " + clock(elapsed(status, $0)) } ?? "")
         }
         if truthy(status, "transcribing") {
@@ -78,7 +78,7 @@ public enum MenuText {
     // MARK: - muted in the call
 
     /// The call app the user is muted in while recording ("Teams"): their mic is not kept now. The menu bar
-    /// icon gets a mic-slash badge, the title a 🔇, the status line says so.
+    /// icon gets a mic-slash badge and the status line says so.
     public static func mutedIn(_ status: JSONValue) -> String? {
         guard status["state"]?.stringValue == "recording", let app = status["muted"]?.stringValue else { return nil }
         return app == "slack" ? "Slack" : "Teams"

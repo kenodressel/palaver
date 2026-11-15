@@ -20,26 +20,21 @@ import Testing
         Utterance(speaker: speaker, start: start, end: end, text: text)
     }
 
-    @Test func test_renders_header_with_metadata() {
+    @Test func test_renders_header_with_metadata_and_plural_speakers() {
         let md = render([u("Timo", 0, 2, "hallo")], duration: 120)
         #expect(md.contains("2026-04-17 14:30") && md.contains("2 min") && md.contains("1 speaker"))
+        let three = render([u("Timo", 0, 1, "hi"), u("SPEAKER_00", 1, 2, "hello"), u("SPEAKER_01", 2, 3, "hey")], duration: 60)
+        #expect(three.contains("3 speakers"))
     }
 
-    @Test func test_renders_plural_speakers() {
-        let md = render([u("Timo", 0, 1, "hi"), u("SPEAKER_00", 1, 2, "hello"), u("SPEAKER_01", 2, 3, "hey")], duration: 60)
-        #expect(md.contains("3 speakers"))
-    }
-
-    @Test func test_renders_utterances_sorted_by_start() throws {
+    @Test func test_renders_utterances_sorted_by_start_with_their_time() throws {
         let md = render([u("Timo", 90, 95, "dritte zeile"), u("SPEAKER_00", 30, 40, "zweite zeile"), u("Timo", 0, 10, "erste zeile")],
                         duration: 100)
         let a = try #require(md.range(of: "erste zeile")), b = try #require(md.range(of: "zweite zeile")),
             c = try #require(md.range(of: "dritte zeile"))
         #expect(a.lowerBound < b.lowerBound && b.lowerBound < c.lowerBound)
         #expect(md.contains("**Timo**") && md.contains("**SPEAKER_00**"))
-    }
-
-    @Test func test_timestamp_format_relative() {
+        // the time of a line: the start plus its offset
         #expect(render([u("Timo", 125, 130, "hallo")], duration: 200).contains("[14:32:05]"))
     }
 

@@ -40,23 +40,15 @@ private func shortTmp() -> String {
                       log: { logs.value.append($0) })
     }
 
-    @Test func datagramBecomesNotification() {
-        let c = FakeCenter()
-        let n = make(c, dir: shortTmp())
-        n.handleDatagram(Data(#"{"title":"Done","message":"Notes are ready","open":"2026-10-21T16-29-29"}"#.utf8))
-        #expect(c.posts.count == 1)
-        #expect(c.posts[0].0 == "Done" && c.posts[0].1 == "Notes are ready")
-        #expect(c.posts[0].2 == ["open": "2026-10-21T16-29-29"])
-    }
-
-    @Test func quietDatagramPostsWithoutSoundAndExpires() {
+    @Test func datagramBecomesNotificationAndAQuietOnePostsWithoutSoundAndExpires() {
         // #19: a nudge comes quiet (no sound, passive) and goes away by itself after `expires` seconds.
         let c = FakeCenter()
         let n = make(c, dir: shortTmp())
         n.handleDatagram(Data(#"{"title":"Live coach","message":"3-min monologue","open":"m","quiet":true,"expires":120}"#.utf8))
-        n.handleDatagram(Data(#"{"title":"Done","message":"Notes are ready","open":"m"}"#.utf8))
+        n.handleDatagram(Data(#"{"title":"Done","message":"Notes are ready","open":"2026-10-21T16-29-29"}"#.utf8))
         n.handleDatagram(Data(#"{"title":"T","quiet":"yes","expires":"soon"}"#.utf8))  // not a bool, not a number
         #expect(c.posts.map(\.0) == ["Live coach", "Done", "T"])
+        #expect(c.posts[1].1 == "Notes are ready" && c.posts[1].2 == ["open": "2026-10-21T16-29-29"])
         #expect(c.manner.map(\.0) == [true, false, false])
         #expect(c.manner.map(\.1) == [120.0, nil, nil])
     }

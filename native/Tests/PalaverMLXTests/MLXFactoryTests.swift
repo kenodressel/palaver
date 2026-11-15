@@ -17,7 +17,7 @@ func hubFolder() -> URL {
 }
 
 @Suite struct MLXFactoryTests {
-    @Test func aModelThatIsNotInTheCacheSaysHowToGetIt() throws {
+    @Test func aModelInTheCacheIsReadInPlaceWithItsBudgetAndNotLoadedYetOneNotThereSaysHowToGetIt() throws {
         let hub = hubFolder()
         let stores = StorePaths(configDir: hub.appendingPathComponent("config"), home: hub.appendingPathComponent("home"),
                                 hubCache: hub)
@@ -27,16 +27,10 @@ func hubFolder() -> URL {
         } catch let error as EngineUnavailable {
             #expect(String(describing: error) == LocalModel.notDownloaded(ModelCatalog.GEMMA))
         }
-    }
-
-    @Test func aModelInTheCacheIsReadInPlaceWithItsBudgetAndNotLoadedYet() throws {
-        let hub = hubFolder()
         let snap = HFCache(root: hub).snapshotDir(repo: ModelCatalog.GEMMA, revision: "de9e183868050b34bf6b4272518500ffcebf15b3")
         try FileManager.default.createDirectory(at: snap, withIntermediateDirectories: true)
         try Data("{}".utf8).write(to: snap.appendingPathComponent("config.json"))
         try Data("w".utf8).write(to: snap.appendingPathComponent("model.safetensors"))
-        let stores = StorePaths(configDir: hub.appendingPathComponent("config"), home: hub.appendingPathComponent("home"),
-                                hubCache: hub)
         let made = try MLXLocal.factory(stores: stores, env: [LocalModel.BUDGET_ENV: "12"])(ModelCatalog.GEMMA)
         let model = try #require(made as? MLXModel)
         #expect(model.folder.path == snap.path && model.repo == ModelCatalog.GEMMA)

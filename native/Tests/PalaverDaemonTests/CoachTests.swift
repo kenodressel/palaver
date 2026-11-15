@@ -48,27 +48,14 @@ extension DaemonTicksD {
         #expect(h.status()["talk_text"] == .null)
     }
 
+    /// coach.json reaches the status and daemon.json; a missing, broken or stale one is nulls.
     @Test func coachJsonReachesTheStatusAndDaemonJson() async throws {
         let h = try Harness(tempDir(), activity: teams { 10 <= $0 && $0 < 100 }) { deps, _ in
             deps.launchCoach = { _ in FakeWorker() }
         }
         await h.run { $0 > 30 }
-        writeJSON(h.rec(0).appendingPathComponent("coach.json"), status)
-        h.daemon.tick()
-        let s = h.state()
-        #expect(s["talk_text"]?.stringValue == "You 70 % of the last 10 min")
-        #expect(s["nudge"]?["text"]?.stringValue == "4-min monologue")
-        #expect(s["talk"]?["speaking"]?.stringValue == "me")
-        #expect(s["quiet"] == .strings(["Timo Strauß"]))
-        await h.run { $0 > 150 }
-        #expect(h.state()["talk_text"] == .null && h.state()["nudge"] == .null && h.state()["quiet"] == .array([]))
-    }
-
-    @Test func aMissingOrStaleOrBrokenFileIsNulls() async throws {
-        let h = try Harness(tempDir(), activity: teams { 10 <= $0 && $0 < 100 }) { deps, _ in
-            deps.launchCoach = { _ in FakeWorker() }
-        }
-        await h.run { $0 > 30 }
+        // memory.py watches live, stream, notes, process, the index and the question helper: no coach.
+        #expect(h.daemon.workers().isEmpty)
         let file = h.rec(0).appendingPathComponent("coach.json")
         let nulls = { (h.status()["talk"] == .null, h.status()["talk_text"] == .null, h.status()["nudge"] == .null,
                        h.status()["quiet"] == .array([])) }
@@ -76,19 +63,16 @@ extension DaemonTicksD {
         touch(file, "{ not json")
         #expect(nulls() == (true, true, true, true))  // broken
         writeJSON(file, status)
-        #expect(h.status()["talk_text"]?.stringValue != nil)
+        h.daemon.tick()
+        let s = h.state()
+        #expect(s["talk_text"]?.stringValue == "You 70 % of the last 10 min")
+        #expect(s["nudge"]?["text"]?.stringValue == "4-min monologue")
+        #expect(s["talk"]?["speaking"]?.stringValue == "me")
+        #expect(s["quiet"] == .strings(["Timo Strauß"]))
         try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-60)], ofItemAtPath: file.path)
         #expect(nulls() == (true, true, true, true))  // stale: the worker died
-    }
-
-    @Test func theCoachIsNotInTheMemoryWatchdogsList() async throws {
-        // memory.py watches live, stream, notes, process, the index and the question helper: no coach.
-        let w = FakeWorker()
-        let h = try Harness(tempDir(), activity: teams { 10 <= $0 && $0 < 100 }) { deps, _ in
-            deps.launchCoach = { _ in w }
-        }
-        await h.run { $0 > 30 }
-        #expect(h.daemon.workers().isEmpty)
+        await h.run { $0 > 150 }
+        #expect(h.state()["talk_text"] == .null && h.state()["nudge"] == .null && h.state()["quiet"] == .array([]))
     }
 
     @Test func aCoachThatExitedIsNotStartedAgain() async throws {
@@ -216,14 +200,11 @@ func waitFor(_ timeout: Double = 30, _ cond: () -> Bool) async -> Bool {
         #expect(!exists(root.appendingPathComponent(folder)))
     }
 
-    @Test func idleStatusShape() {
-        let s = FakeTestCapture().recorder().status()
-        #expect(s["state"] as? String == "idle" && s["max_seconds"] as? Double == 20.0 && s.count == 2)
-    }
-
     @Test func startStopAnalyzeGivesTheChecksAndKeepsNothing() async throws {
         let cap = FakeTestCapture()
         let t = cap.recorder()
+        let idle = t.status()
+        #expect(idle["state"] as? String == "idle" && idle["max_seconds"] as? Double == 20.0 && idle.count == 2)
         let s = try t.start(busy: { false }, mode: ["transcribe": "cloud", "service": "Soniox"])
         #expect(s["state"] as? String == "recording" && s["max_seconds"] as? Double == 20.0 && s["seconds"] is Double)
         let folder = try #require(cap.started.first)

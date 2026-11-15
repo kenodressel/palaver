@@ -298,7 +298,8 @@ def test_the_live_refresh_leaves_the_notes_tab_alone_while_i_type(page, app_serv
     expect(ta).to_have_value("Typing while they talk")
     assert ta.evaluate("t => t.selectionStart") == len("Typing while they talk")
     show_tab(page, "Transcript")
-    expect(page.locator("#main .transcript")).to_contain_text("Eine neue Zeile vom Band.", timeout=15_000)
+    page.evaluate("window.palaver.poll()")  # the next poll, now that nobody types: not 10 s later
+    expect(page.locator("#main .transcript")).to_contain_text("Eine neue Zeile vom Band.")
 
 
 # --- the tabs ------------------------------------------------------------------------------------

@@ -7,24 +7,20 @@ import Testing
 private let BASE = "http://127.0.0.1:8765/"
 
 @Suite struct WindowURLTests {
-    @Test func aNewWindowLoads() {
-        #expect(WindowPage.needsLoad(current: nil, url: BASE))
-    }
-
-    @Test func reopeningFromTheMenuBarKeepsThePageAndItsHistory() {
-        // The menu bar passes the bare address; the page is somewhere under it.
-        #expect(!WindowPage.needsLoad(current: BASE + "#/people", url: BASE))
-        #expect(!WindowPage.needsLoad(current: BASE + "#/2026-10-21T16-29-29", url: BASE))
-        #expect(!WindowPage.needsLoad(current: BASE, url: BASE))
-    }
-
-    @Test func aNotificationOpensItsMeeting() {
-        #expect(WindowPage.needsLoad(current: BASE + "#/people", url: BASE + "#/2026-10-21T16-29-29"))
-        #expect(!WindowPage.needsLoad(current: BASE + "#/2026-10-21T16-29-29", url: BASE + "#/2026-10-21T16-29-29"))
-    }
-
-    @Test func anotherServerLoads() {
-        #expect(WindowPage.needsLoad(current: "http://127.0.0.1:9999/#/people", url: BASE))
+    @Test(arguments: [
+        (nil, BASE, true),  // a new window loads
+        // Reopening from the menu bar keeps the page and its history: the menu bar passes the bare
+        // address; the page is somewhere under it.
+        (BASE + "#/people", BASE, false),
+        (BASE + "#/2026-10-21T16-29-29", BASE, false),
+        (BASE, BASE, false),
+        // A notification opens its meeting.
+        (BASE + "#/people", BASE + "#/2026-10-21T16-29-29", true),
+        (BASE + "#/2026-10-21T16-29-29", BASE + "#/2026-10-21T16-29-29", false),
+        ("http://127.0.0.1:9999/#/people", BASE, true),  // another server loads
+    ] as [(String?, String, Bool)])
+    func whenTheWindowLoads(current: String?, url: String, loads: Bool) {
+        #expect(WindowPage.needsLoad(current: current, url: url) == loads)
     }
 
     @Test func aRestartedServerReloadsItsOwnPageOnly() {
@@ -87,6 +83,7 @@ private let BASE = "http://127.0.0.1:8765/"
         #expect(WindowMenus.bar.map(\.title) == ["Palaver", "Edit", "Meeting", "View", "Help"])
         #expect(WindowMenus.bar.map(\.runsPageCommands) == [false, false, true, true, true])
         #expect(WindowMenus.helpMenuTitle == "Help")
+        #expect(WindowMenus.help == [WindowMenus.Command("Report a Problem…", "reportProblem", "")])
     }
 
     /// MEETING_MENU, verbatim: titles, the page's command names and the key equivalents (an
@@ -109,10 +106,6 @@ private let BASE = "http://127.0.0.1:8765/"
         #expect(WindowMenus.view.compactMap { $0.map { "\($0.name) \($0.key)" } } == ["back [", "forward ]", "palette k"])
         // Then a separator and Reload, sent to the web view itself.
         #expect(WindowMenus.reload == WindowMenus.Item("Reload", "reload:", "r", .webView))
-    }
-
-    @Test func theHelpMenu() {
-        #expect(WindowMenus.help == [WindowMenus.Command("Report a Problem…", "reportProblem", "")])
     }
 
     @Test func thePalaverAndEditMenus() {

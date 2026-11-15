@@ -53,15 +53,12 @@ import Testing
                              attendees: people + rooms + [Attendee(name: "Timo", isSelf: true)], uid: uid, series: series, location: location)
     }
 
-    @Test func test_a_meeting_without_a_mark_shows_every_voice_as_itself() {
+    @Test func test_a_meeting_without_a_mark_shows_every_voice_as_itself_and_a_whole_meeting_mark_as_several_people() throws {
         let m = meeting(); defer { m.remove() }
         #expect(SharedMic.display(m.paths).isEmpty)
         #expect(!SharedMic.meetingMarked(m.paths))
         #expect(!FileManager.default.fileExists(atPath: m.paths.speakersShared.path))
-    }
-
-    @Test func test_a_whole_meeting_mark_makes_every_remote_voice_several_people() throws {
-        let m = meeting(); defer { m.remove() }
+        // A whole-meeting mark makes every remote voice several people.
         try markMeeting(m, true)
         #expect(SharedMic.display(m.paths) == PyDict(["SPEAKER_00", "SPEAKER_01", "SPEAKER_02"].map { ($0, "Several people") }))
         try markMeeting(m, false)
@@ -135,6 +132,9 @@ import Testing
 
         try SharedMic.remember(e, false, stores: later.stores)
         #expect(!SharedMic.remembered(e, stores: later.stores))
+        // A single event cannot be remembered.
+        #expect(!SharedMic.canRemember(event("All Hands", series: false)))
+        #expect(!SharedMic.canRemember(nil))
     }
 
     @Test func test_a_meeting_the_user_unmarked_stays_unmarked_for_its_series() throws {
@@ -144,11 +144,6 @@ import Testing
         try SharedMic.setMeeting(m.paths, false)
         #expect(try !SharedMic.applySeries(m.paths, event: e, stores: m.stores))
         #expect(!SharedMic.meetingMarked(m.paths))
-    }
-
-    @Test func test_a_single_event_cannot_be_remembered() {
-        #expect(!SharedMic.canRemember(event("All Hands", series: false)))
-        #expect(!SharedMic.canRemember(nil))
     }
 
     @Test func test_an_all_hands_in_the_calendar_suggests_the_mark() throws {
@@ -166,22 +161,17 @@ import Testing
         #expect(PythonJSON.dumps(found.json) == #"{"gathering": false, "room": true, "invitees": 12, "voices": 2, "few_voices": true}"#)
         #expect(try SharedMic.suggestion(m.paths, event: e)
                 == "A meeting room was booked, and 12 people were invited but only 2 voices were heard.")
+        // A room in the location counts as a room.
+        #expect(try SharedMic.signals(m.paths, event: event("Review", invited: 12, location: "Besprechungsraum Attakring")).room)
     }
 
-    @Test func test_a_meeting_room_alone_is_no_reason_to_suggest() throws {
+    @Test func test_a_meeting_room_alone_many_quiet_invitees_alone_or_no_event_are_no_reason_to_suggest() throws {
         let m = meeting(); defer { m.remove() }
         #expect(try SharedMic.suggestion(m.paths, event: event("Sprint review", invited: 3, room: true)) == nil)
         #expect(try SharedMic.suggestion(m.paths, event: event("Sprint review", invited: 3, location: "Raum 3.12")) == nil)
-    }
-
-    @Test func test_many_quiet_invitees_alone_are_no_reason_to_suggest() throws {
-        let m = meeting(); defer { m.remove() }  // a webinar: many invited, one or two speak
-        #expect(try SharedMic.suggestion(m.paths, event: event("Webinar", invited: 30)) == nil)
-    }
-
-    @Test func test_a_room_in_the_location_counts_as_a_room() throws {
-        let m = meeting(); defer { m.remove() }
-        #expect(try SharedMic.signals(m.paths, event: event("Review", invited: 12, location: "Besprechungsraum Attakring")).room)
+        #expect(try SharedMic.suggestion(m.paths, event: event("Webinar", invited: 30)) == nil)  // a webinar: many invited, one or two speak
+        #expect(try SharedMic.suggestion(m.paths, event: nil) == nil)
+        #expect(try SharedMic.signals(m.paths, event: nil).invitees == 0)
     }
 
     @Test func test_a_dismissed_or_marked_meeting_is_not_suggested_again() throws {
@@ -193,12 +183,6 @@ import Testing
         #expect(try SharedMic.suggestion(m.paths, event: e) != nil)
         try SharedMic.setLane(m.paths, "SPEAKER_00", true)
         #expect(try SharedMic.suggestion(m.paths, event: e) == nil)
-    }
-
-    @Test func test_a_meeting_without_an_event_has_no_suggestion() throws {
-        let m = meeting(); defer { m.remove() }
-        #expect(try SharedMic.suggestion(m.paths, event: nil) == nil)
-        #expect(try SharedMic.signals(m.paths, event: nil).invitees == 0)
     }
 
     @Test func test_a_room_is_not_recognized_suggested_or_an_unknown_recurring_voice() throws {
@@ -357,7 +341,7 @@ import Testing
     }
 
     // test_shared_mic.py's tests that run `calendar_events.assign` (which calls `apply_series`).
-    @Test func test_an_event_of_a_remembered_series_marks_the_meeting_it_is_linked_to() throws {
+    @Test func test_an_event_of_a_remembered_series_marks_the_meeting_it_is_linked_to_until_it_gets_another() throws {
         let m = meeting(); defer { m.remove() }
         try SharedMic.remember(event("All Hands", series: true), true, stores: m.stores)
         try CalendarEvents.assign(m.paths, event("All Hands", series: true), stores: m.stores)
@@ -366,13 +350,7 @@ import Testing
         try FileManager.default.createDirectory(at: other.folder, withIntermediateDirectories: true)
         try CalendarEvents.assign(other, event("Weekly", uid: "other", series: true), stores: m.stores)
         #expect(!SharedMic.meetingMarked(other))
-    }
-
-    @Test func test_a_mark_from_a_series_goes_when_the_meeting_gets_another_event() throws {
-        let m = meeting(); defer { m.remove() }
-        try SharedMic.remember(event("All Hands", series: true), true, stores: m.stores)
-        try CalendarEvents.assign(m.paths, event("All Hands", series: true), stores: m.stores)
-        #expect(SharedMic.meetingMarked(m.paths))
+        // A mark from a series goes when the meeting gets another event.
         try CalendarEvents.assign(m.paths, event("Weekly", uid: "weekly", series: true), stores: m.stores)
         #expect(!SharedMic.meetingMarked(m.paths))
         try SharedMic.setMeeting(m.paths, true)  // marked by hand: stays with any event

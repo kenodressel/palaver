@@ -76,6 +76,8 @@ func build(autoSync: Bool = false, notes: Bool = true, answer: AutoSyncAnswer? =
         _ = try b.daemon.deps.launchStream!(rec)
         _ = try b.daemon.deps.launchCoach!(rec)
         _ = try b.daemon.deps.launchIndex!()
+        let notes = try #require(b.daemon.deps.launchNotes)
+        _ = try notes(rec)  // the notes are palaver-lm's
         let options = ["--config", "/w.toml", "--no-notify"]
         #expect(b.spawned.calls.map(\.args) == [
             [WORKER] + options + ["process", "/m/rec", "--no-notes"],
@@ -83,8 +85,10 @@ func build(autoSync: Bool = false, notes: Bool = true, answer: AutoSyncAnswer? =
             [WORKER] + options + ["stream", "/m/rec"],
             [WORKER] + options + ["coach", "/m/rec"],
             [WORKER] + options + ["index"],
+            [LM] + options + ["notes", "/m/rec"],
         ])
-        #expect(b.spawned.calls.map(\.qos) == [.utility, .background, .utility, .background, .background])  // as before
+        // Background work runs at low priority.
+        #expect(b.spawned.calls.map(\.qos) == [.utility, .background, .utility, .background, .background, .utility])  // as before
         let synced = try build(autoSync: true, worker: WORKER)
         _ = try synced.daemon.deps.launchProcessing(rec)
         #expect(synced.spawned.calls[0].args == [WORKER] + options + ["run", "/m/rec"])
@@ -92,34 +96,6 @@ func build(autoSync: Bool = false, notes: Bool = true, answer: AutoSyncAnswer? =
         let spawned = Spawned()
         _ = try recordingLauncher(spawned, worker: WORKER).launch("calendar-attach", nil, extra: ["--since", "36"])
         #expect(spawned.calls[0].args == [WORKER] + options + ["calendar-attach", "--since", "36"])
-    }
-
-    @Test func notesArePalaverLMs() async throws {
-        let b = try build(autoSync: false, worker: WORKER, lm: LM)
-        let notes = try #require(b.daemon.deps.launchNotes)
-        _ = try notes(rec)
-        #expect(b.spawned.calls[0].args == [LM, "--config", "/w.toml", "--no-notify", "notes", "/m/rec"])
-        #expect(b.spawned.calls[0].qos == .utility)
-    }
-
-    @Test func buildDaemonProcessesLocallyWithoutAutoSyncAndLeavesTheNotesForLater() async throws {
-        let b = try build(autoSync: false)
-        _ = try b.daemon.deps.launchProcessing(rec)
-        let notes = try #require(b.daemon.deps.launchNotes)
-        _ = try notes(rec)
-        #expect(b.spawned.calls.map { Array($0.args.suffix(3)) } == [["process", "/m/rec", "--no-notes"], ["--no-notify", "notes", "/m/rec"]])
-        #expect(b.spawned.calls.map(\.qos) == [.utility, .utility])
-        #expect(b.daemon.deps.doneMarker() == "transcript.md" && b.daemon.deps.notesWanted())
-    }
-
-    @Test func withAutoSyncRunUploadsAndWritesTheNotesItself() async throws {
-        let b = try build(autoSync: true)
-        _ = try b.daemon.deps.launchProcessing(rec)
-        #expect(b.spawned.calls[0].args.suffix(2) == ["run", "/m/rec"])
-        #expect(!b.daemon.deps.notesWanted())
-        #expect(b.daemon.deps.doneMarker() == "notion.json")
-        let off = try build(autoSync: false, notes: false)
-        #expect(!off.daemon.deps.notesWanted())  // [notes].enabled = false
     }
 
     @Test func theNotionAnswerIsReadWhenAWorkerStartsNotWhenTheAppStarts() async throws {
@@ -131,16 +107,9 @@ func build(autoSync: Bool = false, notes: Bool = true, answer: AutoSyncAnswer? =
         answer.set(.init(autoSync: true, notes: true))
         _ = try b.daemon.deps.launchProcessing(rec)
         #expect(b.spawned.calls.map { Array($0.args.suffix(2)) } == [["/m/rec", "--no-notes"], ["run", "/m/rec"]])
-        #expect(b.daemon.deps.doneMarker() == "notion.json" && !b.daemon.deps.notesWanted())
-    }
-
-    @Test func backgroundWorkRunsAtLowPriority() async throws {
-        let b = try build(autoSync: false, options: [])
-        _ = try b.daemon.deps.launchLive!(rec)
-        _ = try b.daemon.deps.launchStream!(rec)
-        _ = try b.daemon.deps.launchIndex!()
-        #expect(b.spawned.calls.map(\.qos) == [.background, .utility, .background])
-        #expect(b.spawned.calls.map(\.args) == [[WORKER, "live", "/m/rec"], [WORKER, "stream", "/m/rec"], [WORKER, "index"]])
+        #expect(b.daemon.deps.doneMarker() == "notion.json" && !b.daemon.deps.notesWanted())  // with auto-sync `run` writes them
+        let off = try build(autoSync: false, notes: false)
+        #expect(!off.daemon.deps.notesWanted())  // [notes].enabled = false
     }
 
     @Test func theSwitchesAreReadFromTheSettingsFile() async throws {

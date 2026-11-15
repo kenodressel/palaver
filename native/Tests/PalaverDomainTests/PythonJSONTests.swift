@@ -23,6 +23,8 @@ private func text(_ url: URL) throws -> String { String(decoding: try Data(conte
         #expect(inner.map(\.0) == ["y", "b"])
         #expect(PythonJSON.dumps(v) == #"{"z": 1, "a": {"y": true, "b": null}, "m": []}"#)
         #expect(PythonJSON.dumps(v, sortKeys: true) == #"{"a": {"b": null, "y": true}, "m": [], "z": 1}"#)
+        // A duplicate key keeps its first place and its last value.
+        #expect(PythonJSON.dumps(try parse(#"{"a": 1, "b": 2, "a": 3}"#)) == #"{"a": 3, "b": 2}"#)
     }
 
     @Test func intAndFloatStayApart() throws {
@@ -31,11 +33,6 @@ private func text(_ url: URL) throws -> String { String(decoding: try Data(conte
         guard case .array(let items) = v else { Issue.record("not an array"); return }
         if case .int = items[0] {} else { Issue.record("1 is not an int") }
         if case .double = items[1] {} else { Issue.record("1.0 is not a double") }
-    }
-
-    @Test func aDuplicateKeyKeepsItsFirstPlace() throws {
-        let v = try parse(#"{"a": 1, "b": 2, "a": 3}"#)
-        #expect(PythonJSON.dumps(v) == #"{"a": 3, "b": 2}"#)
     }
 
     @Test func parseAcceptsWhatJsonLoadsAcceptsOnly() throws {

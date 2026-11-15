@@ -135,6 +135,8 @@ extension DaemonTicksD {
             r.used[first.pid] = 3.0
             await r.run(until: 30 + OVER + 4)
             #expect(first.groupSignals == [SIGTERM] && !first.killed && r.workers["live"]!.count == 1)  // given time to exit
+            // Workers start in their own session and are signalled as a process group: their helpers go with them.
+            #expect(!first.terminated)
             await r.run(until: 30 + OVER + 30)
             #expect(first.killed && first.groupSignals == [SIGTERM, SIGKILL] && r.workers["live"]!.count == 2)
             r.h.daemon.shutdown()
@@ -152,25 +154,18 @@ extension DaemonTicksD {
             #expect(!r.sentTitles.contains("Live transcription restarted"))
         }
 
-        @Test func workersAreSignalledAsAProcessGroup() async throws {
-            // Workers start in their own session: their helpers go with them.
-            let r = try MemRig(tempDir())
-            await r.run(until: 30)
-            let first = r.workers["live"]![0]
-            r.used[first.pid] = 3.0
-            await r.run(until: 30 + OVER + 4)
-            #expect(first.groupSignals.contains(SIGTERM) && !first.terminated)
-            r.h.daemon.shutdown()
-        }
-
-        @Test func notesOverBudgetWithMemoryToSpareFinish() async throws {
+        /// Notes over the model's 14 GB, a transcription at 13 GB: with memory to spare they finish, and say so once.
+        @Test(arguments: [("notes", 16.0, "Notes use more memory than planned"),
+                          ("process", 13.0, "Transcription uses more memory than planned")] as [(String, Double, String)])
+        func overBudgetWithMemoryToSpareFinishes(kind: String, gb: Double, title: String) async throws {
             let dir = tempDir()
             let f = folder(dir)
-            let r = try MemRig(dir, activity: { _ in nil }, notesMemory: 14, notesQueued: [f.path])
-            r.launchers["notes"] = r.starter("notes", 16.0)  // over the model's 14 GB
+            let r = try kind == "notes" ? MemRig(dir, activity: { _ in nil }, notesMemory: 14, notesQueued: [f.path])
+                                        : MemRig(dir, activity: { _ in nil }, queued: [f.path])
+            r.launchers[kind] = r.starter(kind, gb)
             await r.run(until: 60)
-            #expect(r.workers["notes"]!.count == 1 && r.workers["notes"]![0].groupSignals.isEmpty)
-            #expect(r.sentTitles.filter { $0 == "Notes use more memory than planned" }.count == 1)
+            #expect(r.workers[kind]!.count == 1 && r.workers[kind]![0].groupSignals.isEmpty)
+            #expect(r.sentTitles.filter { $0 == title }.count == 1)
         }
 
         @Test func notesOverBudgetWhileTheMacRunsLowWaitInTheQueue() async throws {
@@ -241,16 +236,6 @@ extension DaemonTicksD {
             try #require(r.workers["notes"]!.first).rc = 1
             await r.run(until: 3600)
             #expect(r.workers["notes"]!.count == 1 && r.h.status()["notes_queued"] == .strings([]))
-        }
-
-        @Test func processOverBudgetWithMemoryToSpareFinishes() async throws {
-            let dir = tempDir()
-            let f = folder(dir)
-            let r = try MemRig(dir, activity: { _ in nil }, queued: [f.path])
-            r.launchers["process"] = r.starter("process", 13.0)
-            await r.run(until: 60)
-            #expect(r.workers["process"]!.count == 1 && r.workers["process"]![0].groupSignals.isEmpty)
-            #expect(r.sentTitles.filter { $0 == "Transcription uses more memory than planned" }.count == 1)
         }
 
         @Test func processOverBudgetWhileTheMacRunsLowIsStoppedAndTriedAgain() async throws {

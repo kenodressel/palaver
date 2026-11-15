@@ -192,6 +192,12 @@ private func files(_ dir: URL) -> [String] { (try? FileManager.default.contentsO
         let before = stub.hub.requests.count
         try await stub.downloader(c).fetch(repo: REPO, revision: COMMIT, patterns: PATTERNS, token: nil)
         #expect(stub.hub.requests.count == before + 1 && stub.cdnRequests.count == 1)
+        // Without the hub, the complete snapshot is used as it is.
+        stub.hub.stop()
+        #expect(try await stub.downloader(c).fetch(repo: REPO, revision: COMMIT, patterns: PATTERNS, token: nil) == snap)
+        // Nothing here yet: the error says the hub can't be reached, in one line.
+        let error = await thrown { try await stub.downloader(cache()).fetch(repo: REPO, revision: COMMIT, patterns: PATTERNS, token: nil) }
+        #expect("\(error!)".hasPrefix("could not reach 127.0.0.1: ") && !"\(error!)".contains("\n"))
     }
 
     @Test func aBranchRevisionIsWrittenToRefs() async throws {
@@ -363,17 +369,6 @@ private func files(_ dir: URL) -> [String] { (try? FileManager.default.contentsO
         #expect(HubDownloader.gb(8_912_000_000) == "8.3 GB")
     }
 
-    @Test func withoutTheHubACompleteSnapshotIsUsedAsItIs() async throws {
-        let stub = try StubHub()
-        let c = cache()
-        let snap = try await stub.downloader(c).fetch(repo: REPO, revision: COMMIT, patterns: PATTERNS, token: nil)
-        stub.hub.stop()
-        #expect(try await stub.downloader(c).fetch(repo: REPO, revision: COMMIT, patterns: PATTERNS, token: nil) == snap)
-        // Nothing here yet: the error says the hub can't be reached, in one line.
-        let error = await thrown { try await stub.downloader(cache()).fetch(repo: REPO, revision: COMMIT, patterns: PATTERNS, token: nil) }
-        #expect("\(error!)".hasPrefix("could not reach 127.0.0.1: ") && !"\(error!)".contains("\n"))
-    }
-
     @Test func theHubsRefusalsAreOneLineWithoutTheToken() async throws {
         let stub = try StubHub()
         stub.listingStatus = 401
@@ -438,7 +433,9 @@ private func files(_ dir: URL) -> [String] { (try? FileManager.default.contentsO
 
     @Test func anIncompleteSnapshotIsNotComplete() throws {
         let c = cache()
-        let index = #"{"weight_map": {"a": "model-00001-of-00002.safetensors", "b": "model-00002-of-00002.safetensors"}}"#
+        // rc6's Gemma: its index also names optiq_vision.safetensors, which MLX_FILES leaves out; complete when the
+        // model's own shards are here.
+        let index = #"{"weight_map": {"a": "model-00001-of-00002.safetensors", "b": "model-00002-of-00002.safetensors", "v": "optiq_vision.safetensors"}}"#
         let snap = try snapshot(c, REPO, ["config.json": "{}", "model.safetensors.index.json": index,
                                           "model-00001-of-00002.safetensors": "one"])
         #expect(!c.isComplete(repo: REPO, revision: COMMIT, patterns: HubModels.MLX_FILES))  // a shard is missing
@@ -457,17 +454,6 @@ private func files(_ dir: URL) -> [String] { (try? FileManager.default.contentsO
         #expect(!c.isComplete(repo: E5Encoder.model, revision: COMMIT, patterns: E5Encoder.modelFiles))
         #expect(!c.isComplete(repo: "contoso/none", revision: COMMIT, patterns: E5Encoder.modelFiles))
         _ = snap
-    }
-
-    @Test func anIndexNamingAFileNeverDownloadedIsCompleteWhenTheModelsShardsAreHere() throws {
-        // rc6's Gemma: its index also names optiq_vision.safetensors, which MLX_FILES leaves out.
-        let c = cache()
-        let index = #"{"weight_map": {"a": "model-00001-of-00002.safetensors", "b": "model-00002-of-00002.safetensors", "v": "optiq_vision.safetensors"}}"#
-        _ = try snapshot(c, REPO, ["config.json": "{}", "model.safetensors.index.json": index,
-                                   "model-00001-of-00002.safetensors": "one"])
-        #expect(!c.isComplete(repo: REPO, revision: COMMIT, patterns: HubModels.MLX_FILES))  // a shard of the model is missing
-        _ = try snapshot(c, REPO, ["model-00002-of-00002.safetensors": "two"])
-        #expect(c.isComplete(repo: REPO, revision: COMMIT, patterns: HubModels.MLX_FILES))
     }
 
     @Test func aLinkIsReplacedInOneStep() throws {

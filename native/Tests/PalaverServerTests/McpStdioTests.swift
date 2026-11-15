@@ -105,8 +105,9 @@ private final class McpProcess {
 }
 
 @Suite(.serialized) struct McpStdioTests {
+    /// Also: a library that prints to stdout while the server runs: the line goes to stderr, the answers stay JSON-RPC.
     @Test func theBuiltServerAnswersClaudeOverStdioAndEndsWhenStdinCloses() throws {
-        let p = try McpProcess()
+        let p = try McpProcess(more: [McpMain.TEST_STRAY_PRINT: "a stray line from some library"])
         let hello = try p.request(1, "initialize", .object([
             ("protocolVersion", .string("2025-06-18")), ("capabilities", .object([])),
             ("clientInfo", .object([("name", .string("claude-code")), ("version", .string("2.1.3"))]))]))
@@ -137,21 +138,12 @@ private final class McpProcess {
                                                                "get_meeting", "search_meetings", "list_meetings"])
         #expect(log.allSatisfy { $0["pid"] == .int(Int(p.process.pid)) && $0["client"]?["version"] == .string("2.1.3") })
         #expect(McpLog.clients(stores: p.stores).first?["calls"] == .int(7))
+        #expect(try p.request(10, "ping") == .object([]))
 
         p.closeInput()  // Claude quits
         #expect(p.exitStatus() == 0)
         #expect(!FileManager.default.fileExists(atPath: p.heartbeat.path))
-    }
-
-    @Test func aStrayPrintNeverReachesTheProtocolStream() throws {
-        // A library that prints to stdout while the server runs: the line goes to stderr, the answers stay JSON-RPC.
-        let p = try McpProcess(more: [McpMain.TEST_STRAY_PRINT: "a stray line from some library"])
-        let hello = try p.request(1, "initialize", .object([("protocolVersion", .string("2025-06-18"))]))
-        #expect(hello["serverInfo"]?["name"] == .string("palaver"))
-        #expect(try p.request(2, "ping") == .object([]))
-        p.closeInput()
-        #expect(p.exitStatus() == 0)
-        #expect(p.errors.contains("a stray line from some library"))  // where it went instead
+        #expect(p.errors.contains("a stray line from some library"))  // where the stray print went instead
     }
 
     @Test func sigtermEndsItAndTakesTheHeartbeatAlong() throws {
@@ -161,12 +153,6 @@ private final class McpProcess {
         kill(p.process.pid, SIGTERM)
         #expect(p.exitStatus() == 128 + SIGTERM)
         #expect(!FileManager.default.fileExists(atPath: p.heartbeat.path))
-    }
-
-    @Test func aCommandOfEarlierVersionsServesNothingAndExits2() throws {
-        let p = try McpProcess(args: ["record"])  // what replaces it is said on stderr (CLITests)
-        #expect(p.exitStatus() == 2)
-        #expect(p.errors.hasPrefix("palaver record is gone"))
     }
 
     // MARK: - the bin/python shim (Keno's answer 2: one release)
@@ -187,6 +173,7 @@ private final class McpProcess {
         return (ran.status, ran.out, ran.err)
     }
 
+    /// It starts the Swift server for an old Claude entry and refuses everything else clearly.
     @Test func theShimStartsTheSwiftServerForAnOldClaudeEntry() throws {
         let dir = try shimFolder()
         defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()) }
@@ -198,12 +185,6 @@ private final class McpProcess {
         let link = dir.deletingLastPathComponent().appendingPathComponent("python-link").path
         try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: python)
         #expect(try run([link, "-m", "palaver", "mcp"]).out == "[mcp]\n")
-    }
-
-    @Test func theShimRefusesEverythingElseClearly() throws {
-        let dir = try shimFolder()
-        defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()) }
-        let python = dir.appendingPathComponent("python").path
         for argv in [[python], [python, "-c", "print(1)"], [python, "-m", "palaver", "list"], [python, "-m", "palaver", "mcp", "--install"],
                      [python, "-m", "palaver", "--config"], [python, "-m", "other", "mcp"], [python, "-I", "-m", "palaver", "mcp"]] {
             let r = try run(argv)

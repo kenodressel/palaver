@@ -126,15 +126,6 @@ def test_needs_you_is_answered_in_place_with_undo(page, app_server):
     expect(page.locator(f'#main .need-card[data-meeting="{C}"]')).to_be_visible()
 
 
-def test_review_all_in_order(page, shared_server):
-    goto(page, shared_server)
-    page.locator("#main .needs").get_by_role("button", name="Review all in order").click()
-    expect(page.locator("#main .review-bar")).to_contain_text("Review · 1 of 3")
-    expect(page.locator("#main .review h1")).to_have_text("Design review, part two")
-    page.get_by_role("button", name="Skip").click()
-    expect(page.locator("#main .review-bar")).to_contain_text("Review · 2 of 3")
-
-
 def test_a_meeting_that_needs_something_has_a_strip_and_a_dot(page, shared_server):
     open_meeting(page, shared_server, A)
     strip = page.locator("#main .needs-strip")

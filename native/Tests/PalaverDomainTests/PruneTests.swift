@@ -33,38 +33,24 @@ private func days(_ n: Double) -> Date { NOW.addingTimeInterval(-n * 86400) }
         try recording(t.url, "2026-09-30T10-00-00", synced: true, start: days(20))
         try recording(t.url, "2026-09-30T11-00-00", synced: false, start: days(20))
         try recording(t.url, "2026-10-19T10-00-00", synced: true, start: days(1))
+        try recording(t.url, "2026-09-01T10-00-00-2", synced: true)  // no meta.json, suffixed: the age is the folder name's
         try FileManager.default.createDirectory(at: t.url.appendingPathComponent("notes"), withIntermediateDirectories: true)
         try Data("file, not folder".utf8).write(to: t.url.appendingPathComponent("2026-09-01T10-00-00.txt"))
         let plan = Prune.plan(t.url, retentionDays: 14, now: NOW, timeZone: UTC)
-        #expect(plan.delete.map(\.lastPathComponent) == ["2026-09-30T10-00-00"])
+        #expect(plan.delete.map(\.lastPathComponent) == ["2026-09-01T10-00-00-2", "2026-09-30T10-00-00"])
         #expect(plan.keptUnsynced.map(\.lastPathComponent) == ["2026-09-30T11-00-00"])
-    }
-
-    @Test func test_include_unsynced() throws {
-        let t = TempFolder("prune"); defer { t.remove() }
-        try recording(t.url, "2026-09-30T11-00-00", synced: false, start: days(20))
+        // include_unsynced
         #expect(Prune.plan(t.url, retentionDays: 14, now: NOW, includeUnsynced: true, timeZone: UTC).delete.map(\.lastPathComponent)
-                == ["2026-09-30T11-00-00"])
+                == ["2026-09-01T10-00-00-2", "2026-09-30T10-00-00", "2026-09-30T11-00-00"])
     }
 
-    @Test func test_age_falls_back_to_folder_name() throws {
-        let t = TempFolder("prune"); defer { t.remove() }
-        try recording(t.url, "2026-09-01T10-00-00-2", synced: true)  // no meta.json, suffixed
-        #expect(Prune.plan(t.url, retentionDays: 14, now: NOW, timeZone: UTC).delete.map(\.lastPathComponent) == ["2026-09-01T10-00-00-2"])
-    }
-
-    @Test func test_prune_dry_run_deletes_nothing() throws {
+    @Test func test_prune_deletes_and_reports_freed_space_and_a_dry_run_deletes_nothing() throws {
         let t = TempFolder("prune"); defer { t.remove() }
         let folder = try recording(t.url, "2026-09-30T10-00-00", synced: true, start: days(20))
-        var said: [String] = []
-        #expect(try Prune.run(t.url, retentionDays: 14, now: NOW, dryRun: true, timeZone: UTC, say: { said.append($0) }).isEmpty)
+        var dry: [String] = []
+        #expect(try Prune.run(t.url, retentionDays: 14, now: NOW, dryRun: true, timeZone: UTC, say: { dry.append($0) }).isEmpty)
         #expect(FileManager.default.fileExists(atPath: folder.path))
-        #expect(said == ["would delete 2026-09-30T10-00-00 (0 MB)", "would delete 1 recording(s), 0 MB"])
-    }
-
-    @Test func test_prune_deletes_and_reports_freed_space() throws {
-        let t = TempFolder("prune"); defer { t.remove() }
-        let folder = try recording(t.url, "2026-09-30T10-00-00", synced: true, start: days(20))
+        #expect(dry == ["would delete 2026-09-30T10-00-00 (0 MB)", "would delete 1 recording(s), 0 MB"])
         var said: [String] = []
         #expect(try Prune.run(t.url, retentionDays: 14, now: NOW, timeZone: UTC, say: { said.append($0) }) == [folder])
         #expect(!FileManager.default.fileExists(atPath: folder.path))

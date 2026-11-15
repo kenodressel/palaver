@@ -39,13 +39,23 @@ public enum StoreLock {
 
     /// One spelling per lock, the thread's key for it: `realpath(3)` of the lock's folder (made before this is
     /// asked), so `/var/…` and `/private/var/…` are one lock whether or not the folder existed before.
-    /// (`resolvingSymlinksInPath` is not: it drops `/private` only for a path that exists.) A folder realpath
-    /// cannot resolve keeps its standardized spelling.
+    /// (`resolvingSymlinksInPath` is not: it drops `/private` only for a path that exists.) A folder that is gone
+    /// again (deleted while its lock is held) resolves through its nearest existing ancestor, so a nested take of
+    /// the same lock still finds it held.
     static func canonicalPath(_ lock: URL) -> String {
-        let folder = lock.deletingLastPathComponent().standardizedFileURL.path
-        guard let resolved = Darwin.realpath(folder, nil) else { return folder + "/" + lock.lastPathComponent }
-        defer { free(resolved) }
-        return String(cString: resolved) + "/" + lock.lastPathComponent
+        var folder = lock.deletingLastPathComponent().standardizedFileURL.path
+        var rest = [lock.lastPathComponent]
+        while true {
+            if let resolved = Darwin.realpath(folder, nil) {
+                defer { free(resolved) }
+                let base = String(cString: resolved)
+                return (base == "/" ? "" : base) + "/" + rest.reversed().joined(separator: "/")
+            }
+            let parent = (folder as NSString).deletingLastPathComponent
+            if parent == folder || parent.isEmpty { return folder + "/" + rest.reversed().joined(separator: "/") }
+            rest.append((folder as NSString).lastPathComponent)
+            folder = parent
+        }
     }
 
     private static func hold<T>(_ lock: URL, nested: Bool = false, _ body: () throws -> T) throws -> T {
