@@ -362,8 +362,9 @@ def test_a_new_release_shows_in_the_top_bar_and_opens_settings(page, app_server)
 
 
 def test_today_leads_with_a_new_release_until_it_is_installed(page, app_server):
+    notes = "**New: a thing.** It works.\n\n**Fixed**\n- One bug (#25).\n- **Two** bugs."
     _update_json(app_server, {"state": "available", "current": "0.3.6",
-                              "available": {"version": "0.9.0", "download_bytes": 3 << 20}})
+                              "available": {"version": "0.9.0", "download_bytes": 3 << 20, "notes": notes}})
     goto(page, app_server, "#/today")
     card = page.locator(".today .update-card")
     expect(card).to_contain_text("Palaver 0.9.0 is available")
@@ -372,6 +373,13 @@ def test_today_leads_with_a_new_release_until_it_is_installed(page, app_server):
     assert app_server.update_actions == ["install"]  # asked of the menu bar app
     card.get_by_role("button", name="What's new").click()
     expect(page).to_have_url(re.compile("#/settings/update$"))
+    # The notes read as written, open: markdown rendered, nothing to unfold.
+    shown = page.locator("#update-section .release-notes")
+    expect(shown).to_be_visible()
+    expect(page.locator("#update-section")).to_contain_text("What's new in 0.9.0")
+    expect(shown.locator("strong").first).to_have_text("New: a thing.")
+    expect(shown.locator("li")).to_have_text(["One bug (#25).", "Two bugs."])
+    expect(shown).not_to_contain_text("**")
 
 
 def test_settings_connect_the_calendar_and_follow_a_yes_given_elsewhere(page, app_server):

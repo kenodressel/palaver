@@ -21,7 +21,7 @@ import { meetingCommands, nextAfter, laneCommands, laneLines, linesText, namingT
   optionLabel, liveCoachFor, speakingText, questionsNote, questionButton, heartbeat, notesFromJobs,
   titleChange, updateCard, withTitle, retitledText, TITLE_MAX } from "./logic.js";
 import { notepad, flushNotepads, leaveNotepads, notepadFocus, restoreNotepadFocus } from "./mynotes.js";
-import { meetingTime } from "./mynotes-logic.js";
+import { meetingTime, parseNote } from "./mynotes-logic.js";
 // Today, Needs you and the ⌘K palette (UI spec, phase 2).
 import { needsSummary, needCards, needQuestion, startsInText, cutAtPointer, navCount, paletteMatch, paletteCommands,
   paletteRecent, paletteRecentShown, labelDisplay, meetingTabs, meetingTab, TAB_LABELS } from "./logic.js";
@@ -4617,8 +4617,8 @@ function renderUpdateSection() {
     h("div", { class: "lm-row" }, h("span", { class: "meta", role: "status" }, view.text),
       label ? h("button", { type: "button", class: "btn", onclick: (e) => updateAction(view.action, e.currentTarget) }, label)
         : null),
-    u?.available?.notes ? h("details", { class: "update-notes" }, h("summary", {}, "What's new"),
-      h("p", { class: "meta" }, u.available.notes)) : null,
+    u?.available?.notes ? h("div", { class: "update-notes" },
+      h("h3", {}, `What's new in ${u.available.version}`), releaseNotes(u.available.notes)) : null,
     view.action === "install" ? h("p", { class: "meta" },
       "Installs when nothing records or processes, then Palaver restarts. Your recordings and settings stay.") : null,
     state.settings && u?.state !== "unsupported" ? settingSwitch("check_updates", "Look for updates automatically") : null,
@@ -4628,6 +4628,15 @@ function renderUpdateSection() {
       h("span", { class: "meta" }, "Removes Palaver from this Mac. Your recordings stay unless you choose otherwise."),
       h("button", { type: "button", class: "btn", onclick: () => openUninstall() }, "Uninstall Palaver…"))));
   return section;
+}
+
+// A release's notes as they read: their light markdown (paragraphs, lists, **bold**) as text nodes, never HTML.
+function releaseNotes(text) {
+  const pieces = (list) => list.map((s) => (s.bold ? h("strong", {}, s.text) : document.createTextNode(s.text)));
+  return h("div", { class: "release-notes" }, parseNote(text).map((b) => b.type === "p"
+    ? h("p", {}, b.lines.flatMap((line, i) => (i ? [h("br"), ...pieces(line)] : pieces(line))))
+    : h(b.type, {}, b.items.map((item) => h("li", { style: item.level ? `margin-left:${item.level * 1.2}em` : null },
+      pieces(item.segments))))));
 }
 
 async function updateAction(action, button) {
