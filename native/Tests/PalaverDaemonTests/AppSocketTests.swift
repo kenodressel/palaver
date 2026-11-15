@@ -141,6 +141,11 @@ private final class Gauge: @unchecked Sendable {
     func leave() { lock.lock(); now -= 1; lock.unlock() }
 }
 
+/// `body`'s result, run on a thread of its own (a blocking client, not on the cooperative pool).
+private func onOwnThread<T: Sendable>(_ body: @escaping @Sendable () -> T) async -> T {
+    await withCheckedContinuation { done in Thread.detachNewThread { done.resume(returning: body()) } }
+}
+
 @Test func slowHandlersRunConcurrently() async {
     let gauge = Gauge()
     // Each handler waits (5 s at most) until the other one runs too: only handlers that run at once both see 2.
@@ -151,10 +156,12 @@ private final class Gauge: @unchecked Sendable {
         return "done"
     }])
     defer { s.stop() }
-    async let a = Task.detached { call(s.path, "slow") }.value
-    async let b = Task.detached { call(s.path, "slow") }.value
+    // The clients block: each on a thread of its own, since on a busy 3-core CI runner two detached tasks waited for
+    // the same cooperative thread and called one after the other.
+    async let a = onOwnThread { call(s.path, "slow")?["ok"] as? String }
+    async let b = onOwnThread { call(s.path, "slow")?["ok"] as? String }
     let (ra, rb) = await (a, b)
-    #expect(ra?["ok"] as? String == "done" && rb?["ok"] as? String == "done")
+    #expect(ra == "done" && rb == "done")
     #expect(gauge.peak == 2)
 }
 
