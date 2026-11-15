@@ -340,6 +340,12 @@ public final class VoiceBank: VoiceScoring {
         return nil
     }
 
+    /// Takes back every sample whose source starts with `prefix` (a meeting's line voices, #35). Returns how many went.
+    @discardableResult
+    public func removeSources(prefix: String) throws -> Int {
+        try StoreLock.with(directory) { try removeSamples { pyStr(try Self.source($0)).hasPrefixScalars(prefix) } }
+    }
+
     /// Takes back every sample learned from one meeting (an import undone).
     @discardableResult
     public func removeMeeting(_ meetingId: String) throws -> Int {

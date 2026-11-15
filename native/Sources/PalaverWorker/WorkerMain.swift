@@ -385,11 +385,15 @@ extension WorkerMain {
                 Tokens.huggingFace(configToml: configToml, env: env, keys: KeyStores.make(env: env), home: stores.home)
             }
         }
-        let rc = await Index.run(outputDir: config.outputDir, only: folders.isEmpty ? nil : folders, stores: stores,
+        let shouldStop = Index.shouldStop(stores: stores, freeGB: freeGB)
+        let voices = await Index.lineVoices(outputDir: config.outputDir, stores: stores, engine: {
+            makeEngine(config: config, dictionary: TranscriberDictionary(), env: env, log: nil)
+        }, shouldStop: shouldStop)
+        let indexed = await Index.run(outputDir: config.outputDir, only: folders.isEmpty ? nil : folders, stores: stores,
                                  download: download, modelFolder: modelFolder, encoder: { try E5Encoder(folder: $0) },
-                                 shouldStop: Index.shouldStop(stores: stores, freeGB: freeGB), qos: qos)
+                                 shouldStop: shouldStop, qos: qos)
         fflush(stdout)
-        return rc
+        return max(voices, indexed)
     }
 }
 

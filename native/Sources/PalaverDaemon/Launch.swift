@@ -357,7 +357,9 @@ public enum DaemonFactory {
             budgetFor: memoryBudgetHook(config: config.memory, notesInRun: { let v = notion.value; return v.autoSync && v.notes },
                                         need: { facts.notesMemoryGB(URL(fileURLWithPath: $0, isDirectory: true)) }),
             log: log)
-        deps.indexWanted = { facts.indexWanted() }
+        // The index worker also teaches the voice bank the corrected lines' voices (#35), search by meaning on or off.
+        let stores = StorePaths(configDir: paths.configDir, home: paths.home)
+        deps.indexWanted = { LineVoices.pending(stores).isEmpty ? facts.indexWanted() : true }
         deps.indexModelReady = { facts.indexModelReady() }
         deps.modelsReady = { facts.modelsReady($0) }
         deps.realtime = { settings.realtime }

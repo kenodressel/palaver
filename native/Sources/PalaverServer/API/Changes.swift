@@ -289,11 +289,13 @@ public enum ChangesAPI {
                     target = nil  // the voice it was heard as: nothing to correct
                 }
             }
-            return try undoToken(app, label: "line speaker", stores: [paths.speakersLines]) { token in
+            let token = try undoToken(app, label: "line speaker", stores: [paths.speakersLines]) { token in
                 try Speakers.setLineSpeaker(paths, line, target)
                 try Speakers.saveSpeakerNames(paths, try Speakers.loadSpeakerNames(paths), learn: false, stores: app.stores)
                 try Undo.note(app.outputDir, token, PyDict([("meeting", .string(id))]))
             }
+            try LineVoices.mark(app.stores, id)  // its voice is learned in the background (#35)
+            return token
         }
     }
 

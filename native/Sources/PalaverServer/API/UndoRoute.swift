@@ -29,6 +29,7 @@ public enum UndoRoute {
                     if [paths.systemTurns, paths.transcriptJson, paths.meta].allSatisfy(MeetingsAPI.exists) {
                         try Speakers.saveSpeakerNames(paths, try Speakers.loadSpeakerNames(paths), learn: false, stores: app.stores)
                     }
+                    try LineVoices.mark(app.stores, id)  // what the line taught the voice bank goes back too (#35)
                 }
                 return ids
             }

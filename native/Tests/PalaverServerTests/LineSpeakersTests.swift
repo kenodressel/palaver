@@ -338,3 +338,73 @@ private func fixedValue(_ was: String, _ from: String?) -> JSONValue { .object([
         #expect(r.status == 400)
     }
 }
+
+
+// MARK: - the voices of corrected lines (#35)
+
+@Suite struct LineVoicesTests {
+    @Test func aCorrectionPutsItsMeetingOnTheWaitingListAndSoDoesItsUndo() throws {
+        let f = try Fixture()
+        #expect(LineVoices.pending(f.app.stores).isEmpty)
+        let token = try f.set(13.0, .object([("name", .string("Timo Strauß"))]))
+        #expect(LineVoices.pending(f.app.stores) == [M])
+        try LineVoices.done(f.app.stores, M)
+        #expect(LineVoices.pending(f.app.stores).isEmpty && !exists(f.app.stores.voicesPending))
+        _ = try UndoRoute.undoChange(f.app, token: token)
+        #expect(LineVoices.pending(f.app.stores) == [M])  // what it taught goes back too
+    }
+
+    @Test func onlyOthersLinesOfANamedPersonWithEnoughTalkTeach() throws {
+        let f = try Fixture()
+        try f.set(13.0, .object([("name", .string("Timo Strauß"))]))
+        try f.set(16.0, .object([("name", .string("Timo Strauß"))]), track: "others")
+        try f.set(19.0, .object([("label", .string("SPEAKER_00"))]))  // Valerie, but 2 s only
+        try f.set(1.0, .object([("me", .bool(true))]))  // the user: never
+        try f.set(16.5, .object([("name", .string("Valerie"))]), track: "mic")  // the microphone's line: never
+        let spans = try LineVoices.spans(f.paths)
+        #expect(spans.keys == ["Timo Strauß"])
+        #expect(spans["Timo Strauß"] == [13.0..<15.0, 16.0..<18.0])
+        try f.set(19.0, .object([("name", .string("Timo Strauß"))]))  // one correction per line: replaces Valerie's
+        #expect(try LineVoices.spans(f.paths)["Timo Strauß"]?.count == 3)
+    }
+
+    @Test func aVoiceWithoutANameTeachesNothing() throws {
+        let f = try Fixture()
+        // Speaker 3 has no name: its lines teach no one.
+        try f.set(13.0, .object([("label", .string("SPEAKER_02"))]))
+        try f.set(16.0, .object([("label", .string("SPEAKER_02"))]), track: "others")
+        try f.set(19.0, .object([("label", .string("SPEAKER_02"))]))
+        #expect(try LineVoices.spans(f.paths).isEmpty)
+    }
+
+    @Test func learningReplacesWhatTheMeetingsLinesTaughtBefore() async throws {
+        let f = try Fixture()
+        let bank = VoiceBank(directory: f.app.stores.voices)
+        try bank.add("Valerie", [0, 1, 0], source: "\(M):SPEAKER_00")  // her cluster's voice: never touched here
+        try f.set(13.0, .object([("name", .string("Timo Strauß"))]))
+        try f.set(16.0, .object([("name", .string("Timo Strauß"))]), track: "others")
+        var asked: [PyDict<[Range<Double>]>] = []
+        let taught = try await LineVoices.learn(f.paths, bank: bank) { spans in
+            asked.append(spans)
+            return PyDict([("Timo Strauß", [1.0, 0.0, 0.0])])
+        }
+        #expect(taught == ["Timo Strauß"] && asked.count == 1)
+        #expect(try bank.owner(LineVoices.source(M, "Timo Strauß")) == "Timo Strauß")
+        // Undone: under MIN_SECONDS again, the engine is not asked and the voice goes back.
+        try f.set(16.0, nil, track: "others")
+        #expect(try await LineVoices.learn(f.paths, bank: bank) { _ in Issue.record("asked"); return PyDict() }.isEmpty)
+        #expect(try bank.owner(LineVoices.source(M, "Timo Strauß")) == nil)
+        #expect(try bank.names().keys == ["Valerie"])
+    }
+
+    @Test func aFailedEmbeddingKeepsTheVoicesTaughtBefore() async throws {
+        let f = try Fixture()
+        let bank = VoiceBank(directory: f.app.stores.voices)
+        try f.set(13.0, .object([("name", .string("Timo Strauß"))]))
+        try f.set(16.0, .object([("name", .string("Timo Strauß"))]), track: "others")
+        try await LineVoices.learn(f.paths, bank: bank) { _ in PyDict([("Timo Strauß", [1.0, 0.0, 0.0])]) }
+        struct Boom: Error {}
+        await #expect(throws: Boom.self) { try await LineVoices.learn(f.paths, bank: bank) { _ in throw Boom() } }
+        #expect(try bank.owner(LineVoices.source(M, "Timo Strauß")) == "Timo Strauß")
+    }
+}

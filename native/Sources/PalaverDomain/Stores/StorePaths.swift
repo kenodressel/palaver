@@ -38,6 +38,8 @@ public struct StorePaths: Sendable {
     public var configToml: URL { cfg("config.toml") }
     public var settings: URL { cfg("settings.json") }
     public var voices: URL { cfg("voices", dir: true) }
+    /// The meetings whose corrected lines still have to teach the voice bank (#35).
+    public var voicesPending: URL { cfg("voices-pending.json") }
     public var projects: URL { cfg("projects.json") }
     public var glossary: URL { cfg("glossary.json") }
     public var organizations: URL { cfg("organizations.json") }

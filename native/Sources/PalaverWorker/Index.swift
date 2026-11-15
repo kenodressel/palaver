@@ -45,6 +45,47 @@ public enum Index {
         }
     }
 
+    /// The waiting meetings' line voices (#35), before the search index and whether or not it is on: each meeting's
+    /// corrected lines embedded on the others' track and taught to the voice bank, then taken off the list. The engine
+    /// is made only when a meeting has lines to embed. Stops between meetings like the index; a meeting that fails
+    /// leaves the list (said on stderr, exit 1), but one waiting for the engine's models stays.
+    public static func lineVoices(outputDir: URL, stores: StorePaths, engine makeEngine: () -> EngineCalls,
+                                  shouldStop: () -> Bool, say: (String) -> Void = Pipeline.printLine) async -> Int32 {
+        let ids = LineVoices.pending(stores)
+        if ids.isEmpty { return 0 }
+        let bank = VoiceBank(directory: stores.voices)
+        var engine: EngineCalls?
+        var rc: Int32 = 0
+        for id in ids {
+            if shouldStop() {
+                say("Voices of corrected lines: paused.")
+                break
+            }
+            let paths = RecordingPaths(outputDir.appendingPathComponent(id, isDirectory: true))
+            do {
+                if FileManager.default.fileExists(atPath: paths.transcriptJson.path) {
+                    let taught = try await LineVoices.learn(paths, bank: bank) { spans in
+                        let e = engine ?? makeEngine()
+                        engine = e
+                        return try await e.embed(wav: paths.systemWav, spans: spans)
+                    }
+                    say("Voices of corrected lines in \(id): " + (taught.isEmpty ? "none to learn" : taught.joined(separator: ", ")) + ".")
+                }
+                try LineVoices.done(stores, id)
+            } catch is ModelsMissing {
+                FileHandle.standardError.write(Data("error: the voices of corrected lines in \(id) wait for the speech models\n".utf8))
+                rc = 1
+                break
+            } catch {
+                FileHandle.standardError.write(Data("error: the voices of corrected lines in \(id): \(error)\n".utf8))
+                try? LineVoices.done(stores, id)
+                rc = 1
+            }
+        }
+        await engine?.release()
+        return rc
+    }
+
     /// The e5 model from Hugging Face into the cache (embeddings.py `model_folder(download=True)`): its pinned revision
     /// and three files; `token()` is asked only now.
     public static func downloadE5(hub: HubDownloader, token: () -> String?) throws {

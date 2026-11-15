@@ -96,6 +96,15 @@ public final class InProcessEngine: EngineCalls, @unchecked Sendable {
         return (Py.stableSorted(turns) { $0.start < $1.start }, embeddings)
     }
 
+    public func embed(wav: URL, spans: PyDict<[Range<Double>]>) async throws -> PyDict<[Double]> {
+        if spans.isEmpty { return PyDict() }
+        var spec: [String: Any] = [:]
+        for (key, ranges) in spans { spec[key] = ranges.map { [$0.lowerBound, $0.upperBound] } }
+        let reply = try await call("embed", ["wav": wav.path, "spans": spec])
+        let raw = reply["embeddings"] as? [String: Any] ?? [:]
+        return PyDict(spans.keys.compactMap { key in (raw[key] as? [Any]).map { (key, $0.map(number)) } })
+    }
+
     private func words(_ value: Any?) -> [PalaverDomain.Word] {
         (value as? [[String: Any]] ?? []).map {
             PalaverDomain.Word(text: dictionary.apply($0["text"] as? String ?? ""), start: number($0["start"]),

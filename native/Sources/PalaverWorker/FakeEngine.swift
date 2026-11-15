@@ -5,6 +5,7 @@
 //    "transcribe": {"system.wav": [segment, ...], "mic.wav": [...], "*": [...]},
 //    "windows": [word, ...],
 //    "diarize": {"system.wav": {"turns": [turn, ...], "embeddings": {"SPEAKER_00": [numbers]}}},
+//    "embed": {"system.wav": {"Anna": [numbers]}},
 //    "fail": {"transcribe": "message", "diarize": "models missing: diarizer"},
 //    "cloud": {"segments": [segment, ...], "language": "de", "model": "m", "sent_seconds": 20.0}}
 //
@@ -83,6 +84,18 @@ public final class FakeEngine: EngineCalls {
             w.text = dictionary.apply(w.text)
             return w
         }
+    }
+
+    /// The spans asked for, by key, as a test checks them.
+    public private(set) var embedded: [PyDict<[Range<Double>]>] = []
+
+    public func embed(wav: URL, spans: PyDict<[Range<Double>]>) async throws -> PyDict<[Double]> {
+        calls.append("embed \(wav.lastPathComponent)")
+        try failure("embed")
+        embedded.append(spans)
+        succeeded.insert("embed")
+        guard case .object(let fields)? = entry("embed", wav) else { return PyDict() }
+        return PyDict(fields.compactMap { key, row in spans[key] == nil ? nil : (key, (row.arrayValue ?? []).compactMap(\.doubleValue)) })
     }
 
     public func diarize(wav: URL) async throws -> (turns: [SpeakerTurn], embeddings: PyDict<[Double]>) {
