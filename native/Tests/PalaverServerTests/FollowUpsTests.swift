@@ -92,7 +92,7 @@ private func server(german: Bool = false, steps: [(String, String)]? = nil, keys
     return s
 }
 
-private let TASKS = "https://api.todoist.com/rest/v2/tasks"
+private let TASKS = "https://api.todoist.com/api/v1/tasks"
 
 @Suite struct FollowUpsTests {
     // MARK: whose step
@@ -237,8 +237,8 @@ private let TASKS = "https://api.todoist.com/rest/v2/tasks"
     @Test func onlyMyOwnStepsGoByDefaultEachOnceThenTheOthersOnRequest() throws {
         let s = try server(keys: [Tokens.TODOIST: TODOIST_TOKEN])
         defer { s.stop() }
-        let stub = Stub(["POST \(TASKS)": [(200, #"{"id": "1", "url": "https://app.todoist.com/app/task/1"}"#), (200, #"{"id": "2"}"#),
-                                          (200, #"{"id": "3"}"#)]])
+        let stub = Stub(["POST \(TASKS)": [(200, #"{"id": "6X7rM8997g3RQmv1"}"#), (200, #"{"id": "6X7rM8997g3RQmv2"}"#),
+                                          (200, #"{"id": "6X7rM8997g3RQmv3"}"#)]])
         s.app.followUpHTTP = stub.client
         let before = try #require(s.get("/api/meetings/\(ID)/follow-ups").json)
         let todoist = before["targets"]?.arrayValue?.first
@@ -262,6 +262,8 @@ private let TASKS = "https://api.todoist.com/rest/v2/tasks"
         #expect(after["steps"]?.arrayValue?.allSatisfy { $0["sent"] == .strings(["todoist"]) } == true)
         let record = try #require(PythonJSON.read(s.app.outputDir.appendingPathComponent("\(ID)/follow-ups.json")))
         #expect(record["todoist"]?.objectCount == 3)
+        let entry = try #require(PyDict<JSONValue>(record["todoist"] ?? .null)?.values.first)
+        #expect(entry["id"] == .string("6X7rM8997g3RQmv1") && entry["url"] == .string("https://app.todoist.com/app/task/6X7rM8997g3RQmv1"))
         #expect(!(String(data: try Data(contentsOf: s.app.outputDir.appendingPathComponent("\(ID)/follow-ups.json")), encoding: .utf8) ?? "")
             .contains(TODOIST_TOKEN))
     }
@@ -289,7 +291,7 @@ private let TASKS = "https://api.todoist.com/rest/v2/tasks"
     @Test func aFailurePartWayKeepsWhatWentThrough() throws {
         let s = try server(keys: [Tokens.TODOIST: TODOIST_TOKEN])
         defer { s.stop() }
-        let stub = Stub(["POST \(TASKS)": [(200, #"{"id": "1"}"#), (400, #"{"error": "content too long"}"#)]])
+        let stub = Stub(["POST \(TASKS)": [(200, #"{"id": "6X7rM8997g3RQmv1"}"#), (400, #"{"error": "content too long"}"#)]])
         s.app.followUpHTTP = stub.client
         let r = s.post("/api/meetings/\(ID)/follow-ups/todoist", .object([("others", .bool(true))]))
         #expect(r.status == 502 && (r.error ?? "").contains("1 of 3 added to Todoist, then: HTTP 400: content too long"))
@@ -329,8 +331,8 @@ private let TASKS = "https://api.todoist.com/rest/v2/tasks"
     @Test func theProjectAndTheDatabaseAreChosen() throws {
         let s = try server()
         defer { s.stop() }
-        let r = s.post("/api/follow-ups", .object([("todoist_project", .object([("id", .string("220")), ("name", .string("Contoso"))]))]))
-        #expect(r.json?["todoist"]?["project"] == .object([("id", .string("220")), ("name", .string("Contoso"))]))
+        let r = s.post("/api/follow-ups", .object([("todoist_project", .object([("id", .string("6Jf8VQXxpwv56VQ7")), ("name", .string("Contoso"))]))]))
+        #expect(r.json?["todoist"]?["project"] == .object([("id", .string("6Jf8VQXxpwv56VQ7")), ("name", .string("Contoso"))]))
         #expect(s.post("/api/follow-ups", .object([("todoist_project", .null)])).json?["todoist"]?["project"] == .null)
         #expect(s.post("/api/follow-ups", .object([("notion_database", .string("https://www.notion.so/Tasks"))])).status == 400)
         #expect(s.post("/api/follow-ups", .object([("notion_database", .string(""))])).json?["notion"]?["database"] == .string(""))
@@ -339,7 +341,7 @@ private let TASKS = "https://api.todoist.com/rest/v2/tasks"
     @Test func checkListsTodoistsProjectsAndNamesTheNotionDatabase() throws {
         let s = try server(keys: [Tokens.TODOIST: TODOIST_TOKEN, Tokens.NOTION: NOTION_TOKEN])
         defer { s.stop() }
-        let stub = Stub(["GET https://api.todoist.com/rest/v2/projects": [(200, #"[{"id": "220", "name": "Contoso"}, {"id": "100", "name": "Inbox", "is_inbox_project": true}]"#)],
+        let stub = Stub(["GET https://api.todoist.com/api/v1/projects?limit=200": [(200, #"{"results": [{"id": "6Jf8VQXxpwv56VQ7", "name": "Contoso"}, {"id": "6Jf8VQXxpwv56VQ8", "name": "Inbox", "inbox_project": true}], "next_cursor": null}"#)],
                          "GET https://api.notion.com/v1/databases/\(DB)": [(404, #"{"message": "not found"}"#),
                                                                           (200, #"{"title": [{"plain_text": "Tasks"}], "properties": {"Name": {"type": "title"}, "Due": {"type": "date"}}}"#)]])
         s.app.followUpHTTP = stub.client

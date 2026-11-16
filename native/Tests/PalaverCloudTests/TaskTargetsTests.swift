@@ -9,7 +9,7 @@ import PalaverDomain
 
 private let TODOIST_TOKEN = "0123456789abcdef0123456789abcdef01234567"
 private let NOTION_TOKEN = "secret_notion_0123456789abcdefghijklmnopqrstuvwxyz"
-private let TODOIST = "https://api.todoist.com/rest/v2"
+private let TODOIST = "https://api.todoist.com/api/v1"
 private let NOTION = "https://api.notion.com/v1"
 private let DB = "0123abcd-0123-4567-89ab-0123456789ab"
 
@@ -19,30 +19,39 @@ private func task(_ text: String, owner: String? = nil, due: String? = nil, link
 
 @Suite struct TodoistTests {
     @Test func aTaskCarriesTheStepItsDueDayAndWhereItCameFrom() async throws {
-        let fake = Routes(["POST \(TODOIST)/tasks": [.ok(#"{"id": "8001", "url": "https://app.todoist.com/app/task/8001"}"#)]])
-        let client = TodoistClient(token: TODOIST_TOKEN, projectId: "220", http: fake.client)
+        let fake = Routes(["POST \(TODOIST)/tasks": [.ok(#"{"id": "6X7rM8997g3RQmvh", "content": "x", "project_id": "6Jf8VQXxpwv56VQ7"}"#)]])
+        let client = TodoistClient(token: TODOIST_TOKEN, projectId: "6Jf8VQXxpwv56VQ7", http: fake.client)
         var got: [AddedTask] = []
         try await client.add([task("Send the figures", owner: "Timo Strauß", due: "2026-10-30")]) { _, added in got.append(added) }
-        #expect(got == [AddedTask(id: "8001", url: "https://app.todoist.com/app/task/8001")])
+        // v1 answers no url: a task's address is app.todoist.com/app/task/<id>.
+        #expect(got == [AddedTask(id: "6X7rM8997g3RQmvh", url: "https://app.todoist.com/app/task/6X7rM8997g3RQmvh")])
         let r = fake.requests[0]
+        #expect(r.url?.absoluteString == "https://api.todoist.com/api/v1/tasks")
         #expect(r.value(forHTTPHeaderField: "Authorization") == "Bearer \(TODOIST_TOKEN)")
         #expect(!(r.value(forHTTPHeaderField: "X-Request-Id") ?? "").isEmpty)
         let body = try #require(fake.json(r))
         #expect(body["content"] == .string("Timo Strauß: Send the figures"))
         #expect(body["description"] == .string("From the meeting “Budget review, 2026-10-29” (Palaver)"))
-        #expect(body["due_date"] == .string("2026-10-30") && body["project_id"] == .string("220"))
+        #expect(body["due_date"] == .string("2026-10-30") && body["project_id"] == .string("6Jf8VQXxpwv56VQ7"))
     }
 
     @Test func theUsersOwnStepHasNoOwnerAndTheInboxIsTheDefault() async throws {
-        let fake = Routes(["POST \(TODOIST)/tasks": [.ok(#"{"id": 8002}"#)]])
+        let fake = Routes(["POST \(TODOIST)/tasks": [.ok(#"{"id": "6X6WMMqgq2PWxjCX"}"#)]])
         var ids: [String] = []
         try await TodoistClient(token: TODOIST_TOKEN, http: fake.client).add([task("Book a room", link: "https://www.notion.so/p1")]) {
             ids.append($1.id)
         }
         let body = try #require(fake.json(fake.requests[0]))
-        #expect(ids == ["8002"] && body["content"] == .string("Book a room"))
-        #expect(body["project_id"] == nil && body["due_date"] == nil)
+        #expect(ids == ["6X6WMMqgq2PWxjCX"] && body["content"] == .string("Book a room"))
+        #expect(body["project_id"] == nil && body["due_date"] == nil)  // no project_id: the Inbox
         #expect(body["description"]?.stringValue?.hasSuffix("\nhttps://www.notion.so/p1") == true)
+    }
+
+    @Test func anAnswerWithoutAStringIdIsAnError() async throws {
+        let fake = Routes(["POST \(TODOIST)/tasks": [.ok(#"{"id": 8002}"#)]])
+        await #expect(throws: CloudError.self) {
+            try await TodoistClient(token: TODOIST_TOKEN, http: fake.client).add([task("x")]) { _, _ in }
+        }
     }
 
     @Test func aRefusedTokenSaysSoWithoutTheToken() async throws {
@@ -62,14 +71,25 @@ private func task(_ text: String, owner: String? = nil, due: String? = nil, link
         #expect(fake.requests.count == 1 && added == 0)
     }
 
-    @Test func theProjectsTheInboxFirstFromEitherAPI() async throws {
-        let v2 = Routes(["GET \(TODOIST)/projects": [.ok("""
-            [{"id": "220", "name": "Contoso"}, {"id": "100", "name": "Inbox", "is_inbox_project": true}]
-            """)]])
-        let projects = try await TodoistClient(token: TODOIST_TOKEN, http: v2.client).projects()
-        #expect(projects.map(\.name) == ["Inbox", "Contoso"] && projects[0].inbox && projects[1].id == "220")
-        let v1 = Routes(["GET \(TODOIST)/projects": [.ok(#"{"results": [{"id": "7", "name": "Northwind", "inbox_project": false}]}"#)]])
-        #expect(try await TodoistClient(token: TODOIST_TOKEN, http: v1.client).projects().map(\.id) == ["7"])
+    @Test func theProjectsPageByPageTheInboxFirst() async throws {
+        let fake = Routes([
+            "GET \(TODOIST)/projects?limit=200": [.ok("""
+                {"results": [{"id": "6Jf8VQXxpwv56VQ7", "name": "Contoso", "inbox_project": false},
+                             {"id": "6X7fphhgwcXVGRrm", "name": "Northwind", "workspace_id": "1"}],
+                 "next_cursor": "eyJwYWdlIjoyfQ.aGFzaA"}
+                """)],
+            "GET \(TODOIST)/projects?limit=200&cursor=eyJwYWdlIjoyfQ.aGFzaA": [.ok("""
+                {"results": [{"id": "6Jf8VQXxpwv56VQ8", "name": "Inbox", "inbox_project": true}], "next_cursor": null}
+                """)],
+        ])
+        let projects = try await TodoistClient(token: TODOIST_TOKEN, http: fake.client).projects()
+        #expect(projects.map(\.name) == ["Inbox", "Contoso", "Northwind"] && projects[0].inbox && !projects[2].inbox)
+        #expect(fake.requests.count == 2)
+    }
+
+    @Test func aBareListIsNotV1sAnswer() async throws {
+        let fake = Routes(["GET \(TODOIST)/projects?limit=200": [.ok(#"[{"id": "220", "name": "Contoso"}]"#)]])
+        await #expect(throws: CloudError.self) { _ = try await TodoistClient(token: TODOIST_TOKEN, http: fake.client).projects() }
     }
 }
 

@@ -25,7 +25,7 @@ DB = "0123abcd-0123-4567-89ab-0123456789ab"
 
 
 class StubServices:
-    """Todoist's REST API (/rest/v2) and Notion's (/v1) as far as the follow-ups use them; keeps what it got."""
+    """Todoist's API v1 (/api/v1) and Notion's (/v1) as far as the follow-ups use them; keeps what it got."""
 
     def __init__(self):
         self.got: list[tuple[str, str, dict | None, str | None]] = []  # (method, path, body, Authorization)
@@ -59,18 +59,21 @@ class StubServices:
         self.url = f"http://127.0.0.1:{self._server.server_address[1]}"
 
     def answer(self, method: str, path: str):
-        if (method, path) == ("POST", "/rest/v2/tasks"):
+        if (method, path) == ("POST", "/api/v1/tasks"):  # v1 answers the task without a url
             self._next += 1
-            return 200, {"id": str(9000 + self._next), "url": f"https://app.todoist.example/task/{9000 + self._next}"}
-        if (method, path) == ("GET", "/rest/v2/projects"):
-            return 200, [{"id": "100", "name": "Inbox", "is_inbox_project": True}, {"id": "220", "name": "Contoso"}]
+            return 200, {"id": f"6X7rM8997g3RQm{self._next:02d}", "content": "…", "project_id": "6Jf8VQXxpwv56VQ8"}
+        if (method, path) == ("GET", "/api/v1/projects?limit=200"):  # paged: results and next_cursor
+            return 200, {"results": [{"id": "6Jf8VQXxpwv56VQ8", "name": "Inbox", "inbox_project": True}],
+                         "next_cursor": "eyJwYWdlIjoyfQ.aGFzaA"}
+        if (method, path) == ("GET", "/api/v1/projects?limit=200&cursor=eyJwYWdlIjoyfQ.aGFzaA"):
+            return 200, {"results": [{"id": "6Jf8VQXxpwv56VQ7", "name": "Contoso", "inbox_project": False}], "next_cursor": None}
         if (method, path) == ("GET", f"/v1/databases/{DB}"):
             return 200, {"object": "database", "title": [{"plain_text": "Tasks"}],
                          "properties": {"Name": {"type": "title"}, "Due": {"type": "date"}, "Done": {"type": "checkbox"}}}
         return 404, {"message": "not here"}
 
     def tasks(self) -> list[dict]:
-        return [body for method, path, body, _ in self.got if (method, path) == ("POST", "/rest/v2/tasks")]
+        return [body for method, path, body, _ in self.got if (method, path) == ("POST", "/api/v1/tasks")]
 
     def close(self):
         self._server.shutdown()
@@ -81,7 +84,7 @@ class StubServices:
 def services(tmp_path):
     """The window's server with the stub as Todoist and Notion, and meeting A with an invitee and a step of the user's."""
     stub = StubServices()
-    srv, served = _serve(tmp_path / "Recordings", env={"PALAVER_TEST_TODOIST_URL": f"{stub.url}/rest/v2",
+    srv, served = _serve(tmp_path / "Recordings", env={"PALAVER_TEST_TODOIST_URL": f"{stub.url}/api/v1",
                                                         "PALAVER_TEST_NOTION_API": f"{stub.url}/v1"})
     paths = RecordingPaths(served.root / A)
     notes = load_notes(paths)
@@ -157,8 +160,8 @@ def test_settings_keep_the_token_in_the_keychain_and_check_the_services(page, se
     expect(page.locator("#todoist-card [role=status]")).to_have_text("Connected to Todoist: 2 projects.")
     page.get_by_role("combobox", name="Todoist project").select_option(label="Contoso")
     expect_toast(page, "Tasks go to Contoso.")
-    expect(page.get_by_role("combobox", name="Todoist project")).to_have_value("220")
-    assert read_settings()["todoist_project"] == {"id": "220", "name": "Contoso"}
+    expect(page.get_by_role("combobox", name="Todoist project")).to_have_value("6Jf8VQXxpwv56VQ7")
+    assert read_settings()["todoist_project"] == {"id": "6Jf8VQXxpwv56VQ7", "name": "Contoso"}
 
     (served._fake.folder / "keychain.json").write_text(json.dumps({"TODOIST_TOKEN": TOKEN, "NOTION_TOKEN": "secret_e2e_notion"}))
     reload(page)

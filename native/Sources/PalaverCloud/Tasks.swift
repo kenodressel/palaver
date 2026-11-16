@@ -59,12 +59,18 @@ public protocol TaskTarget: Sendable {
 
 // MARK: - Todoist
 
-/// Todoist's REST API v2: a task per step (content, description, due date) in the project chosen in Settings, else the
-/// Inbox.
+/// Todoist's unified API v1 (developer.todoist.com/api/v1; REST v2 was shut down): a task per step (`POST /tasks`:
+/// content, description, due_date) in the project chosen in Settings, else the Inbox (no project_id). Ids are strings
+/// ("6X7rM8997g3RQmvh"). A created task has no `url` any more; its address is `https://app.todoist.com/app/task/<id>`.
 public struct TodoistClient: TaskTarget {
-    public static let BASE_URL = "https://api.todoist.com/rest/v2"
+    public static let BASE_URL = "https://api.todoist.com/api/v1"
     public static let NAME = "Todoist"
     public static let TIMEOUT_SECONDS = 30.0
+    /// The most projects a page gives (the API's maximum), and the most pages read: a picker needs no more.
+    public static let PAGE_LIMIT = 200
+    public static let MAX_PAGES = 10
+    /// Where a task is opened in Todoist (the API's migration guide, "Task URLs").
+    public static let TASK_URL = "https://app.todoist.com/app/task/"
 
     public let id = "todoist"
     public let label = NAME
@@ -86,16 +92,25 @@ public struct TodoistClient: TaskTarget {
         public let inbox: Bool
     }
 
-    /// The user's projects, the Inbox first (Settings' project picker and its Check).
+    /// The user's projects, the Inbox first (Settings' project picker and its Check). `GET /projects` is paged:
+    /// `{results, next_cursor}`, the next page asked with `cursor` until `next_cursor` is null.
     public func projects() async throws -> [Project] {
-        let (data, _) = try await http.send(try request("GET", "/projects"), name: Self.NAME, key: token)
-        guard let answer = try? PythonJSON.parse(data) else { throw CloudError("\(Self.NAME) answered with something that is not JSON") }
-        // v2 answers a list; the newer API wraps it in "results".
-        let items = answer.arrayValue ?? answer["results"]?.arrayValue ?? []
-        let projects: [Project] = items.compactMap { p in
-            guard let id = Self.idText(p["id"]), let name = p["name"]?.stringValue else { return nil }
-            let inbox = p["is_inbox_project"]?.boolValue ?? p["inbox_project"]?.boolValue ?? false
-            return Project(id: id, name: name, inbox: inbox)
+        var projects: [Project] = []
+        var cursor: String?
+        for _ in 0..<Self.MAX_PAGES {
+            var query = [URLQueryItem(name: "limit", value: String(Self.PAGE_LIMIT))]
+            if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
+            let answer = try await http.sendJSON(try request("GET", "/projects", query: query), name: Self.NAME, key: token)
+            guard let items = answer["results"]?.arrayValue else {
+                throw CloudError("\(Self.NAME) answered without a list of projects")
+            }
+            projects += items.compactMap { p in
+                guard let id = p["id"]?.stringValue, !id.isEmpty, let name = p["name"]?.stringValue else { return nil }
+                // Only a personal Inbox says so; workspace projects leave the flag out.
+                return Project(id: id, name: name, inbox: p["inbox_project"]?.boolValue ?? false)
+            }
+            guard let next = answer["next_cursor"]?.stringValue, !next.isEmpty else { break }
+            cursor = next
         }
         return projects.filter(\.inbox) + projects.filter { !$0.inbox }
     }
@@ -112,24 +127,19 @@ public struct TodoistClient: TaskTarget {
         if let projectId { fields.append(("project_id", .string(projectId))) }
         if let due = task.due { fields.append(("due_date", .string(due))) }
         var req = try request("POST", "/tasks", json: .object(fields))
-        // Todoist drops a second request with the same id: a create sent twice is made once.
+        // A request id of its own, as Todoist's examples send with a POST. Not relied on: a create is never sent again
+        // (`idempotent: false`), whatever happened to the first.
         req.setValue(UUID().uuidString, forHTTPHeaderField: "X-Request-Id")
         let answer = try await http.sendJSON(req, name: Self.NAME, key: token, idempotent: false)
-        guard let id = Self.idText(answer["id"]) else { throw CloudError("\(Self.NAME) made the task but gave no id") }
-        return AddedTask(id: id, url: answer["url"]?.stringValue)
+        guard let id = answer["id"]?.stringValue, !id.isEmpty else { throw CloudError("\(Self.NAME) made the task but gave no id") }
+        let encoded = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        return AddedTask(id: id, url: Self.TASK_URL + encoded)
     }
 
-    /// An id as text: v2 sends strings, older answers numbers.
-    static func idText(_ v: JSONValue?) -> String? {
-        switch v {
-        case .string(let s)? where !s.isEmpty: return s
-        case .int(let n)?: return String(n)
-        default: return nil
-        }
-    }
-
-    func request(_ method: String, _ path: String, json: JSONValue? = nil) throws -> URLRequest {
-        guard let url = URL(string: base + path) else { throw CloudError("not a \(Self.NAME) address") }
+    func request(_ method: String, _ path: String, query: [URLQueryItem] = [], json: JSONValue? = nil) throws -> URLRequest {
+        guard var parts = URLComponents(string: base + path) else { throw CloudError("not a \(Self.NAME) address") }
+        if !query.isEmpty { parts.queryItems = query }
+        guard let url = parts.url else { throw CloudError("not a \(Self.NAME) address") }
         var r = URLRequest(url: url, timeoutInterval: Self.TIMEOUT_SECONDS)
         r.httpMethod = method
         r.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
