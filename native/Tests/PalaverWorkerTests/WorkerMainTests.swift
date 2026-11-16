@@ -188,8 +188,12 @@ private struct Voices: Diarizing {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
         }
         #expect(bound == 0)
-        #expect(Notify.send(title: "Transcript ready", message: String(repeating: "a", count: 300), meeting: "2026-11-04T10-00-00",
-                            env: [Notify.ENV: socketPath]))
+        var wait = timeval(tv_sec: 5, tv_usec: 0)  // a datagram that never comes fails the test, never hangs it
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &wait, socklen_t(MemoryLayout<timeval>.size))
+        // `send` less its `Notify.muted` check: other suites' `WorkerMain.run --no-notify` set that process-wide
+        // flag at any moment while this runs.
+        #expect(Notify.deliver(Notify.datagram(title: "Transcript ready", message: String(repeating: "a", count: 300),
+                                               meeting: "2026-11-04T10-00-00"), to: socketPath))
         var buf = [UInt8](repeating: 0, count: 4096)
         let n = recv(fd, &buf, buf.count, 0)
         let got = try? PythonJSON.parse(Data(buf.prefix(max(n, 0))))
