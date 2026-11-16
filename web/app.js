@@ -27,7 +27,7 @@ import { needsSummary, needCards, needQuestion, startsInText, cutAtPointer, navC
   paletteRecent, paletteRecentShown, labelDisplay, meetingTabs, meetingTab, TAB_LABELS } from "./logic.js";
 import { togglePalette, paletteOpen } from "./palette.js";
 // Report a Problem and the usage counts (#59).
-import { reportMeeting, reportDraft, reportDoneText, actionCatalog, exportedText } from "./logic.js";
+import { reportMeeting, reportDraft, reportDoneText, actionCatalog, exportedText, heardSpellings } from "./logic.js";
 // Export and import of a meeting (#58).
 import { inferredText, importedLine, importedText, GLOBAL_COMMANDS, sourceName, sourceTitle } from "./logic.js";
 import { recordingNow, recordingCommand, RECORD_TEXT } from "./logic.js";
@@ -3617,7 +3617,8 @@ async function termBack(token, tid) {
 
 // One suggestion: the spellings found, the spelling to use (editable), where it occurs.
 function suggestionCard(s, after) {
-  const term = h("input", { class: "name-input term-input", value: s.term, spellcheck: "false",
+  // A term the glossary has can be typed or picked: a misheard word then becomes its spelling (#38).
+  const term = h("input", { class: "name-input term-input", value: s.term, spellcheck: "false", list: "gloss-terms",
     "aria-label": "The right spelling" });
   let kept = [...s.variants];
   const variants = s.variants.filter((v) => v !== s.term);
@@ -3645,10 +3646,15 @@ function suggestionCard(s, after) {
       h("span", { class: "example-title" }, e.title || e.meeting),
       h("span", { class: "example-text" }, snippet(e.text, [...s.variants, s.term])))),
     h("div", { class: "gloss-actions" },
-      h("button", { class: "btn", onclick: (e) => {
+      s.kind === "variant" ? null : h("p", { class: "meta gloss-hint" },
+        "Misheard? Type the right spelling, or a term you have: what was heard becomes its spelling."),
+      h("button", { class: "btn", onclick: async (e) => {
         const chosen = term.value.trim() || s.term;
-        changeGlossary("/api/glossary/accept", { term: chosen, variants: kept }, `“${chosen}” was not added`, after,
-          { from: e.currentTarget });
+        // What was heard, when it isn't the spelling chosen: a term suggested as heard, renamed here (#38).
+        const heard = heardSpellings(s, kept, chosen);
+        const d = await changeGlossary("/api/glossary/accept", { term: chosen, variants: heard }, `“${chosen}” was not added`,
+          after, { from: e.currentTarget });
+        if (d && heard.length) toast(`${heard.map((v) => `“${v}”`).join(", ")} → “${chosen}”. ${changedText(d.changed)}`);
       } }, "Add to glossary"),
       h("button", { type: "button", class: "btn btn-quiet small", onclick: (e) => dismissSuggestion(s, after, e.currentTarget) },
         "Not this")));
@@ -3677,7 +3683,8 @@ function renderGlossary() {
     h("button", { class: "btn", type: "submit" }, "Add")));
 
   if (d.suggestions.length) {
-    page.append(h("h2", {}, "Suggestions"),
+    page.append(h("datalist", { id: "gloss-terms" }, d.terms.map((t) => h("option", { value: t.term }))),
+      h("h2", {}, "Suggestions"),
       h("div", { class: "gloss-cards" }, d.suggestions.map((s) => suggestionCard(s, glossaryPage))));
   }
   page.append(h("h2", {}, "Terms"));

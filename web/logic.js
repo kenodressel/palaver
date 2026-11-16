@@ -1445,6 +1445,13 @@ export function exportRequest(ticked, confirmLocal = false) {
 }
 
 // The toast once the file is saved.
+// A glossary suggestion taken as `chosen`: the spellings that become its variants. A suggested term or
+// cluster renamed to another spelling (or to a term the glossary has) brings what was heard along (#38).
+export function heardSpellings(s, kept, chosen) {
+  const heard = [...kept, ...(s.kind === "variant" ? [] : [s.term])];
+  return [...new Set(heard)].filter((v) => v !== chosen);
+}
+
 export function exportedText(answer) {
   return `Saved to ${answer.folder || "Downloads"}: “${answer.name}”`;
 }
