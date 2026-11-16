@@ -27,7 +27,7 @@ import { needsSummary, needCards, needQuestion, startsInText, cutAtPointer, navC
   paletteRecent, paletteRecentShown, labelDisplay, meetingTabs, meetingTab, TAB_LABELS } from "./logic.js";
 import { togglePalette, paletteOpen } from "./palette.js";
 // Report a Problem and the usage counts (#59).
-import { reportMeeting, reportDraft, reportDoneText, actionCatalog } from "./logic.js";
+import { reportMeeting, reportDraft, reportDoneText, actionCatalog, exportedText } from "./logic.js";
 // Export and import of a meeting (#58).
 import { inferredText, importedLine, importedText, GLOBAL_COMMANDS } from "./logic.js";
 import { recordingNow, recordingCommand, RECORD_TEXT } from "./logic.js";
@@ -906,6 +906,7 @@ const ICONS = {
   localOnly: "M6 11h12v10H6zM9 11V7a3 3 0 0 1 6 0v4",
   forgetSeries: "M4 4l16 16M7 5h12a2 2 0 0 1 2 2v10M3 9v10a2 2 0 0 0 2 2h12M3 9h6",
   export: "M12 3v12M7 8l5-5 5 5M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5",
+  markdown: "M6 3h9l4 4v14H6zM14 3v5h5M9 13h7M9 17h7",
   shared: "M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM16 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM2 20c0-3 3-5 6-5s6 2 6 5M14.5 15.3A6.5 6.5 0 0 1 16 15c3 0 6 2 6 5",
   report: "M5 21V4M5 4h12l-2 4 2 4H5",
   trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
@@ -938,13 +939,21 @@ const ACTIONS = tracked("meeting", {
   shared: (m, from) => markShared(m, !m.shared?.meeting, from),
   forgetSeries: (m, from) => rememberSeries(m, false, from),
   export: (m) => openExport(m, titleOf(m)),
+  markdown: async (m) => {
+    try {
+      toast(exportedText(await api(`/api/meetings/${encodeURIComponent(m.id)}/markdown`, {})));
+    } catch (err) {
+      toast(`Not saved: ${err.message}`);
+    }
+  },
   report: (m) => openReport(m.id),
   deleteAudio: (m, from) => deleteAudio(m, from),
   trash: (m, from) => trashMeeting(m, from),
 });
 
 // The ⋯ menu, in the spec's order: Move to Trash last, red, after a separator.
-const MENU_ORDER = ["transcribe", "rename", "changeEvent", "joinPrevious", "joinNext", "split", "reviewAgain", "export", "localOnly",
+const MENU_ORDER = ["transcribe", "rename", "changeEvent", "joinPrevious", "joinNext", "split", "reviewAgain", "export", "markdown",
+  "localOnly",
   "shared", "forgetSeries", "report", null, "deleteAudio", "trash"];
 function itemsFor(m, from) {
   const c = meetingCommands(m);
@@ -4756,6 +4765,7 @@ setInterval(() => { if (memoryPolling(state.view, document.hidden)) refreshMemor
 async function refreshStorage() {
   try {
     state.storage = await api("/api/storage");
+    state.markdownFolder = (await api("/api/markdown-folder")).markdown_folder ?? "";
   } catch {
     return;
   }
@@ -4782,7 +4792,29 @@ function renderStorageSection() {
         mod.deletable ? h("button", { type: "button", class: "btn btn-quiet small",
           onclick: (e) => deleteModel(mod, e.currentTarget) }, "Delete") : null))),
     h("p", { class: "meta" }, `Meetings are in ${s.folder}. Models from Hugging Face are in ~/.cache/huggingface.`)));
+  section.append(renderMarkdownFolder());
   return section;
+}
+
+// #17: every meeting as a Markdown file in a folder (an Obsidian vault, say), kept up to date.
+function renderMarkdownFolder() {
+  const input = h("input", { type: "text", value: state.markdownFolder ?? "", placeholder: "~/Documents/Meetings",
+    "aria-label": "Markdown folder", spellcheck: false });
+  const save = async (button) => {
+    try {
+      const answer = await busy(button, api("/api/markdown-folder", { markdown_folder: input.value }));
+      state.markdownFolder = answer.markdown_folder;
+      toast(state.markdownFolder ? `Meetings go to ${state.markdownFolder} as Markdown` : "No Markdown folder");
+    } catch (err) {
+      toast(`Not saved: ${err.message}`);
+    }
+  };
+  const button = h("button", { type: "button", class: "btn btn-quiet small", onclick: () => save(button) }, "Save");
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") save(button); });
+  return h("div", { class: "gloss-card settings-card", id: "markdown-folder" },
+    h("div", { class: "lm-row" }, h("span", {}, "Markdown folder"), h("span", { class: "storage-size" }, input, button)),
+    h("p", { class: "meta" }, "Every meeting as a Markdown file there, notes and transcript, rewritten when it changes ",
+      "(an Obsidian vault, for example). Meetings kept on this Mac too: the folder is on this Mac. Empty: none."));
 }
 
 async function changeAudioDays(days, select) {

@@ -25,6 +25,8 @@ public enum Exchange {
     public static let FORMAT = 1
     public static let SUFFIX = ".zip"
     public static let NOT_EXPORTED = ExchangeZip.NOT_EXPORTED
+    /// The meeting as Markdown (#17), so the zip can be read without Palaver; an import skips it.
+    public static let READABLE_COPY = "meeting.md"
     /// Beside the recordings: where an import is built before it moves in.
     public static let STAGING = ".importing"
     /// The folder beside an export the zip is written in (`tempfile.TemporaryDirectory(prefix=)`).
@@ -329,10 +331,12 @@ public enum Exchange {
     /// Writes the meeting to `dest` (a `.zip` file; written beside it first, then renamed, so a half-written file is
     /// never seen). A meeting kept on this Mac throws `KeptOnThisMac` unless the user said yes (`confirmLocal`).
     /// `projects`: the exporter's project names, a hint for the importer. `audio`: the tracks too, compressed
-    /// (`ExchangeAudio.encodeTrack`), stored after the JSON files.
+    /// (`ExchangeAudio.encodeTrack`), stored after the JSON files. `readable`: the meeting as Markdown, put in as
+    /// `READABLE_COPY` (#17).
     @discardableResult
     public static func exportMeeting(_ paths: RecordingPaths, dest: URL, userName: String, notes withNotes: Bool = true,
                                      voices: Bool = false, audio: Bool = false, confirmLocal: Bool = false,
+                                     readable: String? = nil,
                                      projects: [String] = [], stores: StorePaths = .current(), now: Date = Date(),
                                      timeZone: TimeZone = .current, version: String = palaverVersion) throws -> URL {
         guard statusReady(paths) else { throw NotReady() }
@@ -383,6 +387,7 @@ public enum Exchange {
         files["meeting/speakers.json"] = bytes(.array(speakers))
         if let event = calendar(paths) { files["meeting/calendar.json"] = bytes(event) }
         if withNotes, let meetingNotes = try notes(paths) { files["meeting/notes.json"] = bytes(meetingNotes) }
+        if let readable { files[READABLE_COPY] = Data(readable.utf8) }
         if voices {
             let stored = read(paths.speakerEmbeddings, .object([]))
             let embeddings = stored.truthy ? stored : .object([])

@@ -97,7 +97,12 @@ to the new folders at the first start.
 - **Review.** Step through finished meetings one by one: confirm the
   project, name the speakers, check the notes.
 - **Share a meeting.** Export a meeting as a .zip and send it to a
-  colleague, who imports it into their Palaver.
+  colleague, who imports it into their Palaver. The zip also holds the
+  meeting as Markdown (`meeting.md`), readable without Palaver.
+- **Markdown.** Save as Markdown in a meeting's ⋯ menu puts its notes and
+  transcript in one .md file in Downloads. Settings → Storage → Markdown
+  folder keeps every meeting as a Markdown file in a folder of your choice
+  (an Obsidian vault, say), rewritten when the meeting changes.
 - **Dark mode.** The window follows your Mac's appearance.
 
 ![Notes in dark mode: decisions, next steps and the topics](docs/images/notes-dark.png)
@@ -191,7 +196,7 @@ Meetings, name any voice Palaver did not know, and check the notes.
 summary and next steps. You can pick its project and write notes there in
 advance.
 
-**A meeting's ⋯ menu** has Export…, Keep on This Mac, Delete Audio… and
+**A meeting's ⋯ menu** has Export…, Save as Markdown, Keep on This Mac, Delete Audio… and
 Move to Trash, among others. Most changes can be undone.
 
 ## Privacy

@@ -24,10 +24,10 @@ def test_the_menu_has_the_meetings_actions_in_order(page, shared_server):
     open_meeting(page, shared_server, A)
     more(page).click()
     menu = page.locator(".menu")
-    expect(menu.get_by_role("menuitem")).to_have_count(12)
+    expect(menu.get_by_role("menuitem")).to_have_count(13)
     labels = menu.locator(".menu-label").all_text_contents()
     assert labels == ["Rename…", "Change Event…", "Join with Previous", "Join with Next", "Split At…", "Review Again",
-                      "Export…", "Keep on This Mac", "Speakers Can't Be Separated",
+                      "Export…", "Save as Markdown", "Keep on This Mac", "Speakers Can't Be Separated",
                       "Report a Problem with This Meeting…", "Delete Audio…", "Move to Trash"]
     expect(menu_item(page, "Join with Previous")).to_be_disabled()  # no recording right before it
     expect(menu_item(page, "Review Again")).to_be_disabled()  # not reviewed yet

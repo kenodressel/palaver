@@ -12,7 +12,7 @@ import pytest
 
 from playwright.sync_api import expect  # noqa: E402
 
-from .helpers import cmd, expect_toast, heading, list_ids, list_item, menu_item, more, open_meeting, toast, unfocus  # noqa: E402
+from .helpers import cmd, expect_toast, goto, heading, list_ids, list_item, menu_item, more, open_meeting, toast, unfocus  # noqa: E402
 from .recordings import A, B  # noqa: E402
 
 pytestmark = pytest.mark.e2e
@@ -55,6 +55,23 @@ def test_export_offers_what_goes_in_and_saves_the_file_to_downloads(page, app_se
         names = set(zf.namelist())
     assert "meeting/transcript.json" in names and "meeting/notes.json" not in names
     assert not any(n.startswith(("audio/", "voices/")) for n in names)
+
+
+def test_the_meeting_saved_as_markdown_and_mirrored_into_a_folder(page, app_server):
+    """#17: Save as Markdown from ⋯ puts one .md in Downloads; Settings → Storage mirrors every meeting into a folder."""
+    open_meeting(page, app_server, A)
+    more(page).click()
+    menu_item(page, "Save as Markdown").click()
+    expect_toast(page, "Saved to Downloads: “2026-10-27 09-00 Team standup.md”")
+    text = (app_server.home / "Downloads" / "2026-10-27 09-00 Team standup.md").read_text()
+    assert text.startswith("# Team standup\n") and "## Transcript" in text
+    vault = app_server.home / "vault"
+    goto(page, app_server, "#/settings/storage")
+    field = page.get_by_role("textbox", name="Markdown folder")
+    field.fill(str(vault))
+    page.locator("#markdown-folder").get_by_role("button", name="Save").click()
+    expect_toast(page, f"Meetings go to {vault} as Markdown")
+    assert (vault / "2026-10-27 09-00 Team standup.md").exists()
 
 
 def test_escape_cancels_the_export(page, app_server):

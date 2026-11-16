@@ -39,6 +39,8 @@ export function meetingCommands(m) {
     reviewAgain: { label: "Review Again", enabled: !!m.reviewed && !busy },
     // One file to send to a colleague (#58); a finished meeting only.
     export: { label: "Export…", paletteLabel: "Export Meeting…", enabled: ready },
+    // The meeting as one Markdown file in Downloads (#17).
+    markdown: { label: "Save as Markdown", paletteLabel: "Save Meeting as Markdown", enabled: ready },
     // #9: the space goes, the transcript and notes stay; not to be played or transcribed again.
     deleteAudio: { label: "Delete Audio…", paletteLabel: "Delete This Meeting's Audio…", danger: true,
       enabled: ready && !!m.has_audio, hidden: !m.has_audio },
@@ -1327,7 +1329,7 @@ export function paletteMatch(query, entries, limit = 30) {
 }
 
 const PALETTE_COMMANDS = ["play", "transcribe", "writeNotes", "rename", "changeEvent", "joinPrevious", "joinNext", "split", "reviewAgain",
-  "export", "localOnly", "shared", "forgetSeries", "report", "deleteAudio", "trash"];
+  "export", "markdown", "localOnly", "shared", "forgetSeries", "report", "deleteAudio", "trash"];
 
 // The open meeting's commands that apply now, with their shortcuts.
 export function paletteCommands(m) {

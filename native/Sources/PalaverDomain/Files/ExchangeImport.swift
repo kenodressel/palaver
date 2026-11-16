@@ -169,6 +169,7 @@ extension Exchange {
         var voices = PyDict<JSONValue>()
         for (name, entry) in entries {
             if name.unicodeScalars.starts(with: "audio/".unicodeScalars) { continue }
+            if Py.same(name, READABLE_COPY) { continue }  // for people, not read back (#17)
             let data = try ExchangeZip.readEntry(zip, name, entry, expected: listed[name] ?? .null, caps: caps)
             let doc = try JSONSchemaCheck.json(data, where: name)
             if name.unicodeScalars.starts(with: "voices/".unicodeScalars) {

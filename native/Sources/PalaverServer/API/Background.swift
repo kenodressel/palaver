@@ -154,6 +154,22 @@ public final class Background: @unchecked Sendable {
         let warm = Thread { [weak self] in self?.warmUp() }
         warm.name = "warm-up"
         warm.start()
+        startMirroring()
+    }
+
+    /// The Markdown folder (#17): every `MIRROR_SECONDS` the meetings written there anew where they changed, at
+    /// background QoS. Nothing happens while no folder is chosen.
+    func startMirroring(every seconds: Double = MeetingMarkdown.MIRROR_SECONDS) {
+        let t = Thread { [weak self] in
+            while true {
+                guard let app = self?.app else { return }
+                MeetingMarkdown.mirror(app)
+                Thread.sleep(forTimeInterval: seconds)
+            }
+        }
+        t.name = "markdown-mirror"
+        t.qualityOfService = .background
+        t.start()
     }
 
     // MARK: - what follows a change

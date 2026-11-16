@@ -648,8 +648,8 @@ public enum ExchangeZip {
         public static let standard = Caps()
     }
 
-    /// `_NAME`: the files an exported meeting has.
-    static let NAME = try! PyRegex(#"manifest\.json|meeting/(meta|calendar|transcript|turns|speakers|notes)\.json"#
+    /// `_NAME`: the files an exported meeting has (`meeting.md`, its readable copy, since #17).
+    static let NAME = try! PyRegex(#"manifest\.json|meeting\.md|meeting/(meta|calendar|transcript|turns|speakers|notes)\.json"#
                                    + #"|voices/SPEAKER_\d{1,3}\.json|audio/(system|mic)\.(opus|flac)"#)
     static let SKIPPED = try! PyRegex(#"__MACOSX/.*|(.*/)?(\.DS_Store|\._[^/]+)"#)
     static let FOLDERS = ["", "meeting/", "voices/", "audio/"]

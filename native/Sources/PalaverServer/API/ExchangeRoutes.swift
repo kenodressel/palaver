@@ -15,8 +15,14 @@ public enum ExchangeAPI {
         Exchange.sweep(app.outputDir, downloads: app.downloads)
         let dest = Exchange.freeName(app.downloads, Exchange.fileName(paths))
         do {
+            // A readable copy (#17), with the notes only when they go in.
+            var page = try MeetingsAPI.getMeeting(app: app, id: id, calendar: false)
+            if !notes, case .object(var fields) = page {
+                fields.removeAll { $0.0 == "notes" }
+                page = .object(fields)
+            }
             try Exchange.exportMeeting(paths, dest: dest, userName: app.userName, notes: notes, voices: voices, audio: audio,
-                                       confirmLocal: confirmLocal, projects: Exchange.confirmedProjects(id, stores: app.stores),
+                                       confirmLocal: confirmLocal, readable: MeetingMarkdown.render(page), projects: Exchange.confirmedProjects(id, stores: app.stores),
                                        stores: app.stores)
         } catch is Exchange.KeptOnThisMac {
             return .object([("question", .string("local_only"))])
@@ -76,6 +82,16 @@ public enum ExchangeAPI {
 extension Router {
     /// server.py's `/api/meetings/{id}/export` branch and `_import`.
     static func addExchangeRoutes(_ r: Router, app: ServerApp) {
+        // Save as Markdown (#17): the file in Downloads.
+        r.post("/api/meetings/([^/]+)/markdown") { _, m in .json(try MeetingMarkdown.save(app, id: m.group(1)!)) }
+        // Settings → Export: the folder every meeting is mirrored into as Markdown ("" for none).
+        r.get("/api/markdown-folder") { _, _ in
+            .json(.object([(MeetingMarkdown.SETTING, .string(SettingsFile.readRaw(stores: app.stores)[MeetingMarkdown.SETTING]?.stringValue ?? ""))]))
+        }
+        r.post("/api/markdown-folder") { req, _ in
+            guard let value = req.json[MeetingMarkdown.SETTING]?.stringValue else { throw BadRequest("\(MeetingMarkdown.SETTING) is a text") }
+            return .json(try MeetingMarkdown.setFolder(app, value))
+        }
         r.post("/api/meetings/([^/]+)/export") { req, m in
             .json(try ExchangeAPI.exportMeeting(app, id: m.group(1)!, notes: try ChangesAPI.flag(req.json, "notes", default: true),
                                                 voices: try ChangesAPI.flag(req.json, "voices", default: false),
