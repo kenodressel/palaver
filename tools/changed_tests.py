@@ -14,6 +14,7 @@ Python:
 - a file of the window's server that serves one area of the window runs the e2e tests of that area
   (SERVER_AREAS); any other Swift target palaver-server or palaver-lm is built from runs tests/e2e, one
   palaver-worker is built from the test that starts palaver-worker (PY_STARTED_BY);
+- the usage numbers' Worker (stats/) runs its node tests (tests/test_stats_worker.py);
 - install.sh, a tool or a fixture runs the tests that name it;
 - anything else that tests depend on (pyproject.toml, uv.lock, conftest.py, the Makefile) runs everything: "tests".
 
@@ -173,6 +174,8 @@ def select(paths: set[str]) -> set[str]:
             out |= WEB_AREAS.get(path, {"tests/e2e/test_pages.py"} if path.startswith("web/fonts/") else {"tests/e2e"})
         elif path.startswith("tests/js/"):
             out.add("tests/test_js.py")
+        elif path.startswith("stats/"):  # the usage numbers' Worker (#6)
+            out.add("tests/test_stats_worker.py")
         elif path.startswith(SERVER):
             area = [k for k in SERVER_AREAS if path[len(SERVER):].startswith(k)]
             out |= SERVER_AREAS[max(area, key=len)] if area else {"tests/e2e"}

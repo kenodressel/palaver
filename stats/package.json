@@ -1,0 +1,9 @@
+{
+  "name": "palaver-stats",
+  "private": true,
+  "type": "module",
+  "description": "Palaver's opt-in usage numbers: a Cloudflare Worker with a D1 database. No dependencies.",
+  "scripts": {
+    "test": "node --test"
+  }
+}

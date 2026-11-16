@@ -24,6 +24,7 @@ Layout:
 | `web/` | The Meetings window's page, served by `palaver-server` |
 | `tests/` | `e2e/` (the window in WebKit against `palaver-server`), `js/` (the page's unit tests, run with node), the tests of the release tooling and `install.sh`, `fixtures/` (shared with the Swift tests) |
 | `tools/` | The release build, `smoke_install.sh`, `release_keychain.sh` (signing on CI), the engine gate, and generators of checked-in data (icons, Unicode tables, the zipf table, the embedder fixture) |
+| `stats/` | The opt-in usage numbers' Cloudflare Worker (#6): its D1 schema, tests (`cd stats && node --test`) and deploy steps (`stats/README.md`) |
 | `install.sh` | The installer testers run |
 
 ## Setup (from source)

@@ -42,6 +42,7 @@ def test_install_sh_tools_and_shared_setup():
     assert changed_tests.select({"tools/build_release.py"}) >= {"tests/test_release_compat.py"}
     assert changed_tests.select({"pyproject.toml", "web/app.js"}) == {"tests"}
     assert changed_tests.select({"README.md"}) == set()
+    assert changed_tests.select({"stats/src/index.js"}) == {"tests/test_stats_worker.py"}  # the usage numbers' Worker
 
 
 def test_a_swift_target_runs_the_bundles_built_from_it_or_starting_its_programs():
