@@ -76,15 +76,20 @@ public enum PythonJSON {
 
     /// Writes `dumps(v)` (plus "\n" when `newline`) as UTF-8. With `tmp`: into that name in the
     /// same folder, then renamed over `url` (`tmp.write_text(...); tmp.replace(path)`). Without:
-    /// in place, truncating, as `Path.write_text` does.
+    /// in place, truncating, as `Path.write_text` does. A write or rename that fails takes its tmp file with it.
     public static func write(_ v: JSONValue, to url: URL, indent: Int?, ensureAscii: Bool,
                              newline: Bool = false, via tmp: String? = nil) throws {
         var text = dumps(v, indent: indent, ensureAscii: ensureAscii)
         if newline { text += "\n" }
         guard let tmp else { return try writeText(text, url.path) }
         let staged = url.deletingLastPathComponent().appendingPathComponent(tmp).path
-        try writeText(text, staged)
-        guard rename(staged, url.path) == 0 else { throw posixError() }
+        do {
+            try writeText(text, staged)
+            guard rename(staged, url.path) == 0 else { throw posixError() }
+        } catch {
+            unlink(staged)
+            throw error
+        }
     }
 
     /// `open(path, "w")` and write, as `Path.write_text` does: created 0666 less the umask, an

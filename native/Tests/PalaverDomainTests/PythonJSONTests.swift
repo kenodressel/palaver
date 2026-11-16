@@ -68,6 +68,17 @@ private func text(_ url: URL) throws -> String { String(decoding: try Data(conte
         #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("meta.json.tmp").path))
     }
 
+    @Test func aWriteThatFailsLeavesNoTmpBehind() throws {
+        let dir = try tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("usage-features.json")
+        try FileManager.default.createDirectory(at: file.appendingPathComponent("in-the-way"), withIntermediateDirectories: true)
+        #expect(throws: (any Error).self) {  // a folder can't be renamed over
+            try PythonJSON.write(.object([("a", .int(1))]), to: file, indent: 1, ensureAscii: true, via: "usage-features.json.1.tmp")
+        }
+        #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("usage-features.json.1.tmp").path))
+    }
+
     @Test func writeInPlaceAddsNewlineOnlyWhenAsked() throws {
         let dir = try tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
