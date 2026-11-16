@@ -60,13 +60,20 @@ public enum NextQuestionAPI {
     /// whether it can (`reason` when not), and the warning a local model during the call needs a second click for.
     public static func info(_ app: ServerApp, id: String) throws -> JSONValue {
         let paths = try MeetingsAPI.meetingPaths(outputDir: app.outputDir, id: id)
-        func off(_ reason: String) -> JSONValue {
-            .object([("ready", .bool(false)), ("label", .string(LABEL)), ("local", .bool(false)), ("warning", .null),
-                     ("reason", .string(reason))])
-        }
-        guard app.notesEnabled else { return off(OFF) }
-        let choice = choice(app, paths)
-        if Py.same(choice, ModelChoice.PENDING) { return off(PENDING) }
+        let found = try modelWhere(app, paths, feature: FEATURE, pending: PENDING)
+        return .object([("ready", .bool(found.ready)), ("reason", found.reason.map { .string($0) } ?? .null),
+                        ("label", .string(found.place.map { "\(LABEL) (\($0))" } ?? LABEL)), ("local", .bool(found.local)),
+                        ("warning", found.warning.map { .string($0) } ?? .null)])
+    }
+
+    /// Which model a feature asked for during a call runs on and where ("Gemma, on this Mac", "Claude Opus 5.5, cloud"),
+    /// whether it can (`reason` when not: notes off, or `pending` without a model), and the warning a local model during
+    /// the call needs a second click for. The best next question's and the live assistant's (#15).
+    public static func modelWhere(_ app: ServerApp, _ paths: RecordingPaths, feature: String, pending: String) throws
+        -> (ready: Bool, reason: String?, place: String?, local: Bool, warning: String?) {
+        guard app.notesEnabled else { return (false, OFF, nil, false, nil) }
+        let choice = ModelChoice.choiceFor(feature: feature, folders: [paths.folder], config: app.config, stores: app.stores)
+        if Py.same(choice, ModelChoice.PENDING) { return (false, pending, nil, false, nil) }
         if Py.same(choice, ModelChoice.LOCAL) {
             let repo = ModelChoice.localModel(config: app.config, stores: app.stores)
             let info = ModelChoice.localModelInfo(repo)
@@ -74,18 +81,16 @@ public enum NextQuestionAPI {
             let label = info?.label ?? String(String.UnicodeScalarView(repo.unicodeScalars.split(separator: "/",
                 omittingEmptySubsequences: false).last ?? []))
             guard let short = Py.split(label).first else { throw PageError("list index out of range") }
-            var warning: JSONValue = .null
+            var warning: String?
             if app.meetingStatus(paths) == "recording" {
-                warning = .string("Runs \(short) on this Mac during the call (about \(info?.runningGB ?? 10) GB, may slow the call)")
+                warning = "Runs \(short) on this Mac during the call (about \(info?.runningGB ?? 10) GB, may slow the call)"
             }
-            return .object([("ready", .bool(true)), ("reason", .null), ("label", .string("\(LABEL) (\(short), on this Mac)")),
-                            ("local", .bool(true)), ("warning", warning)])
+            return (true, nil, "\(short), on this Mac", true, warning)
         }
         let settings = try ModelChoice.settingsOf(choice, defaults: ModelChoice.providerDefaults(config: app.config, pid: choice),
                                                   stores: app.stores)
         let model = settings["model"].flatMap { $0.truthy ? Py.str($0) : nil } ?? ModelChoice.provider(choice)?.label ?? choice
-        return .object([("ready", .bool(true)), ("reason", .null), ("label", .string("\(LABEL) (\(modelName(model)), cloud)")),
-                        ("local", .bool(false)), ("warning", .null)])
+        return (true, nil, "\(modelName(model)), cloud", false, nil)
     }
 
     /// `next_question_problem`: why the question can't be asked now (the local model without its memory), or nil. A
@@ -126,7 +131,7 @@ public enum NextQuestionAPI {
     }
 
     /// `max(values, default=0.0)` of JSON numbers, the largest as it was given (an int stays an int).
-    private static func largest(_ values: [JSONValue]) throws -> JSONValue {
+    static func largest(_ values: [JSONValue]) throws -> JSONValue {
         var best: JSONValue?
         for v in values {
             guard let b = best else { best = v; continue }
@@ -135,17 +140,9 @@ public enum NextQuestionAPI {
         return best ?? .double(0.0)
     }
 
-    /// `next_question_inputs`: what the question is asked from — the text so far with speaker names (while recording,
-    /// the live text and the stream's newer lines), the calendar event, the last meetings with the same people, who
-    /// hasn't spoken (`coach`, the live coach) and the user's notes. With a cloud model, no earlier meeting kept on this
-    /// Mac is in it (#53). `meetings`: every meeting whose content it holds, for the access log. `context` and `eventOf`
-    /// are prep.context and `_event_of` (a test may give its own).
-    public static func inputs(_ app: ServerApp, id: String, coach: JSONValue?,
-                              context: ((CalendarEvent) throws -> [JSONValue])? = nil,
-                              eventOf: ((RecordingPaths) -> CalendarEvent?)? = nil) throws -> JSONValue {
-        let paths = try MeetingsAPI.meetingPaths(outputDir: app.outputDir, id: id)
-        let chosen = choice(app, paths)
-        let cloud = !Py.same(chosen, ModelChoice.LOCAL) && !Py.same(chosen, ModelChoice.PENDING)
+    /// The text so far with speaker names, {speaker, start, end, text} per line: while recording, the live text and the
+    /// stream's newer lines (the others' unsure voices as "Others").
+    public static func said(_ app: ServerApp, id: String) throws -> [JSONValue] {
         let m = try MeetingsAPI.getMeeting(app: app, id: id, calendar: false)
         func line(_ t: JSONValue, speaker: JSONValue) throws -> JSONValue {
             .object([("speaker", speaker), ("start", try MeetingsAPI.key(t, "start")), ("end", try MeetingsAPI.key(t, "end")),
@@ -164,6 +161,21 @@ public enum NextQuestionAPI {
                 lines.append(try line(l, speaker: label.truthy ? .string("Others") : try MeetingsAPI.key(l, "speaker")))
             }
         }
+        return lines
+    }
+
+    /// `next_question_inputs`: what the question is asked from — the text so far with speaker names (while recording,
+    /// the live text and the stream's newer lines), the calendar event, the last meetings with the same people, who
+    /// hasn't spoken (`coach`, the live coach) and the user's notes. With a cloud model, no earlier meeting kept on this
+    /// Mac is in it (#53). `meetings`: every meeting whose content it holds, for the access log. `context` and `eventOf`
+    /// are prep.context and `_event_of` (a test may give its own).
+    public static func inputs(_ app: ServerApp, id: String, coach: JSONValue?,
+                              context: ((CalendarEvent) throws -> [JSONValue])? = nil,
+                              eventOf: ((RecordingPaths) -> CalendarEvent?)? = nil) throws -> JSONValue {
+        let paths = try MeetingsAPI.meetingPaths(outputDir: app.outputDir, id: id)
+        let chosen = choice(app, paths)
+        let cloud = !Py.same(chosen, ModelChoice.LOCAL) && !Py.same(chosen, ModelChoice.PENDING)
+        let lines = try said(app, id: id)
         let event = eventOf.map { $0(paths) } ?? NextQuestionAPI.eventOf(app, paths)
         var lastTime: [JSONValue] = []
         if let event {

@@ -129,6 +129,7 @@ final class TestServer {
          openURL: @escaping (String) -> Void = { _ in }, notifyState: String? = nil, accessibilityState: String? = nil,
          calendar: CalendarProvider? = nil,
          notesEnabled: Bool? = nil, nextQuestion: NextQuestionAsker = StubNextQuestionAsker(),
+         assistant: LiveAssistantAsker = StubLiveAssistantAsker(),
          provider: ProviderHelper = StubProviderHelper(), report: ReportMaker = StubReportMaker(),
          notion: NotionLink = StubNotionLink(), settingsDefaults: SettingsValues? = nil,
          freeMemoryGB: @escaping () -> Double = { .infinity }, dir: URL? = nil,
@@ -143,7 +144,7 @@ final class TestServer {
         try meetings(out)
         app = ServerApp(outputDir: out, userName: userName, stores: stores, staticDir: staticDir ?? ServerApp.defaultStaticDir,
                         settingsDefaults: settingsDefaults, notesEnabled: notesEnabled, freeMemoryGB: freeMemoryGB, recording: recording, calendar: calendar,
-                        probe: probe, helpers: helpers, nextQuestion: nextQuestion, provider: provider, report: report, notion: notion, speechHere: speechHere, openURL: openURL,
+                        probe: probe, helpers: helpers, nextQuestion: nextQuestion, assistant: assistant, provider: provider, report: report, notion: notion, speechHere: speechHere, openURL: openURL,
                         notifyState: notifyState, accessibilityState: accessibilityState)
         let router = Router.palaver(app: app)
         routes(router, app)

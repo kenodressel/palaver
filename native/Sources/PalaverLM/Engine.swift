@@ -40,10 +40,11 @@ public struct LMEngine {
 
     /// The engine for `feature` and the `meetings` it is about. `EngineUnavailable` says why the chosen model can't
     /// run (it never falls back to another one). `local` makes the local runner; `fake` (tests) answers instead of
-    /// whichever model was chosen, which is still named and checked as the user chose it.
+    /// whichever model was chosen, which is still named and checked as the user chose it. `logAs`: the feature the
+    /// access log names, when it is not `feature`.
     public static func make(feature: String, meetings: [URL] = [], settings: ProviderSettings,
                             http: HTTPClient = HTTPClient(), local: LocalModels.Factory = LocalModels.unavailable,
-                            fake: LanguageModel? = nil) throws -> LMEngine {
+                            fake: LanguageModel? = nil, logAs: String? = nil) throws -> LMEngine {
         let choice = EngineChoice.for(feature: feature, meetings: meetings, settings: settings)
         switch choice {
         case .unavailable(let why):
@@ -56,7 +57,7 @@ public struct LMEngine {
                             reserve: ContextCheck.LOCAL_RESERVE, shortLabel: label,
                             runner: try fake ?? local(repo), logged: nil)
         case .cloud, .claudeCLI:
-            return try cloud(choice.choice!, feature: feature, meetings: meetings.map(\.lastPathComponent),
+            return try cloud(choice.choice!, feature: logAs ?? feature, meetings: meetings.map(\.lastPathComponent),
                              settings: settings, http: http, fake: fake)
         }
     }

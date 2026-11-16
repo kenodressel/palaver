@@ -655,7 +655,8 @@ export function firstMoment(r) {
 
 // --- Settings → Language model (#53) ----------------------------------------------
 
-const FEATURE_LABELS = { notes: "Notes", projects: "Projects", transcription: "Transcription", test: "Test" };
+const FEATURE_LABELS = { notes: "Notes", projects: "Projects", transcription: "Transcription", test: "Test",
+  coach: "Best next question", assistant: "Live assistant" };
 const lowerFirst = (s) => s.charAt(0).toLowerCase() + s.slice(1);  // "Add the API key" -> "add the API key"
 
 // The choices for a feature's model: this Mac first, then each provider. One
@@ -1084,6 +1085,60 @@ export function questionButton(info, q) {
 export function questionsNote(answer) {
   if (!answer.questions?.length) return `${answer.engine} found nothing in the transcript to ask about yet.`;
   return `${answer.engine} · from what was said and your prep only`;
+}
+
+// --- the live assistant (#15) ------------------------------------------------------------
+// On the Live view, on a click only: catch me up, the next steps so far, a question about what was said.
+
+export const ASSISTANT_KINDS = ["catchup", "next_steps", "ask"];
+export const ASSISTANT_MINUTES = [5, 10, 15];
+export const ASSISTANT_LABELS = { catchup: "Catch me up", next_steps: "Next steps so far", ask: "Ask" };
+
+// The panel's line under its buttons: which model answers and where, or why it can't.
+export function assistantModelText(info) {
+  if (!info) return "";
+  if (!info.ready) return info.reason || "";
+  return `${info.model} · runs only when you ask · not part of the notes`;
+}
+
+// A button of the panel: "Thinking…" while its ask runs; all wait while one runs, or without a model.
+export function assistantButton(kind, info, pending) {
+  return { label: pending === kind ? "Thinking…" : ASSISTANT_LABELS[kind], disabled: !info?.ready || !!pending };
+}
+
+// mm:ss (or h:mm:ss) of seconds into the call.
+function callClock(seconds) {
+  const s = Math.max(0, Math.floor(seconds || 0));
+  const two = (n) => String(n).padStart(2, "0");
+  const h = Math.floor(s / 3600);
+  return h ? `${h}:${two(Math.floor(s / 60) % 60)}:${two(s % 60)}` : `${two(Math.floor(s / 60))}:${two(s % 60)}`;
+}
+
+// Over a catch-up: "Last 5 minutes · up to 12:34".
+export function catchupTitle(entry) {
+  return `Last ${entry.minutes} minutes · up to ${callClock(entry.until)}`;
+}
+
+// Over the next steps: "Next steps so far · up to 42:10".
+export function nextStepsTitle(entry) {
+  return `Next steps so far · up to ${callClock(entry.until)}`;
+}
+
+// A next step: "Carla: Send the offer by Friday", or the task alone without an owner.
+export function nextStepText(step) {
+  return step.owner ? `${step.owner}: ${step.task}` : step.task;
+}
+
+// A quote under an answer: 12:34 · Valerie: “…”.
+export function quoteText(q) {
+  const said = `${q.speaker ? `${q.speaker}: ` : ""}“${q.text}”`;
+  return q.time ? `${q.time} · ${said}` : said;
+}
+
+// What an answer says when the model found nothing.
+export function assistantEmptyText(kind) {
+  return kind === "catchup" ? "Nothing to catch up on in that time."
+    : kind === "next_steps" ? "No next steps or decisions yet." : "No answer.";
 }
 
 // --- the setup assistant (#55) ---------------------------------------------------------

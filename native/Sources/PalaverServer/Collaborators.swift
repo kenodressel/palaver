@@ -63,6 +63,11 @@ public protocol NextQuestionAsker: AnyObject {
     func ask(meetingId: String, inputs: JSONValue) throws -> JSONValue
 }
 
+/// `palaver-lm assistant` (the live assistant, #15): the answer to one ask, `{"kind", …, "engine"}`.
+public protocol LiveAssistantAsker: AnyObject {
+    func ask(meetingId: String, inputs: JSONValue) throws -> JSONValue
+}
+
 /// The provider actions (Task 46; phase 4: `Providers`, in this process): one call with its JSON body.
 public protocol ProviderHelper: AnyObject {
     func call(_ action: String, body: JSONValue, timeout: Double) throws -> JSONValue
@@ -201,6 +206,29 @@ final class StubNextQuestionAsker: NextQuestionAsker {
     func ask(meetingId: String, inputs: JSONValue) throws -> JSONValue { throw Unavailable(notWired) }
 }
 
+/// For tests that leave it out: 503.
+final class StubLiveAssistantAsker: LiveAssistantAsker {
+    init() {}
+    func ask(meetingId: String, inputs: JSONValue) throws -> JSONValue { throw Unavailable(notWired) }
+}
+
+/// The live assistant (#15) from `palaver-lm <options> --no-notify assistant <folder>`: the best next question's helper
+/// process (in a session of its own, watched by the app, the same errors), another command.
+public final class LMLiveAssistant: LiveAssistantAsker, @unchecked Sendable {
+    let helper: LMNextQuestion
+
+    public init(outputDir: URL, lm: String, cliOptions: [String], recording: RecordingRemote?,
+                taskpolicy: String = ModelJobs.TASKPOLICY, timeout: Double = LMNextQuestion.TIMEOUT,
+                env: [String: String] = ProcessInfo.processInfo.environment) {
+        helper = LMNextQuestion(outputDir: outputDir, lm: lm, cliOptions: cliOptions, recording: recording,
+                                taskpolicy: taskpolicy, timeout: timeout, env: env, command: "assistant", answerKey: "kind")
+    }
+
+    public func ask(meetingId: String, inputs: JSONValue) throws -> JSONValue {
+        try helper.ask(meetingId: meetingId, inputs: inputs)
+    }
+}
+
 /// `build_app`'s `ask_model`: the best next question (#41) from `[taskpolicy -c utility] palaver-lm <options> --no-notify
 /// next-question <folder>`, in a session of its own so the memory watchdog (#49) can stop it and its children; the app
 /// watches it with the notes' budget for the meeting. stdin is the inputs, the last line it prints the answer. Its
@@ -219,10 +247,14 @@ public final class LMNextQuestion: NextQuestionAsker, @unchecked Sendable {
     let taskpolicy: String
     let timeout: Double
     let env: [String: String]
+    /// palaver-lm's command, and the key its answer has when it is one (not an error).
+    let command: String
+    let answerKey: String
 
     public init(outputDir: URL, lm: String, cliOptions: [String], recording: RecordingRemote?,
                 taskpolicy: String = ModelJobs.TASKPOLICY, timeout: Double = LMNextQuestion.TIMEOUT,
-                env: [String: String] = ProcessInfo.processInfo.environment) {
+                env: [String: String] = ProcessInfo.processInfo.environment,
+                command: String = "next-question", answerKey: String = "questions") {
         self.outputDir = outputDir
         self.lm = lm
         self.cliOptions = cliOptions
@@ -230,11 +262,13 @@ public final class LMNextQuestion: NextQuestionAsker, @unchecked Sendable {
         self.taskpolicy = taskpolicy
         self.timeout = timeout
         self.env = env
+        self.command = command
+        self.answerKey = answerKey
     }
 
     public func ask(meetingId: String, inputs: JSONValue) throws -> JSONValue {
         let folder = try MeetingsAPI.meetingPaths(outputDir: outputDir, id: meetingId).folder
-        var argv = [lm] + cliOptions + ["--no-notify", "next-question", folder.path]
+        var argv = [lm] + cliOptions + ["--no-notify", command, folder.path]
         if FileManager.default.fileExists(atPath: taskpolicy) { argv = [taskpolicy, "-c", "utility"] + argv }
         let done: HelperChild.Finished
         do {
@@ -248,7 +282,7 @@ public final class LMNextQuestion: NextQuestionAsker, @unchecked Sendable {
         if done.code < 0 { throw BadGateway(Self.STOPPED) }
         let lines = ModelJobs.splitlines(Py.strip(String(decoding: done.stdout, as: UTF8.self)))
         guard let answer = try? PythonJSON.parse(Data((lines.last ?? "{}").utf8)) else { throw BadGateway(Self.NO_ANSWER) }
-        guard case .object = answer, answer["error"] == nil, answer["questions"] != nil else {
+        guard case .object = answer, answer["error"] == nil, answer[answerKey] != nil else {
             // `str((out or {}).get("error") or NO_ANSWER)`
             if answer.truthy, !answer.isObject {
                 throw PyBody.TypeError(description: "'\(PyBody.typeName(answer))' object has no attribute 'get'")

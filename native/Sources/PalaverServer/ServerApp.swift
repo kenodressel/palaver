@@ -46,6 +46,8 @@ public final class ServerApp: @unchecked Sendable {
     public let probe: SetupProbe
     public let helpers: HelperRunner
     public let nextQuestion: NextQuestionAsker
+    /// The live assistant (#15): `palaver-lm assistant`.
+    public let assistant: LiveAssistantAsker
     public let provider: ProviderHelper
     /// Report a Problem: the zip on the Desktop (`SwiftReport`).
     public let report: ReportMaker
@@ -94,7 +96,7 @@ public final class ServerApp: @unchecked Sendable {
                 notesEnabled: Bool? = nil, freeMemoryGB: @escaping () -> Double = { .infinity },
                 recording: RecordingRemote? = nil, calendar: CalendarProvider? = nil,
                 probe: SetupProbe? = nil, helpers: HelperRunner? = nil,
-                nextQuestion: NextQuestionAsker? = nil, provider: ProviderHelper? = nil,
+                nextQuestion: NextQuestionAsker? = nil, assistant: LiveAssistantAsker? = nil, provider: ProviderHelper? = nil,
                 report: ReportMaker? = nil, notion: NotionLink? = nil, speechHere: (() -> Bool)? = nil, openURL: @escaping (String) -> Void = ServerApp.open,
                 notifyState: String? = ProcessInfo.processInfo.environment["PALAVER_NOTIFY_STATE"],
                 accessibilityState: String? = ProcessInfo.processInfo.environment["PALAVER_AX_STATE"]) {
@@ -124,6 +126,7 @@ public final class ServerApp: @unchecked Sendable {
         // The release server gets every one (ServeMain.makeApp); tests leave out what they don't use.
         self.helpers = helpers ?? StubHelperRunner()
         self.nextQuestion = nextQuestion ?? StubNextQuestionAsker()
+        self.assistant = assistant ?? StubLiveAssistantAsker()
         self.provider = provider ?? StubProviderHelper()
         self.report = report ?? StubReportMaker()
         self.notion = notion ?? StubNotionLink()

@@ -22,6 +22,9 @@ import { meetingCommands, nextAfter, laneCommands, laneLines, linesText, namingT
   titleChange, updateCard, withTitle, retitledText, TITLE_MAX } from "./logic.js";
 import { notepad, flushNotepads, leaveNotepads, notepadFocus, restoreNotepadFocus } from "./mynotes.js";
 import { meetingTime, parseNote } from "./mynotes-logic.js";
+// The live assistant (#15).
+import { ASSISTANT_KINDS, ASSISTANT_MINUTES, assistantModelText, assistantButton, catchupTitle, nextStepsTitle, nextStepText,
+  quoteText, assistantEmptyText } from "./logic.js";
 // Today, Needs you and the ⌘K palette (UI spec, phase 2).
 import { needsSummary, needCards, needQuestion, startsInText, cutAtPointer, navCount, paletteMatch, paletteCommands,
   paletteRecent, paletteRecentShown, labelDisplay, meetingTabs, meetingTab, TAB_LABELS } from "./logic.js";
@@ -167,6 +170,9 @@ const state = {
   glossary: null,  // terms and suggestions
   review: [],      // finished meetings waiting for a review
   coach: null,     // the open meeting's coach numbers
+  assistant: null, // the live assistant of the meeting being recorded (#15): {id, at, info, answers, pending, error, confirm}
+  assistantMinutes: 5,  // how far Catch me up looks back
+  assistantDraft: "",   // the question being typed
   reviewAt: 0,     // which of them is open in the review
   notice: null,    // what the last glossary change did
   upcoming: [],    // calendar events still to come
@@ -766,6 +772,7 @@ function renderMeeting() {
     state.cutNotice.id ? h("button", { class: "link", onclick: () => { const id = state.cutNotice.id; state.cutNotice = null; openMeeting(id); } },
       "Open it") : null) : null;
   const page = h("article", { class: "meeting" }, head,
+    liveAssistant(m),
     renderNeedsStrip(m),
     renderStopQuestion(m),
     cutNotice,
@@ -777,8 +784,10 @@ function renderMeeting() {
     tabs,
     body,
     aboutSection(m));
+  const asking = assistantFocus();  // a question being typed keeps its place
   keepingTitle(() => $("#main").replaceChildren(page));
   restoreNotepadFocus(typing);
+  restoreAssistantFocus(asking);
   updatePlayhead();
   commands.publish();
 }
@@ -2218,6 +2227,191 @@ setInterval(async () => {
     coachAsking = false;
   }
   refreshCoachLive();
+}, 1000);
+
+// --- the live assistant (#15) ----------------------------------------------------------
+// On the Live view, under the coach line: Catch me up (the last 5, 10 or 15 minutes), Next steps so far and a
+// question about what was said. The model runs only on a click (the notes' model; a meeting kept on this Mac stays
+// on the local one, which asks first during the call). The answers stay on the panel for this call; the notes never
+// read them. Updated in place (a question being typed keeps its text and focus).
+
+function liveAssistant(m) {
+  if (!(m.status === "recording" || m.live)) return null;
+  const el = h("section", { class: "assistant", "aria-label": "Live assistant" });
+  fillAssistant(el, m);
+  return el;
+}
+
+const assistantOf = (id) => (state.assistant?.id === id ? state.assistant : null);
+
+function fillAssistant(el, m) {
+  if (!el.firstChild) {
+    const minutes = h("select", { class: "filter inline assistant-minutes", "aria-label": "Catch me up on the last",
+      onchange: (e) => { state.assistantMinutes = Number(e.target.value); } },
+    ASSISTANT_MINUTES.map((n) => h("option", { value: String(n) }, `${n} min`)));
+    const input = h("input", { type: "text", class: "assistant-input", maxlength: 500, autocomplete: "off",
+      placeholder: "Ask about what was said…", "aria-label": "Ask about what was said",
+      oninput: (e) => { state.assistantDraft = e.target.value; } });
+    el.append(
+      h("div", { class: "assistant-bar" },
+        h("span", { class: "assistant-name" }, "Assistant"),
+        h("button", { type: "button", class: "btn small", "data-kind": "catchup", onclick: () => askAssistant(m.id, "catchup") }),
+        minutes,
+        h("button", { type: "button", class: "btn small", "data-kind": "next_steps", onclick: () => askAssistant(m.id, "next_steps") }),
+        h("form", { class: "assistant-ask", onsubmit: (e) => { e.preventDefault(); askAssistant(m.id, "ask"); } },
+          input,
+          h("button", { type: "submit", class: "btn small", "data-kind": "ask" }))),
+      h("p", { class: "assistant-model" }),
+      h("div", { class: "assistant-status" }),
+      h("div", { class: "assistant-answers" }));
+  }
+  const a = assistantOf(m.id);
+  for (const button of el.querySelectorAll("button[data-kind]")) {
+    const b = assistantButton(button.dataset.kind, a?.info, a?.pending);
+    button.textContent = b.label;
+    button.disabled = b.disabled;
+  }
+  const minutes = el.querySelector(".assistant-minutes");
+  minutes.value = String(state.assistantMinutes);
+  minutes.disabled = !a?.info?.ready;
+  const input = el.querySelector(".assistant-input");
+  if (input.value !== state.assistantDraft) input.value = state.assistantDraft;
+  input.disabled = !a?.info?.ready;
+  el.querySelector(".assistant-model").textContent = assistantModelText(a?.info);
+  const status = el.querySelector(".assistant-status");
+  const statusKey = JSON.stringify([a?.confirm ?? null, a?.error ?? null]);
+  if (status.dataset.key !== statusKey) {
+    status.dataset.key = statusKey;
+    status.replaceChildren(...assistantStatus(m.id, a));
+  }
+  const answers = el.querySelector(".assistant-answers");
+  const answersKey = JSON.stringify(a?.answers ?? null);
+  if (answers.dataset.key !== answersKey) {
+    answers.dataset.key = answersKey;
+    answers.replaceChildren(...assistantAnswers(a?.answers));
+  }
+}
+
+function assistantStatus(id, a) {
+  if (a?.confirm) {  // the local model during a call: said first, run on a second click
+    return [h("p", { class: "assistant-warning", role: "status" }, a.confirm.warning, " ",
+      h("button", { type: "button", class: "btn small", onclick: () => runAssistant(id, { ...a.confirm.body, confirmed: true }) },
+        "Run anyway"), " ",
+      h("button", { type: "button", class: "btn btn-quiet small", onclick: () => { a.confirm = null; refreshAssistant(); } },
+        "Cancel"))];
+  }
+  if (a?.error) return [h("p", { class: "assistant-error", role: "status" }, a.error)];
+  return [];
+}
+
+function assistantAnswers(answers) {
+  if (!answers) return [];
+  const card = (cls, title, note, ...body) => h("div", { class: `assistant-card ${cls}` },
+    h("h3", {}, title), ...body, note ? h("p", { class: "assistant-note" }, note) : null);
+  const out = [];
+  const c = answers.catchup;
+  if (c) {
+    out.push(card("assistant-catchup", catchupTitle(c), c.engine,
+      c.bullets?.length ? h("ul", {}, c.bullets.map((b) => h("li", {}, b))) : h("p", { class: "meta" }, assistantEmptyText("catchup"))));
+  }
+  const n = answers.next_steps;
+  if (n) {
+    const empty = !n.next_steps?.length && !n.decisions?.length;
+    out.push(card("assistant-steps", nextStepsTitle(n), n.engine,
+      empty ? h("p", { class: "meta" }, assistantEmptyText("next_steps")) : null,
+      n.next_steps?.length ? h("ul", { class: "assistant-next-steps" }, n.next_steps.map((s) => h("li", {}, nextStepText(s)))) : null,
+      n.decisions?.length ? h("h4", {}, "Decisions") : null,
+      n.decisions?.length ? h("ul", { class: "assistant-decisions" }, n.decisions.map((d) => h("li", {}, d))) : null));
+  }
+  const asks = (answers.asks || []).slice().reverse();  // the newest first
+  if (asks.length) {
+    out.push(card("assistant-asks", "Questions", null, ...asks.map((q) => h("div", { class: "assistant-qa" },
+      h("p", { class: "q" }, q.question),
+      h("p", { class: "a" }, q.answer || assistantEmptyText("ask")),
+      q.quotes?.length ? h("ul", { class: "assistant-quotes" }, q.quotes.map((x) => h("li", {}, quoteText(x)))) : null,
+      h("p", { class: "assistant-note" }, q.engine)))));
+  }
+  return out;
+}
+
+function refreshAssistant() {
+  const el = $("#main .assistant");
+  if (el && state.meeting) fillAssistant(el, state.meeting);
+}
+
+// The question field had focus (and where its caret was) before the page is built again; it gets it back after.
+function assistantFocus() {
+  const a = document.activeElement;
+  return a?.classList?.contains("assistant-input") ? { start: a.selectionStart, end: a.selectionEnd } : null;
+}
+
+function restoreAssistantFocus(was) {
+  const input = was && $("#main .assistant-input");
+  if (!input) return;
+  input.focus({ preventScroll: true });
+  input.setSelectionRange(was.start, was.end);
+}
+
+function askAssistant(id, kind) {
+  const body = { kind };
+  if (kind === "catchup") body.minutes = state.assistantMinutes;
+  if (kind === "ask") {
+    body.question = state.assistantDraft.trim();
+    if (!body.question) return;
+  }
+  const a = assistantOf(id);
+  if (a?.info?.warning) {  // the local model during the call: said first, run on a second click
+    a.confirm = { body, warning: a.info.warning };
+    a.error = null;
+    refreshAssistant();
+    return;
+  }
+  runAssistant(id, body);
+}
+
+async function runAssistant(id, body) {
+  const a = assistantOf(id) ?? (state.assistant = { id, at: 0, info: null, answers: null });
+  a.confirm = null;
+  a.error = null;
+  a.pending = body.kind;
+  usage.count("action", `assistant.${body.kind}`);
+  refreshAssistant();
+  try {
+    const r = await api(`/api/meetings/${encodeURIComponent(id)}/assistant`, body);
+    a.info = r.info;
+    a.answers = r.answers;
+    if (body.kind === "ask" && state.assistantDraft.trim() === body.question) state.assistantDraft = "";
+  } catch (err) {
+    a.error = err.message;
+    a.at = 0;  // the model's choice may have changed: asked again with the next second
+  } finally {
+    a.pending = null;
+  }
+  if (state.assistant === a) refreshAssistant();
+}
+
+// The panel's model and its answers, asked again every 10 s while the meeting is open (Settings may change the model;
+// a reload or another window may have asked).
+const ASSISTANT_INFO_MS = 10000;
+let assistantLoading = false;
+setInterval(async () => {
+  const m = state.meeting;
+  if (assistantLoading || document.hidden || state.view !== "meetings" || !m || !(m.status === "recording" || m.live)) return;
+  const a = assistantOf(m.id);
+  if (a?.pending || (a && Date.now() - a.at < ASSISTANT_INFO_MS)) return;
+  assistantLoading = true;
+  try {
+    const r = await api(`/api/meetings/${encodeURIComponent(m.id)}/assistant`);
+    const now = assistantOf(m.id);
+    if (now?.pending || state.meeting?.id !== m.id) return;
+    state.assistant = { ...(now ?? { id: m.id, pending: null, error: null, confirm: null }), id: m.id, at: Date.now(),
+      info: r.info, answers: r.answers };
+  } catch {
+    return;  // the next second tries again
+  } finally {
+    assistantLoading = false;
+  }
+  refreshAssistant();
 }, 1000);
 
 // A line's text, marked where the glossary respelled it (what was heard
@@ -7158,7 +7352,8 @@ setInterval(() => {
 }, 1000);
 
 // The usage log's catalog (#59): every action, page and tab there is, so a report knows what was never used.
-usage.catalog("action", [...actionCatalog(), "meeting.reportFromError", "app.reportProblem"]);
+usage.catalog("action", [...actionCatalog(), "meeting.reportFromError", "app.reportProblem",
+  ...ASSISTANT_KINDS.map((k) => `assistant.${k}`)]);
 usage.catalog("view", ["today", "meetings", "people", "projects", "glossary", "settings", "review", "coach", "prep",
   "setup", "report"]);
 usage.catalog("tab", Object.keys(TAB_LABELS));

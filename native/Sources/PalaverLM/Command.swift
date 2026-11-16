@@ -3,9 +3,11 @@
 //   palaver-lm [--config F] [--dictionary F] [--no-notify] notes <folder> [--force]
 //   palaver-lm … projects [--no-wait] suggest [folder] | describe [project id]
 //   palaver-lm … next-question <folder>        (the inputs as JSON on stdin, the answer as JSON on stdout)
+//   palaver-lm … assistant <folder>            (the live assistant, #15: the same way)
 //
 // Exit codes as Python's: 0; 1 with an "error: …" line (or `{"error"}` for next-question); 2 for a meeting without a
-// transcript or an unknown project; 75 when the model is busy and the run would not wait (`--no-wait`, next-question).
+// transcript or an unknown project; 75 when the model is busy and the run would not wait (`--no-wait`, next-question,
+// assistant).
 // One model at a time across processes (notes.lock). A command that fails says so in a notification, unless
 // `--no-notify`; the usage log counts the command.
 import Foundation
@@ -15,7 +17,8 @@ import PalaverDomain
 
 public enum LMMain {
     public static let usage = "usage: palaver-lm [--config F] [--dictionary F] [--no-notify] "
-        + "(notes <folder> [--force] | projects [--no-wait] (suggest [folder] | describe [id]) | next-question <folder>)"
+        + "(notes <folder> [--force] | projects [--no-wait] (suggest [folder] | describe [id]) | next-question <folder> "
+        + "| assistant <folder>)"
 
     public struct Options: Equatable {
         public var config: String?
@@ -57,7 +60,7 @@ public enum LMMain {
         o.command = command
         let operands = Array(rest.dropFirst())
         switch command {
-        case "notes", "next-question":
+        case "notes", "next-question", "assistant":
             guard operands.count == 1 else { throw UsageError(description: "\(command) takes one meeting folder") }
             guard command == "notes" || !o.force else { throw UsageError(description: "--force is for notes") }
             o.folder = operands[0]
@@ -92,10 +95,11 @@ public enum LMMain {
             self.config = config; self.stores = stores; self.settings = settings; self.userName = userName
         }
 
+        /// `logAs`: the feature the access log names, when it is not `feature` (the live assistant runs on the notes' model).
         public func engine(feature: String, kind: String, meetings: [URL] = [], details: [(String, JSONValue)] = [],
-                           fallback: @autoclosure () -> JSONValue = .object([])) throws -> LMEngine {
+                           fallback: @autoclosure () -> JSONValue = .object([]), logAs: String? = nil) throws -> LMEngine {
             try LMEngine.make(feature: feature, meetings: meetings, settings: settings, http: http, local: local,
-                              fake: fake.map { $0(kind, details, fallback()) })
+                              fake: fake.map { $0(kind, details, fallback()) }, logAs: logAs)
         }
     }
 
@@ -146,6 +150,7 @@ public enum LMMain {
         switch o.command {
         case "notes": return await NotesRun.command(o, ctx)
         case "projects": return await ProjectsRun.command(o, ctx)
+        case "assistant": return await AssistantRun.command(o, ctx)
         default: return await NextQuestionRun.command(o, ctx)
         }
     }
@@ -441,6 +446,46 @@ public enum NextQuestionRun {
             return answer((out["questions"].map { [("questions", $0)] } ?? []) + [("engine", .string(engine.label))], 0)
         } catch is ModelBusyError {
             return answer([("error", .string(NextQuestion.BUSY))], ModelLock.EXIT_MODEL_BUSY)
+        } catch {
+            return answer([("error", .string(String(describing: error)))], 1)
+        }
+    }
+}
+
+// MARK: - the live assistant
+
+public enum AssistantRun {
+    /// `palaver-lm assistant <folder>` (#15): `{"kind", …the answer, "engine"}` on stdout, or `{"error"}` with exit 1 (75
+    /// while a local model is in use). The model is the notes' ("Keep on This Mac" keeps it local); only this meeting's
+    /// transcript is in the prompt.
+    public static func command(_ o: LMMain.Options, _ ctx: LMMain.Context) async -> Int32 {
+        let folder = URL(fileURLWithPath: (o.folder! as NSString).expandingTildeInPath, isDirectory: true)
+        func answer(_ fields: [(String, JSONValue)], _ code: Int32) -> Int32 {
+            ctx.say(PythonJSON.dumps(.object(fields), ensureAscii: false))
+            return code
+        }
+        do {
+            guard let inputs = PyDict<JSONValue>((try? PythonJSON.parse(ctx.readInput())) ?? .null) else {
+                throw LMError("the inputs are not a JSON object")
+            }
+            let kind = NextQuestion.text(inputs["kind"])
+            _ = try LiveAssistant.buildPrompt(inputs.json)  // a wrong ask is said before a model loads
+            let engine = try ctx.engine(feature: LiveAssistant.FEATURE, kind: "assistant", meetings: [folder],
+                                        details: [("meeting", .string(folder.lastPathComponent)), ("ask", .string(kind))],
+                                        fallback: LiveAssistant.fallback(kind), logAs: LiveAssistant.LOG_FEATURE)
+            let lastWords = FootprintWatchdog.addLastWords { why in
+                ctx.say(PythonJSON.dumps(.object([("error", .string(why))]), ensureAscii: false))
+            }
+            defer { FootprintWatchdog.removeLastWords(lastWords) }
+            let ask = {
+                try await LiveAssistant.ask(inputs.json) { try await engine.run($0, schema: $1, parse: LiveAssistant.parser(kind)) }
+            }
+            let out = engine.cloud ? try await ask() : try await ModelLock.with(stores: ctx.stores, wait: false, say: { _ in }, ask)
+            var fields: [(String, JSONValue)] = [("kind", .string(kind))]
+            if case .object(let pairs) = out { fields += pairs }
+            return answer(fields + [("engine", .string(engine.label))], 0)
+        } catch is ModelBusyError {
+            return answer([("error", .string(LiveAssistant.BUSY))], ModelLock.EXIT_MODEL_BUSY)
         } catch {
             return answer([("error", .string(String(describing: error)))], 1)
         }

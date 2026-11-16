@@ -60,6 +60,9 @@ test("accessLogText: what, how much, where to, how it went", () => {
   "Projects · 2 meetings · 900 characters → OpenAI-compatible (gpt-x, acme.openai.azure.com) · failed: HTTP 503");
   assert.equal(accessLogText({ feature: "test", meetings: [], chars: 80, provider: "anthropic", host: "h",
     model: "m", ok: true, seconds: 0.8 }, lm()), "Test · 80 characters → Anthropic API (m) · 0.8 s");
+  // The live assistant (#15) runs on the notes' model, and says so in the log by its own name.
+  assert.equal(accessLogText({ feature: "assistant", meetings: ["a"], chars: 5000, provider: "anthropic", host: "h",
+    model: "m", ok: true, seconds: 2 }, lm()), "Live assistant · 1 meeting · 5,000 characters → Anthropic API (m) · 2 s");
 });
 
 test("testText shows the answer and the time", () => {

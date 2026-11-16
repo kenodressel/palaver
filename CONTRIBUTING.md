@@ -196,7 +196,7 @@ As a menu bar app (auto-recording, manual start/stop, the Meetings window).
 The app is native Swift (`native/`, target `Palaver`): it records, runs the
 daemon, serves `app.sock` and hosts the window. It starts `palaver-server`
 (the window's server), `palaver-worker` (`process`, `live`, `stream`, `coach`,
-`index`, …) and `palaver-lm` (notes, projects, the next question) from
+`index`, …) and `palaver-lm` (notes, projects, the next question, the live assistant) from
 `native/.build` (`PALAVER_SERVER_BIN` / `PALAVER_WORKER_BIN` / `PALAVER_LM_BIN`
 name other builds); see [Architecture](#architecture):
 
@@ -283,7 +283,7 @@ Since 0.6 everything Palaver.app runs is Swift (phases 1 to 4 of the migration):
   removal, transcription and speakers with the engine in process, names),
   `live`, `stream`, `coach`, `index`, `query`, `engine-serve`.
 - **`palaver-lm`** (`PalaverLM`, `PalaverMLX`): the language model — notes,
-  projects and the next question, on MLX on this Mac, a cloud provider or the
+  projects, the next question and the live assistant, on MLX on this Mac, a cloud provider or the
   Claude Code CLI; one model at a time, under the memory rules.
 - **`PalaverCloud`**: the Keychain, the providers and their HTTP transport, the
   access log, cloud transcription, Notion and the model downloads.

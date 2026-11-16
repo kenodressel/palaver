@@ -65,6 +65,16 @@ to the new folders at the first start.
   seconds after the call. With realtime transcription on (recommended for an
   M2 Pro, M3 or newer with 16 GB or more), the other side's words show up a
   few seconds after they are said.
+- **Live assistant.** While a call is recorded, its page offers "Catch me
+  up" (the last 5, 10 or 15 minutes in a few bullets), "Next steps so far"
+  (next steps and decisions up to now) and a box for a question about what
+  was said ("What was the number they mentioned?"), answered from the live
+  transcript with short quotes and their times. It uses the model you chose
+  for the notes in Settings → Language Model (a cloud model or Claude keeps
+  the Mac free during the call) and runs only when you click, never on its
+  own. A meeting kept on this Mac never goes to the cloud: there it uses the
+  local model, and asks you first. The answers stay with the call and are
+  not part of the notes.
 - **Notes.** Title, a one-line summary, the topics in the order they came
   up, decisions, and next steps with owners. Written by a local language
   model (Gemma 4 12B) in the meeting's language, German or English. Your own

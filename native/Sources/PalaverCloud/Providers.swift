@@ -61,7 +61,8 @@ public enum ProviderRegistry {
 
     /// What each feature sends to a cloud provider, by feature id.
     public static let sends: [String: String] = [
-        "notes": "the meeting's transcript with speaker names, and its calendar title and invitees",
+        "notes": "the meeting's transcript with speaker names, and its calendar title and invitees; during a call, the "
+            + "live transcript so far for the live assistant, only when you ask",
         "projects": "the titles, summaries, people and email domains of the meetings to sort, and your project names "
             + "and descriptions",
         "coach": "the last minutes of the live transcript with speaker names, the meeting's calendar title and invitees, "
