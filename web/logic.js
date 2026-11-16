@@ -1506,7 +1506,8 @@ export function inferredText(inferred) {
 // Settings' panes, in the list's order (#/settings/<id>); Help is in General.
 export const SETTINGS_PANES = [
   ["general", "General"], ["recording", "Recording"], ["calendar", "Calendar"], ["notifications", "Notifications"],
-  ["transcription", "Transcription"], ["language-model", "Language Model"], ["search", "Search"],
+  ["transcription", "Transcription"], ["language-model", "Language Model"], ["templates", "Note Templates"],
+  ["search", "Search"],
   ["storage", "Storage"], ["memory", "Memory"], ["mcp", "Claude Access"], ["update", "Updates"],
 ];
 // What each pane is found by in the palette, besides its name: the settings in it.
@@ -1517,6 +1518,8 @@ const PANE_WORDS = {
   notifications: ["notification", "alerts", "banner", "system"],
   transcription: ["parakeet", "soniox", "cloud", "speech", "service", "key"],
   "language-model": ["notes", "llm", "gemma", "anthropic", "claude", "openai", "provider", "api", "key", "cloud", "model"],
+  templates: ["notes", "template", "sections", "interview", "1:1", "one-on-one", "stand-up", "standup", "workshop",
+    "customer", "sales"],
   search: ["meaning", "semantic", "index"],
   storage: ["disk", "space", "audio", "delete", "models", "size", "gb", "free"],
   memory: ["ram", "budget", "workers"],

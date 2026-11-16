@@ -44,6 +44,8 @@ public struct RecordingPaths: Hashable, Sendable {
     public var speakersLive: URL { file("speakers_live.json") }
     /// The title the user gave the meeting, over the event's and the notes' (titles.py).
     public var title: URL { file("title.json") }
+    /// The note template the user chose for this meeting (#13).
+    public var noteTemplate: URL { file("template.json") }
     /// Where an imported meeting came from, and the names and voices that came with it (exchange.py, #58).
     public var imported: URL { file("imported.json") }
     /// Voices that came with an import, waiting for the user's yes: apart from speaker_embeddings.json,

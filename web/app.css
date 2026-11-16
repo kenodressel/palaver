@@ -623,6 +623,12 @@ h1 {
 .owner .person-token, .need-q .person-token { margin-right: 6px; vertical-align: middle; line-height: 1.2; }
 .need-q .person-token { margin: 0 0 0 4px; }
 .notes-empty { padding: 28px 0; font: 15px/1.5 var(--sans); color: var(--ink-2); }
+/* The note template (#13): a quiet picker above the notes, and the question for the series beside it. */
+.template-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-bottom: 8px; font-size: 13px; }
+.template-row + .summary, .template-row + .stale { margin-top: 0; }
+.template-ask { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--ink-2); }
+.template-instructions { white-space: pre-wrap; }
+.template-text { font: inherit; resize: vertical; }
 .notes-empty p { margin: 0 0 12px; }
 .notes-empty .actions { display: flex; gap: 8px; align-items: center; }
 .error { color: var(--danger); }

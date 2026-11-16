@@ -91,6 +91,7 @@ extension Router {
         addChangeRoutes(r, app: app)
         addPeopleRoutes(r, app: app)
         addModelRoutes(r, app: app)
+        addNoteTemplateRoutes(r, app: app)
         addNextQuestionRoutes(r, app: app)
         addUpcomingRoutes(r, app: app)
         addProjectRoutes(r, app: app)

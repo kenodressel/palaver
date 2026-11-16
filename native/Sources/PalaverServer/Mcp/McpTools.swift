@@ -236,10 +236,15 @@ public final class McpTools {
             out.append(("note", .string("Imported from a \(kind) meeting note: its notes are \(kind)'s summary; the "
                                         + "transcript has no speaker names and its times are estimated.")))
         }
-        out.append(("notes", .object(["summary", "sections", "next_steps", "decisions", "decisions_mine"].compactMap { k in
+        var noted: [(String, JSONValue)] = ["summary", "sections", "next_steps", "decisions", "decisions_mine"].compactMap { k in
             guard let v = notes[k], v.truthy else { return nil }
             return (k, v)
-        })))
+        }
+        // The note template that shaped them (#13), when it was not the default: "Interview" says what the sections are.
+        if let template = m["notes_template"], let name = template["name"], template["id"] != .string(NoteTemplates.DEFAULT) {
+            noted.append(("template", name))
+        }
+        out.append(("notes", .object(noted)))
         let mine = MyNotes.promptText(app.outputDir.appendingPathComponent(meetingId, isDirectory: true))  // the user's own (#44)
         if !mine.isEmpty { out.append(("my_notes", .string(mine))) }
         if includeTranscript || fromMinute != nil || toMinute != nil {

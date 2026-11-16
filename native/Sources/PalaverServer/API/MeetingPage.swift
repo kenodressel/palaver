@@ -91,6 +91,9 @@ extension MeetingsAPI {
             ("notes", notes.map { n -> JSONValue in n.truthy ? glossary.applyTo(Notes.withNames(n, display)) : .null } ?? .null),
             ("notes_stale", .bool(stale != nil)),
             ("notes_stale_reason", .str(stale)),
+            // The note template (#13): the one the next notes are written with, and the one these were written with.
+            ("template", NoteTemplatesAPI.meetingTemplate(app, paths, event: event, notes: notes)),
+            ("notes_template", NoteTemplatesAPI.notesTemplate(notes)),
             // Written with the user's own notes in the prompt (#44): an export asks before they go (#58).
             ("notes_from_my_notes", .bool(try get(notes, "my_notes_hash").truthy)),
             ("my_notes_revision", .string(MyNotes.revision(paths.folder))),

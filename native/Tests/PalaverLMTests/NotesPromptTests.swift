@@ -113,4 +113,31 @@ import PalaverDomain
         #expect(mine["my_notes_hash"] == .string(Notes.myNotesHash("Angebot")) && mine["shared_lanes"] == .strings(["SPEAKER_05"]))
         #expect(NotesPrompt.start("2026-10-21T16:29:29+02:00") == "2026-10-21 16:29")
     }
+
+    @Test func aTemplatesInstructionsShapeTheSectionsAndDefaultChangesNothing() throws {
+        let plain = NotesPrompt.build(GERMAN, userName: "Timo Strauß", start: "s", glossary: glossary)
+        let byDefault = NotesPrompt.build(GERMAN, userName: "Timo Strauß", start: "s", glossary: glossary,
+                                          template: NoteTemplates.builtin[0])
+        #expect(byDefault.prompt == plain.prompt && byDefault.schema == plain.schema)
+        let interview = try #require(NoteTemplates.builtin.first { $0.id == "interview" })
+        let (prompt, schema) = NotesPrompt.build(GERMAN, userName: "Timo Strauß", start: "s", glossary: glossary, template: interview)
+        #expect(schema == plain.schema)  // the notes' JSON stays the same
+        #expect(prompt.contains("The meeting's note template is \"Interview\". Shape the sections and the next steps for it:\n"
+                                + interview.instructions + "\nThe fields and the rules still apply."))
+        // After the fields it shapes, before the rules and the transcript; the language rule stays last.
+        let at = prompt.range(of: "note template is")!.lowerBound
+        #expect(prompt.range(of: "- speaker_names:")!.lowerBound < at && at < prompt.range(of: "Rules:")!.lowerBound)
+        #expect(prompt.hasSuffix("\n\n\(NotesPrompt.LANGUAGE_RULES["de"]!)\n"))
+        // A user's template with blank instructions is no template.
+        let blank = NoteTemplate(id: "my-1", name: "Leer", instructions: "  \n")
+        #expect(NotesPrompt.build(GERMAN, userName: "Timo Strauß", start: "s", glossary: glossary, template: blank).prompt == plain.prompt)
+    }
+
+    @Test func theNotesSayWhichTemplateWroteThem() throws {
+        let answer = try NotesAnswer.parse(PythonJSON.dumps(NOTES_ANSWER))
+        let standup = try #require(NoteTemplates.builtin.first { $0.id == "standup" })
+        let notes = NotesPrompt.finish(answer, utterances: GERMAN, myNotes: "", shared: PyDict(), mic: nil, template: standup)
+        #expect(notes["template"] == .string("standup") && notes["template_name"] == .string("Stand-up"))
+        #expect(NotesPrompt.finish(answer, utterances: GERMAN, myNotes: "", shared: PyDict(), mic: nil)["template"] == nil)
+    }
 }

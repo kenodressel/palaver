@@ -246,11 +246,13 @@ public enum NotesRun {
                 // The user's own notes: images not read yet (the app quit first) are read now. A model gets the text
                 // read from an image, never the image.
                 MyNotes.readAll(paths.folder)
+                let event = CalendarEvents.load(paths)
                 return try await NotesPrompt.generate(
-                    utterances, userName: ctx.userName, start: start, event: CalendarEvents.load(paths),
+                    utterances, userName: ctx.userName, start: start, event: event,
                     myNotes: MyNotes.promptText(paths.folder), shared: SharedMic.display(paths),
                     mic: SharedMic.micDisplay(paths), title: Titles.load(paths) ?? "",
-                    glossary: Glossary.current(stores: ctx.stores)) {
+                    glossary: Glossary.current(stores: ctx.stores),
+                    template: NoteTemplates.pick(paths, event: .known(event), stores: ctx.stores).template) {
                     try await engine.run($0, schema: $1, parse: NotesAnswer.parse)
                 }
             }

@@ -99,6 +99,7 @@ test("the palette finds Settings' panes by name and by what is in them", () => {
   assert.equal(first("realtime"), "recording");
   assert.equal(first("gemma"), "language-model");
   assert.equal(first("uninstall"), "update");
+  assert.equal(first("interview"), "templates");  // #13: Note Templates
   assert.equal(paletteMatch("settings", entries).length, entries.length);
   assert.ok(entries.every((e) => e.kind === "setting" && e.detail === "Settings"));
 });

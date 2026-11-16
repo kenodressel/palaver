@@ -15,7 +15,8 @@ import PalaverDomain
         #expect(try await run(["notes", paths.folder.path], home.context(fake)) == 0)
         let notes = try #require(Notes.load(paths))
         #expect(PyDict<JSONValue>(notes)!.keys == ["title", "summary", "sections", "next_steps", "decisions", "speaker_names",
-                                                    "transcript_hash", "generated_at"])
+                                                    "transcript_hash", "generated_at", "template", "template_name"])
+        #expect(notes["template"] == .string("default") && notes["template_name"] == .string("Default"))
         #expect(notes["title"] == .string("Angebot für Contoso"))
         #expect(notes["speaker_names"]?.arrayValue?.count == 1)  // only the transcript's unnamed voices
         #expect(!Notes.isStale(paths, GERMAN))
@@ -127,6 +128,28 @@ import PalaverDomain
         // The notes change: the notes are out of date again.
         _ = try MyNotes.save(paths.folder, paragraphs: .array([.object([("text", .string("Preis geklärt"))])]))
         #expect(Notes.staleReason(paths, try Speakers.withoutIgnored(paths, GERMAN)) == "my_notes")
+    }
+
+    @Test func theTemplatePickedForTheMeetingShapesThePromptAndIsKept() async throws {
+        let home = Home()
+        let paths = home.meeting()
+        let start = try PyDateTime.parse("2026-10-21T16:30:00+02:00")
+        try CalendarEvents.save(paths, CalendarEvent(title: "Interview Carla", start: start, end: try start.adding(seconds: 1800),
+                                                     uid: "S1", series: true))
+        let fake = FakeModel(json: NOTES_ANSWER, ControlFallback.suggest)
+        #expect(try await run(["notes", paths.folder.path], home.context(fake)) == 0)
+        #expect(fake.asked.first?.prompt.contains("note template is \"Interview\"") == true)
+        #expect(Notes.load(paths)?["template"] == .string("interview"))
+        // The user chose another one for this meeting: the rewrite uses it.
+        let mine = try NoteTemplates.add(name: "Debrief", instructions: "Sections: what each interviewer saw.", stores: home.stores)
+        try NoteTemplates.choose(paths, mine.id, stores: home.stores)
+        let again = FakeModel(json: NOTES_ANSWER, ControlFallback.suggest)
+        #expect(try await run(["notes", paths.folder.path, "--force"], home.context(again)) == 0)
+        let prompt = try #require(again.asked.first?.prompt)
+        #expect(prompt.contains("Sections: what each interviewer saw.") && !prompt.contains("\"Interview\""))
+        #expect(Notes.load(paths)?["template"] == .string(mine.id) && Notes.load(paths)?["template_name"] == .string("Debrief"))
+        // Choosing a template does not make the notes out of date by itself.
+        #expect(!Notes.isStale(paths, GERMAN))
     }
 
     @Test func aFreshMeetingIsSortedIntoTheProjectTheModelSuggests() async throws {

@@ -190,6 +190,11 @@ const state = {
   titleEdit: null, // the open meeting's title being typed: {id, draft}
   cutNotice: null, // what the last cut or join did
   sharedAsk: null, // the meeting just unmarked whose series is still remembered (#56)
+  noteTemplates: null,  // every note template and the series remembered (/api/note-templates, #13)
+  templateAsk: null,    // the meeting whose template was just chosen: the same for its calendar series too?
+  templatesLoading: false,  // Settings → Note Templates is loading them
+  templatesError: null,     // what the last change to them (or loading them) said
+  templateDrafts: {},       // template id ("new": the one being added) -> {name, instructions} typed, not saved yet
   question: null,  // whether to stop the manual recording (/api/recording/question)
   mcp: null,       // Claude access: connected clients, the access log, setup (/api/mcp)
   mcpFilter: { client: "", meeting: "" },  // the access log's filters in Settings
@@ -1876,6 +1881,7 @@ function renderNotes(m, color) {
   }
   if (state.error) wrap.append(h("p", { class: "notes-empty error" }, state.error));
   if (state.writing.has(m.id)) wrap.append(writingBar(m.id));
+  wrap.append(templateRow(m));
   if (!n) {
     wrap.append(h("div", { class: "notes-empty" },
       h("p", {}, "No notes for this meeting yet."),
@@ -2668,6 +2674,92 @@ async function writeNotes(id) {
       if (area) flash(area);
     }
   }
+}
+
+// --- note templates (#13) ---------------------------------------------------------
+
+// Where the meeting's template comes from, said on the picker.
+const TEMPLATE_FROM = {
+  meeting: "You chose it for this meeting",
+  notes: "These notes were written with it",
+  series: "Remembered for this calendar series",
+  title: "Picked by the calendar title",
+  default: "No other template fits this meeting",
+};
+
+// "Template: Interview ▾" beside the notes: choosing another remembers it for this meeting and writes the notes
+// again. Notes written with another template than the next ones would be say so, never silently.
+function templateRow(m) {
+  const t = m.template;
+  if (!t || m.status !== "ready") return null;
+  const picker = h("button", { type: "button", class: "btn btn-quiet small template-picker", "aria-haspopup": "menu",
+    "aria-expanded": "false", title: TEMPLATE_FROM[t.from] || null, disabled: state.writing.has(m.id),
+    onclick: (e) => openTemplateMenu(m, e.currentTarget) }, `Template: ${t.name}`, h("span", { "aria-hidden": "true" }, " ▾"));
+  const other = m.notes && m.notes_template && m.notes_template.id !== t.id
+    ? h("span", { class: "meta template-other" }, `These notes were written with ${m.notes_template.name}.`) : null;
+  return h("div", { class: "template-row" }, picker, other, templateAsk(m));
+}
+
+async function loadNoteTemplates() {
+  state.noteTemplates = await api("/api/note-templates");
+  return state.noteTemplates;
+}
+
+async function openTemplateMenu(m, button) {
+  let list;
+  try {
+    list = await busy(button, loadNoteTemplates());
+  } catch (err) {
+    errorToast(`The templates could not be loaded: ${err.message}`);
+    return;
+  }
+  if (!button.isConnected) return;
+  menu([...list.templates.map((t) => ({ label: t.name, icon: t.id === m.template.id ? "✓" : "",
+    run: () => chooseTemplate(m.id, t) })),
+  null, { label: "Edit Templates…", run: () => openSettings("push", "templates") }], button, { title: "Note template" });
+}
+
+// The template for this meeting, then its notes written again with it.
+async function chooseTemplate(id, t) {
+  usage.count("action", "meeting.template");
+  let m;
+  try {
+    m = await api(`/api/meetings/${encodeURIComponent(id)}/template`, { template: t.id });
+  } catch (err) {
+    errorToast(`The template was not changed: ${err.message}`, { action: { label: "Try again", run: () => chooseTemplate(id, t) } });
+    return;
+  }
+  if (state.meeting?.id === id) state.meeting = m;
+  // A meeting of a calendar series: asked beside the picker whether its next meetings use it too.
+  state.templateAsk = m.template.series.can && m.template.series.template !== t.id ? id : null;
+  writeNotes(id);
+}
+
+function templateAsk(m) {
+  const t = m.template;
+  if (state.templateAsk !== m.id || !t.series.can || t.series.template === t.id) return null;
+  return h("span", { class: "template-ask" }, `Use ${t.name} for every meeting of “${titleOf(m)}”? `,
+    h("button", { type: "button", class: "btn small", onclick: (e) => templateForSeries(m, e.currentTarget) }, "Use for this series"),
+    " ",
+    h("button", { type: "button", class: "btn btn-quiet small", onclick: () => { state.templateAsk = null; renderMeeting(); } },
+      "Just this meeting"));
+}
+
+async function templateForSeries(m, button) {
+  const template = m.template.id;
+  let r;
+  try {
+    r = await working(button, api(`/api/meetings/${encodeURIComponent(m.id)}/template`, { template, series: true }));
+  } catch (err) {
+    errorToast(`Not remembered: ${err.message}`, { action: { label: "Try again", run: () => templateForSeries(m, button) } });
+    return;
+  }
+  state.templateAsk = null;
+  state.noteTemplates = null;  // Settings lists the series: loaded again when shown
+  // Only the template: the notes may be being written meanwhile, and their answer brings the rest.
+  if (state.meeting?.id === m.id) state.meeting = { ...state.meeting, template: r.template };
+  if (state.view === "meetings" && state.meeting?.id === m.id) renderMeeting();
+  toast(`The next meetings of “${titleOf(m)}” use ${r.template.name}`, { short: true });
 }
 
 async function loadNames() {
@@ -4599,6 +4691,7 @@ function settingsContent(pane) {
     case "notifications": return [notificationsSection()];
     case "transcription": return state.tr ? renderTranscription(state.tr) : [];
     case "language-model": return state.lm ? renderLanguageModel(state.lm) : [];
+    case "templates": return renderTemplatesPane();
     case "search": return s ? [
       h("h2", {}, "Search"),
       h("div", { class: "gloss-card settings-card" },
@@ -5112,6 +5205,117 @@ function renderLanguageModel(lm) {
     ...lm.providers.map(providerCard),
     accessLogCard(lm),
   ];
+}
+
+// --- settings: note templates (#13) ---------------------------------------------------
+
+// What Default does, as the built-in ones say what they do.
+const DEFAULT_TEMPLATE_TEXT = "The notes as Palaver always writes them: the topics in the order they came up, "
+  + "decisions, and next steps with their owners.";
+
+// The built-in templates with their instructions (read-only), the user's own to add, edit and delete, and the
+// calendar series a template is remembered for. Loaded when the pane opens.
+function renderTemplatesPane() {
+  const list = state.noteTemplates;
+  if (!list) {
+    // Once: a failure says so and is not asked again on every render.
+    if (!state.templatesLoading && !state.templatesError) {
+      state.templatesLoading = true;
+      loadNoteTemplates().catch((err) => { state.templatesError = `The templates could not be loaded: ${err.message}`; })
+        .finally(() => { state.templatesLoading = false; templatesPage(); });
+    }
+    return [h("h2", {}, "Note Templates"), state.templatesError ? h("p", { class: "error" }, state.templatesError) : null];
+  }
+  const builtin = list.templates.filter((t) => t.builtin);
+  const own = list.templates.filter((t) => !t.builtin);
+  return [
+    h("h2", {}, "Note Templates"),
+    h("div", { class: "gloss-card settings-card" },
+      h("p", { class: "meta" }, "A template says which sections a meeting's notes have and what the next steps focus on. "
+        + "Palaver picks one for each meeting: the one you chose for it, the one its notes were written with, the one "
+        + "remembered for its calendar series, or the one its calendar title asks for (1:1, Interview, Stand-up or Daily, "
+        + "Workshop or Retro, Customer or Kundentermin); otherwise Default. Choose another above a meeting's summary."),
+      state.templatesError ? h("p", { class: "error", role: "alert" }, state.templatesError) : null),
+    h("h3", {}, "Built in"),
+    ...builtin.map((t) => h("div", { class: "gloss-card settings-card template-card", "data-template": t.id },
+      h("h4", { class: "lm-title" }, t.name),
+      h("p", { class: "meta template-instructions" }, t.instructions || DEFAULT_TEMPLATE_TEXT))),
+    h("h3", {}, "Your templates"),
+    ...own.map((t) => ownTemplateCard(t)),
+    ownTemplateCard(null),
+    list.series.length ? h("h3", {}, "Calendar series") : null,
+    list.series.length ? h("div", { class: "gloss-card settings-card" },
+      ...list.series.map((s) => h("div", { class: "lm-row template-series" },
+        h("span", {}, `“${s.title || "A recurring meeting"}”: ${s.template_name}`),
+        h("button", { type: "button", class: "btn small", onclick: (e) => forgetTemplateSeries(s, e.currentTarget) }, "Forget")))) : null,
+  ];
+}
+
+const templatesPage = () => { if (state.view === "settings" && settingsPane(state.settingsPane) === "templates") renderSettings(); };
+
+// A template of the user's (null: a new one): its name and instructions, saved or deleted.
+// What is typed is kept as a draft until it is saved: a refused save shows why without losing it.
+function ownTemplateCard(t) {
+  const key = t ? t.id : "new";
+  const draft = state.templateDrafts[key] || {};
+  const typed = (field) => (e) => { state.templateDrafts[key] = { ...state.templateDrafts[key], [field]: e.target.value }; };
+  const name = h("input", { class: "lm-input", value: draft.name ?? t?.name ?? "", maxlength: "60",
+    placeholder: t ? "" : "Board meeting", "aria-label": t ? `Name of ${t.name}` : "Name of the new template",
+    oninput: typed("name") });
+  const text = h("textarea", { class: "lm-input template-text", rows: "4", oninput: typed("instructions"),
+    placeholder: t ? "" : "Sections: one per agenda item, with what was decided. Next steps: owners and dates.",
+    "aria-label": t ? `Instructions of ${t.name}` : "Instructions of the new template" }, draft.instructions ?? t?.instructions ?? "");
+  const save = (button) => (t ? saveTemplate(t, name.value, text.value, button) : addTemplate(name.value, text.value, button));
+  return h("div", { class: "gloss-card settings-card template-card", "data-template": key },
+    t ? null : h("h4", { class: "lm-title" }, "New template"),
+    lmField("Name", name),
+    lmField("Instructions for the notes", text),
+    h("div", { class: "lm-actions" },
+      h("button", { type: "button", class: "btn small", onclick: (e) => save(e.currentTarget) }, t ? "Save" : "Add Template"),
+      t ? h("button", { type: "button", class: "btn btn-quiet small", onclick: (e) => deleteTemplate(t, e.currentTarget) }, "Delete") : null));
+}
+
+// A change to the templates; the pane shows them as they are then. ``failed``: what the error says first.
+async function changeTemplates(path, body, failed, button) {
+  try {
+    state.noteTemplates = await working(button, api(path, body));
+    state.templatesError = null;
+    return state.noteTemplates;
+  } catch (err) {
+    state.templatesError = `${failed}: ${err.message}`;
+    return null;
+  } finally {
+    templatesPage();
+  }
+}
+
+async function addTemplate(name, instructions, button) {
+  state.templateDrafts.new = { name, instructions };
+  if (await changeTemplates("/api/note-templates", { name, instructions }, "Not added", button)) {
+    delete state.templateDrafts.new;
+    templatesPage();
+    toast(`${name.trim()} added`, { short: true });
+  }
+}
+
+async function saveTemplate(t, name, instructions, button) {
+  state.templateDrafts[t.id] = { name, instructions };
+  if (await changeTemplates(`/api/note-templates/${encodeURIComponent(t.id)}`, { name, instructions }, "Not saved", button)) {
+    delete state.templateDrafts[t.id];
+    templatesPage();
+    toast("Saved", { short: true });
+  }
+}
+
+// Undo adds it again (meetings that chose it, and its series, pick another one meanwhile).
+async function deleteTemplate(t, button) {
+  if (!await changeTemplates(`/api/note-templates/${encodeURIComponent(t.id)}`, { delete: true }, "Not deleted", button)) return;
+  remember(`${t.name} deleted`, () => changeTemplates("/api/note-templates", { name: t.name, instructions: t.instructions },
+    "Not added again"));
+}
+
+async function forgetTemplateSeries(s, button) {
+  await changeTemplates("/api/note-templates/series", { series: s.series }, "Not forgotten", button);
 }
 
 // --- settings: transcription (#54) ---------------------------------------------------

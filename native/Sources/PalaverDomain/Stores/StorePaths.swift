@@ -42,6 +42,8 @@ public struct StorePaths: Sendable {
     public var voicesPending: URL { cfg("voices-pending.json") }
     public var projects: URL { cfg("projects.json") }
     public var glossary: URL { cfg("glossary.json") }
+    /// The user's own note templates and the template remembered for each calendar series (#13).
+    public var noteTemplates: URL { cfg("templates.json") }
     public var organizations: URL { cfg("organizations.json") }
     public var attributions: URL { cfg("attributions.json") }
     public var prepared: URL { cfg("prepared.json") }

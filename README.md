@@ -69,6 +69,11 @@ to the new folders at the first start.
   up, decisions, and next steps with owners. Written by a local language
   model (Gemma 4 12B) in the meeting's language, German or English. Your own
   notes from the Notes tab (text and screenshots) go into them too.
+- **Note templates.** A 1:1, a customer call, an interview, a workshop or a
+  stand-up gets the sections it needs ("Interview": candidate, strengths,
+  concerns, recommendation). Picked from the calendar title or the series,
+  changed with "Template: … ▾" above the notes; your own in Settings → Note
+  Templates.
 - **Transcript.** Without filler words and stutters. Click a line to hear
   it, fix a word by hand, or cut a recording in two where one call ran into
   the next.

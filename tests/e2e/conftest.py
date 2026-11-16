@@ -304,6 +304,11 @@ class FakeNotesHelper:
         return [c["meeting"] for c in self._fake.calls("notes")]
 
     @property
+    def prompts(self) -> list[str]:
+        """The prompt of each notes run, in order."""
+        return [c["prompt"] for c in self._fake.calls("notes")]
+
+    @property
     def ok(self) -> bool:
         return self._ok
 
