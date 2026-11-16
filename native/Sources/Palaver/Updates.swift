@@ -8,6 +8,8 @@ import PalaverDaemon
 /// What the app needs of the update machinery, built from the app's own pieces.
 struct AppExtras {
     let updates: Updates
+    /// The opt-in usage numbers (#6), sent from the same tick as the update check.
+    let stats: StatsPing
     let housekeeping: Housekeeping
     let calendarAttach: CalendarAttach
     let calendarOnboarding: CalendarOnboarding
@@ -43,6 +45,9 @@ struct AppExtras {
                 }
             },
             startedOk: paths.startedOk, bundleVersion: bundleVersion, log: log))
+        // Only while the user shares them and lets Palaver look for updates (the switch for automatic network calls).
+        stats = StatsPing(.init(support: paths.support, enabled: { settings().shareUsage && settings().checkUpdates },
+                                version: bundleVersion, endpoint: UsageStats.endpoint(environment: environment), log: log))
         let start: WorkerStarter = { cmd, extra in try launcher.launch(cmd, nil, qos: .background, extra: extra) }
         // In this process (no Python child): at start also Claude's MCP entries moved to `bin/palaver mcp` (batch 6),
         // then the old Python runtime deleted once nothing needs it (batch 9).

@@ -4378,7 +4378,7 @@ async function openSettings(how = "push", pane = null) {
       // "Recommended for this Mac" (#55): the setup assistant's recommendations; the page works without them.
       api("/api/setup/recommendations").catch(() => null),
       api("/api/update").catch(() => null), api("/api/setup/calendar").catch(() => null),
-      api("/api/accessibility").catch(() => null)]);
+      api("/api/accessibility").catch(() => null), refreshUsageStats()]);
     state.recommended = rec?.recommendations || null;
     showUpdateIndicator();
     state.error = state.lmError = state.trError = null;
@@ -4633,10 +4633,72 @@ function renderUpdateSection() {
     state.settings && u?.state !== "unsupported" ? settingSwitch("check_updates", "Look for updates automatically") : null,
     state.settings && u?.state !== "unsupported" ? h("p", { class: "meta" },
       "At start, every hour and when you open this window Palaver asks GitHub for its latest release. Nothing is sent about you or this Mac, and nothing downloads until you click.") : null,
+    usageStatsCard(),
     h("div", { class: "lm-row" },
       h("span", { class: "meta" }, "Removes Palaver from this Mac. Your recordings stay unless you choose otherwise."),
       h("button", { type: "button", class: "btn", onclick: () => openUninstall() }, "Uninstall Palaver…"))));
   return section;
+}
+
+// --- usage numbers (#6) -------------------------------------------------------------------
+
+// Off unless turned on here or in the setup assistant. What is sent is shown
+// byte for byte, with this Mac's values; the menu bar app sends it, at most
+// once a day, beside the update check.
+async function refreshUsageStats() {
+  try {
+    state.usageStats = await api("/api/usage-stats");
+  } catch {
+    state.usageStats = null;
+    return;
+  }
+  document.getElementById("usage-stats")?.replaceWith(usageStatsCard());
+}
+
+function usageStatsCard() {
+  const u = state.usageStats;
+  if (!state.settings || !u) return h("div", { id: "usage-stats", hidden: true });
+  const on = !!state.settings.share_usage;
+  const when = !on ? null
+    : state.update?.state === "unsupported" ? "This build sends nothing: only an installed Palaver does."
+      : !state.settings.check_updates ? "Sent only while “Look for updates automatically” is on."
+        : u.last_sent ? `Last sent on ${u.last_sent} (UTC).` : "Not sent yet.";
+  return h("div", { id: "usage-stats", class: "usage-stats" },
+    settingSwitch("share_usage", "Share anonymous usage numbers"),
+    h("p", { class: "meta" }, "Shows how many people use Palaver, on which versions, and how fast updates arrive. "
+      + "At most once a day Palaver sends exactly this, and nothing else:"),
+    usageStatsBody(u.body),
+    h("p", { class: "meta" }, "“install” is a random ID made on this Mac. Your name, your meetings, their audio and "
+      + "anything from them are never sent.", when ? ` ${when}` : null),
+    h("div", { class: "lm-row" },
+      h("span", { class: "meta" }, "With a new ID, the numbers sent so far can't be linked to the ones after."),
+      h("button", { type: "button", class: "btn", onclick: (e) => newUsageId(e.currentTarget) }, "New ID")),
+    h("p", { class: "meta" }, "Everyone's numbers together: ",
+      h("a", { href: u.page, class: "usage-stats-page", onclick: (e) => { e.preventDefault(); openUsagePage(); } }, u.page)));
+}
+
+function usageStatsBody(body) {
+  return h("pre", { class: "usage-stats-body", "aria-label": "What is sent" }, h("code", {}, body));
+}
+
+async function newUsageId(button) {
+  try {
+    state.usageStats = await busy(button, api("/api/usage-stats/new-id", {}));
+  } catch (err) {
+    toast(`Not changed: ${err.message}`);
+    return;
+  }
+  document.getElementById("usage-stats")?.replaceWith(usageStatsCard());
+  toast("New ID made.", { short: true });
+}
+
+// The window follows no outside link: the server opens the page in the browser.
+async function openUsagePage() {
+  try {
+    await api("/api/usage-stats/open-page", {});
+  } catch (err) {
+    toast(`Not opened: ${err.message}`);
+  }
 }
 
 // A release's notes as they read: their light markdown (paragraphs, lists, **bold**) as text nodes, never HTML.
@@ -5389,6 +5451,7 @@ const setup = {
   customizing: new Set(), // recommendation ids whose alternatives are open
   seed: null,             // glossary terms from the calendar that are ticked
   autostart: null,        // step 2's "Start Palaver at login" (null: on, as recommended)
+  shareUsage: null,       // step 2's "Share anonymous usage numbers" (null: as it is, off unless chosen)
   customizeAll: false,    // step 2 shows every choice with its alternatives
   error: null,
   timer: null,            // polling the downloads or the test recording
@@ -5396,7 +5459,8 @@ const setup = {
 
 async function loadSetup() {
   try {
-    setup.page = await api("/api/setup");
+    const [page, usage] = await Promise.all([api("/api/setup"), api("/api/usage-stats").catch(() => null)]);
+    setup.page = { ...page, usage };
     setup.error = null;
   } catch (err) {
     setup.error = `Palaver could not look at this Mac: ${err.message}`;
@@ -5434,6 +5498,7 @@ async function finishSetup(how, button = null) {
   const downloading = setup.page?.downloads?.status?.running;
   setup.page = null;
   setup.autostart = null;
+  setup.shareUsage = null;
   setup.customizeAll = false;
   toast(how !== "done" ? "Setup skipped. It is in Settings when you want it."
     : downloading ? "Setup done. The models finish downloading in the background; Settings shows how far."
@@ -5595,6 +5660,9 @@ function recommendedStep(p, next) {
   const autostart = h("input", { type: "checkbox", role: "switch", class: "switch-input", "data-key": "autostart",
     onchange: (e) => { setup.autostart = e.target.checked; } });
   autostart.checked = setup.autostart ?? true;
+  const share = h("input", { type: "checkbox", role: "switch", class: "switch-input", "data-key": "share_usage",
+    onchange: (e) => { setup.shareUsage = e.target.checked; } });
+  share.checked = setup.shareUsage ?? !!p.usage?.share_usage;
   return {
     lede: `What Palaver recommends for this ${hw.short} with ${hw.memory_gb} GB. Change any of it later in Settings.`,
     body: [
@@ -5615,6 +5683,15 @@ function recommendedStep(p, next) {
         h("label", { class: "switch-row" }, h("span", { class: "switch-label" }, "Start Palaver at login"),
           autostart, h("span", { class: "switch-track", "aria-hidden": "true" })),
         h("p", { class: "meta" }, "Calls are only recorded while Palaver runs.")),
+      // The usage numbers (#6): asked here once, off unless turned on, with what would be sent.
+      p.usage ? h("div", { class: "gloss-card settings-card setup-usage" },
+        h("label", { class: "switch-row" }, h("span", { class: "switch-label" }, "Share anonymous usage numbers"),
+          share, h("span", { class: "switch-track", "aria-hidden": "true" })),
+        h("p", { class: "meta" }, "Off unless you turn it on. It shows how many people use Palaver and how fast updates "
+          + "arrive. At most once a day Palaver would send exactly this, and nothing else:"),
+        usageStatsBody(p.usage.body),
+        h("p", { class: "meta" }, "A random ID made on this Mac, Palaver's version and macOS's. Never your name, your "
+          + "meetings or their audio. Change it any time in Settings → Updates.")) : null,
       h("p", { class: "meta" }, cloud.length
         ? `${cloud.map((c) => c.label).join(" and ")} use a cloud model; everything else runs on this Mac. Meetings are kept in ${s.recordings}.`
         : `Everything runs on this Mac: nothing leaves it. Meetings are kept in ${s.recordings}${s.audio_days ? `, their audio ${s.audio_days} days` : ""}.`),
@@ -5636,6 +5713,8 @@ async function applyRecommended(changes, button, next) {
     await working(button, (async () => {
       if (Object.keys(changes).length) await api("/api/setup/apply", { changes });
       if (want !== setup.page.storage.autostart) await api("/api/setup/autostart", { on: want });
+      const share = setup.shareUsage;
+      if (share != null && share !== !!setup.page.usage?.share_usage) await api("/api/settings", { share_usage: share });
       await loadSetup();
       const d = setup.page.downloads;
       if (d.needed.length && !d.status.models.length && d.free_disk_gb >= d.total_gb) {

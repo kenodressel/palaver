@@ -93,5 +93,6 @@ extension Router {
             ProvidersAPI.countSetting(app, path: req.target, body: req.json)
             return .json(answer)
         }
+        addUsageStatsRoutes(r, app: app)
     }
 }

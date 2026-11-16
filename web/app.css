@@ -1126,6 +1126,11 @@ button.mn-time:hover, button.mn-time:focus-visible { background: var(--selected)
 .release-notes p { margin: 0 0 8px; }
 .release-notes ul, .release-notes ol { margin: 0 0 8px; padding-left: 1.3em; }
 .release-notes li { margin: 0 0 4px; }
+/* The usage numbers (#6): what is sent, as sent. */
+.usage-stats { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--rule); }
+.usage-stats-body { margin: 4px 0 8px; padding: 8px 12px; border-radius: 8px; background: var(--hover);
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.usage-stats-page { color: var(--you-ink); overflow-wrap: anywhere; }
 .update-card { display: flex; align-items: center; gap: 16px; padding: 16px 20px; border-radius: var(--card);
   background: color-mix(in srgb, var(--you) 12%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--you) 30%, transparent); }
 .update-card[hidden] { display: none; }

@@ -182,7 +182,7 @@ final class PalaverApp: NSObject, NSApplicationDelegate {
             refresh: { [weak self] in self?.refresh() },
             calendarRetry: { extras.calendarAttach.retryTick() },
             housekeeping: { extras.housekeeping.tick() },
-            updates: { extras.updates.mainTick() },
+            updates: { extras.stats.tick(); return extras.updates.mainTick() },
             quit: { [weak self] in self?.quit(byUser: false) },
             bundleReplaced: {
                 guard let watch, watch.replaced() else { return false }

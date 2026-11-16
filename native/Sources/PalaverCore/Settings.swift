@@ -44,6 +44,8 @@ public final class Settings: @unchecked Sendable {
     public var liveProcessing: Bool { bool("live_processing", defaults.processingLive) }
     public var searchMeaning: Bool { bool("search_meaning", true) }
     public var checkUpdates: Bool { bool("check_updates", true) }
+    /// The opt-in usage numbers (#6, UsageStats): off unless the user turned them on.
+    public var shareUsage: Bool { bool("share_usage", false) }
     public var nudgeTalkShare: Bool { bool("nudge_talk_share", true) }
     public var nudgeMonologue: Bool { bool("nudge_monologue", true) }
     public var nudgeQuietInvitee: Bool { bool("nudge_quiet_invitee", true) }

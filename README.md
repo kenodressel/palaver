@@ -207,7 +207,14 @@ Move to Trash, among others. Most changes can be undone.
 - **What goes over the network:** the model downloads you agree to in the
   setup assistant, and the update check: one anonymous request for the
   latest release's `manifest.json` at start, every hour and when you open
-  the window. Turn it off in Settings → Updates.
+  the window. Turn it off in Settings → Updates. Only if you turn on
+  "Share anonymous usage numbers" (Settings → Updates or the setup
+  assistant; off by default), also one small request at most once a day,
+  while the update check is on: a random install id (made on this Mac; "New
+  ID" replaces it), the Palaver version and the macOS version, nothing else.
+  Settings shows it exactly as sent. The totals are on a public page linked
+  there (the Worker in `stats/` keeps the id only as a salted hash and deletes
+  daily rows after 90 days).
 - **Cloud is opt-in, per feature.** Settings → Language Model and Settings →
   Transcription can use a cloud service instead of the local model (see
   below). Nothing goes to the cloud until you choose it, and nothing falls

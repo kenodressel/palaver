@@ -29,7 +29,16 @@ import Testing
         #expect(PythonJSON.dumps(SettingsValues().json) == #"{"realtime": true, "record_teams": true, "record_slack": true, "#
                 + #""search_meaning": true, "live_processing": true, "nudge_talk_share": true, "nudge_monologue": true, "#
                 + #""nudge_quiet_invitee": true, "nudge_pace": false, "nudge_fillers": false, "nudge_notify": true, "#
-                + #""check_updates": true, "respect_call_mute": true}"#)
+                + #""check_updates": true, "share_usage": false, "respect_call_mute": true}"#)
+    }
+
+    @Test func sharingUsageNumbersIsOffUntilChosen() throws {
+        let s = stores()
+        #expect(!SettingsFile.load(stores: s).shareUsage)
+        try write(s, #"{"share_usage": 1}"#)  // only a real boolean turns it on
+        #expect(!SettingsFile.load(stores: s).shareUsage)
+        try SettingsFile.update([("share_usage", .bool(true))], stores: s)
+        #expect(SettingsFile.load(stores: s).shareUsage)
     }
 
     @Test func test_a_missing_key_takes_the_default_and_wrong_types_are_ignored() throws {
