@@ -82,7 +82,7 @@ def test_the_first_start_takes_three_steps(page, fresh):
     expect(pack(page, "language_model")).to_contain_text("Gemma 4 12B on this Mac")
     expect(pack(page, "record_teams")).to_be_visible()
     expect(pack(page, "claude_code")).to_be_visible()
-    expect(page.locator("#main")).to_contain_text("nothing leaves it")
+    expect(page.locator("#main")).to_contain_text("your meetings never leave it")
     expect(page.locator(".setup-downloads")).to_contain_text("Speech models (500 MB)")
     customize_all(page)  # every choice with its reason
     lm = rec(page, "language_model")

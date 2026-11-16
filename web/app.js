@@ -5694,7 +5694,7 @@ function recommendedStep(p, next) {
           + "meetings or their audio. Change it any time in Settings → Updates.")) : null,
       h("p", { class: "meta" }, cloud.length
         ? `${cloud.map((c) => c.label).join(" and ")} use a cloud model; everything else runs on this Mac. Meetings are kept in ${s.recordings}.`
-        : `Everything runs on this Mac: nothing leaves it. Meetings are kept in ${s.recordings}${s.audio_days ? `, their audio ${s.audio_days} days` : ""}.`),
+        : `Everything runs on this Mac: your meetings never leave it. They are kept in ${s.recordings}${s.audio_days ? `, their audio ${s.audio_days} days` : ""}.`),
       d.needed.length ? h("p", { class: fits ? "meta setup-downloads" : "meta setup-downloads error" },
         `${downloadsText(d.needed)} ${Math.round(d.free_disk_gb)} GB free on this Mac.${fits ? " They download in the background." : " Free up space first."}`) : null,
       disk ? h("p", { class: "meta error" }, disk.reason) : null,
