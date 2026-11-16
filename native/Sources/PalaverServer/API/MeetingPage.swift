@@ -80,6 +80,10 @@ extension MeetingsAPI {
             ("title_from", .str(titleFrom)),
             ("calendar", try calendar(app, event, used: used, link: CalendarEvents.loadLink(paths))),
             ("event_question", eventQuestion(paths)),
+            // What the call window showed (#24): its title, and its people while there is no event to name them.
+            ("call_window", try callWindow(app, paths, event, used: used)),
+            // The remembered series the meeting is in (#24, #39), with "Stop Linking This Series".
+            ("series", MeetingSeries.of(meeting: id, stores: app.stores)?.page ?? .null),
             // The calendar is on: a meeting without an event offers to pick one (#30).
             ("calendar_on", .bool(app.calendar != nil)),
             ("start", try start(paths, meta)),
@@ -296,6 +300,15 @@ extension MeetingsAPI {
             ("invited", .strings(invited)),
             ("link", (link ?? Link("event", event.title)).toDict()),
         ])
+    }
+
+    /// The call window's reading: the app, the title, and (without an event) the people in the call not named yet,
+    /// as the voice bank knows them.
+    static func callWindow(_ app: ServerApp, _ paths: RecordingPaths, _ event: CalendarEvent?, used: Set<ScalarKey>) throws -> JSONValue {
+        guard let read = CallWindowFile.load(paths) else { return .null }
+        let names = event != nil ? [] : (CalendarEvents.callNames(paths, try bankNames(app), userName: app.userName) ?? [])
+        return .object([("app", .string(read.app)), ("title", .str(read.title)),
+                        ("participants", .strings(names.filter { !used.contains(ScalarKey($0)) }))])
     }
 
     static func eventChoice(_ e: CalendarEvent, key: String, current: CalendarEvent? = nil) -> JSONValue {

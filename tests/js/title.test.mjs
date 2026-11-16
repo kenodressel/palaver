@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { titleChange, withTitle, retitledText, eventLinkView, meetingCommands, TITLE_MAX }
+import { titleChange, withTitle, retitledText, eventLinkView, meetingCommands, seriesView, titleSourceText, TITLE_MAX }
   from "../../web/logic.js";
 
 const fromNotes = { id: "m", title: "Budget talk", title_from: "notes", notes: { title: "Budget talk" }, calendar: null };
@@ -45,6 +45,24 @@ test("before the server answers, the page shows the new title, or the next one w
   assert.equal(mine.title, "Budget with Anna");  // the meeting itself is left as it was
   const imported = withTitle({ ...mine, imported: { from: "Anna", title: "Budget with Tom" } }, "");
   assert.deepEqual([imported.title, imported.title_from], ["Budget with Tom", "imported"]);  // the sender's, next
+});
+
+test("without an event: the call window's title, then the series' name, before the notes' (#24)", () => {
+  const call = { ...mine, calendar: null, call_window: { title: "Northwind sync", participants: [] } };
+  assert.deepEqual([withTitle(call, "").title, withTitle(call, "").title_from], ["Northwind sync", "call"]);
+  const series = { ...mine, calendar: null, series: { name: "Contoso weekly" } };
+  assert.deepEqual([withTitle(series, "").title, withTitle(series, "").title_from], ["Contoso weekly", "series"]);
+  assert.equal(titleSourceText({ title_from: "call" }), "No calendar event; title from the call window");
+  assert.equal(titleSourceText({ title_from: "series" }), "No calendar event; title of its series");
+  assert.equal(titleSourceText({ title_from: "calendar" }), null);
+});
+
+test("the series line says why recordings join it (#24)", () => {
+  assert.equal(seriesView({ series: null }), null);
+  assert.deepEqual(seriesView({ series: { name: "Northwind sync", learned: "event", when: "Tuesdays around 15:00" } }),
+    { name: "Northwind sync", why: "linked by hand, Tuesdays around 15:00",
+      title: "Recordings of “Northwind sync” are linked to it by themselves: linked by hand, Tuesdays around 15:00." });
+  assert.equal(seriesView({ series: { name: "Northwind sync", learned: "call-window" } }).why, "the same title in the call");
 });
 
 test("the toast says the new title, or which one shows again", () => {

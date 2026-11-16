@@ -95,6 +95,8 @@ public final class LiveCapture: SessionCapture {
     private let mute: (timeline: MuteTimeline, source: CallMuteSource)?
     private let folder: URL
     private let gatesMic: Bool
+    /// The call window's title and people, read a few times while recorded (#24).
+    private let callWindow: CallWindowWatcher?
     /// How often, after the stop, Teams' log is read while its late changes are waited for, and how long (nil:
     /// the timeline's hold).
     var afterStopPoll = 0.5
@@ -110,9 +112,11 @@ public final class LiveCapture: SessionCapture {
     /// `gatesMic` false: the source is followed for what else it tells (a Slack huddle's end), the mic kept whole.
     public init(folder: URL, log: SessionLog, sources: CaptureSources,
                 mute: ((@escaping @Sendable (String) -> Void) -> (MuteTimeline, CallMuteSource))? = nil,
-                gatesMic: Bool = true) {
+                gatesMic: Bool = true,
+                callWindow: ((URL, @escaping (String) -> Void) -> CallWindowWatcher)? = nil) {
         let logger = "palaver.capture_recorder"
         self.folder = folder
+        self.callWindow = callWindow?(folder) { log.message($0, level: "INFO", logger: "palaver.call_window") }
         monitor = AudioHealthMonitor(problemsURL: folder.appendingPathComponent("audio_problems.json"),
                                      events: { level, event, fields in log.event(event, level: level, logger: logger, fields) })
         let made = mute?({ text in
@@ -134,12 +138,14 @@ public final class LiveCapture: SessionCapture {
             mute?.source.stop()
             throw error
         }
+        callWindow?.start()
     }
 
     /// The source reads what is new first, so the last held audio is cut by it too. A source whose changes come
     /// late (Teams' log) is followed on for its hold after the stop, on a thread of its own: what it tells then
     /// silences the finished mic track, and `mic_muted.json` says `pending` until it is done (`process` waits).
     public func stop() throws {
+        callWindow?.stop()
         guard let mute else { try recorder.stop(); return }
         noted.withLock { stopping = true }
         mute.source.refresh()

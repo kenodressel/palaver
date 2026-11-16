@@ -42,6 +42,8 @@ public struct RecordingPaths: Hashable, Sendable {
     public var speakersUnknown: URL { file("speakers_unknown.json") }
     /// Names given while recording, with the voice they were given to.
     public var speakersLive: URL { file("speakers_live.json") }
+    /// The meeting's title and people as the call window showed them (#24), while no calendar event matched.
+    public var callWindow: URL { file("call-window.json") }
     /// The title the user gave the meeting, over the event's and the notes' (titles.py).
     public var title: URL { file("title.json") }
     /// The note template the user chose for this meeting (#13).

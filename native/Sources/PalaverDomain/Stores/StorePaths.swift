@@ -49,6 +49,8 @@ public struct StorePaths: Sendable {
     public var prepared: URL { cfg("prepared.json") }
     public var preparedNotes: URL { cfg("prepared-notes", dir: true) }
     public var sharedSeries: URL { cfg("shared-series.json") }
+    /// Meeting series Palaver remembers itself (#24, #39): a calendar series linked by hand, a call title that repeats.
+    public var meetingSeries: URL { cfg("series.json") }
     public var coachBaseline: URL { cfg("coach-baseline.json") }
     public var accessLog: URL { cfg("access-log.jsonl") }
     public var dictionary: URL { cfg("dictionary.toml") }

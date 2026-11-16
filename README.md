@@ -96,6 +96,13 @@ to the new folders at the first start.
 - **Calendar.** Palaver matches a recording to the event in the macOS
   Calendar app (any account added there, such as Microsoft 365 or Google):
   the meeting gets the event's title and invitees. Read-only, on this Mac.
+  A Teams call that no event matches (an invite from outside the company)
+  takes its title from the call window, and the people shown there as hints
+  for the voices (with the Accessibility permission the mute already uses;
+  never the chat). Link a recording to a recurring event by hand once, or
+  have the same call title twice, and Palaver remembers the series: the next
+  recordings join it by themselves, and keep its name if the calendar loses
+  the event (⋯ → Stop Linking This Series undoes it).
 - **Projects.** Meetings join the project they clearly belong to: the same
   people, title words or customer. Otherwise the notes model suggests one.
   Rename, merge and correct projects; a meeting you take out stays out.

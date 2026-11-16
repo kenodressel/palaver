@@ -1,5 +1,6 @@
 // A meeting's title, decided in one place (titles.py): the one the user gave it (title.json), else the one a colleague
-// gave the meeting they sent (imported.json), else its calendar event's, else the one the notes model wrote; without
+// gave the meeting they sent (imported.json), else its calendar event's, else the one its call window showed
+// (call-window.json, #24), else its remembered series' name (MeetingSeries), else the one the notes model wrote; without
 // any, "Meeting at 12:04". title.json is a file of its own, written by nothing else, so a meeting can be renamed while
 // it is still being recorded.
 import Foundation
@@ -12,7 +13,7 @@ public struct TitleError: Error, CustomStringConvertible {
 
 public enum Titles {
     public static let maxLength = 200
-    public static let YOU = "you", IMPORTED = "imported", CALENDAR = "calendar", NOTES = "notes"
+    public static let YOU = "you", IMPORTED = "imported", CALENDAR = "calendar", CALL = "call", SERIES = "series", NOTES = "notes"
 
     /// What the caller has read already (`known(nil)`: there is none), so nothing is read twice; `unread` reads it here.
     public enum Known<T> {
@@ -57,7 +58,7 @@ public enum Titles {
         return t.isEmpty ? nil : t
     }
 
-    /// The title and where it came from ("you", "imported", "calendar", "notes"), or (nil, nil). `event` and
+    /// The title and where it came from ("you", "imported", "calendar", "call", "series", "notes"), or (nil, nil). `event` and
     /// `meetingNotes`: what the caller read already.
     public static func resolve(_ paths: RecordingPaths, event: Known<CalendarEvent> = .unread,
                                meetingNotes: Known<JSONValue> = .unread,
@@ -67,6 +68,8 @@ public enum Titles {
         let found: CalendarEvent?
         if case .known(let e) = event { found = e } else { found = CalendarEvents.load(paths) }
         if let found, !found.title.isEmpty { return (found.title, CALENDAR) }
+        if let call = CallWindowFile.title(paths) { return (call, CALL) }
+        if let series = MeetingSeries.of(meeting: paths.id, stores: stores) { return (series.name, SERIES) }
         let notes: JSONValue?
         if case .known(let n) = meetingNotes { notes = n } else { notes = NotesFile.load(paths) }
         let written = Glossary.current(stores: stores).apply(notes?["title"]?.stringValue ?? "")

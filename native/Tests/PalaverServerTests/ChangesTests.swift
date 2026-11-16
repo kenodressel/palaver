@@ -893,6 +893,45 @@ private func withEvents(_ f: Fixture) throws -> (CalendarEvent, CalendarEvent, C
         #expect(read(f.paths.review)?["seen"] == .array([]))
         #expect(throws: Refused.self) { try ChangesAPI.markReviewed(f.app, id: MEETING, done: false) { _ in [] } }
     }
+
+    // MARK: - remembered series (#24)
+
+    /// A recurring event picked by hand is remembered as a series (the page says so, with how recordings join it);
+    /// "Stop Linking This Series" forgets it, and undo brings it back. A confirmation teaches nothing.
+    @Test func aRecurringEventPickedByHandIsARememberedSeries() throws {
+        let f = try Fixture()
+        let (planned, _, calendar) = try withEvents(f)
+        let g = try Fixture(calendar: calendar)
+        try CalendarEvents.save(g.paths, planned, Link("event", planned.title, "calendar", 0.6, "time match"))
+        try ChangesAPI.setMeetingEvent(g.app, id: MEETING, key: "current")
+        #expect(MeetingSeries.all(stores: g.stores).isEmpty)
+        try ChangesAPI.setMeetingEvent(g.app, id: MEETING, key: planned.key)
+        let series = try #require(try g.page()["series"])
+        #expect(series["name"] == .string("Northwind") && series["learned"] == .string("event"))
+        #expect(series["when"] == .string("Tuesdays around 16:03") && series["calendar"] == .bool(true))
+        let token = try ChangesAPI.forgetSeries(g.app, id: MEETING)
+        #expect(try g.page()["series"] == .null && MeetingSeries.all(stores: g.stores).isEmpty)
+        _ = try g.undo(token)
+        #expect(try g.page()["series"]?["name"] == .string("Northwind"))
+        // None of these: the meeting leaves it.
+        try ChangesAPI.setMeetingEvent(g.app, id: MEETING, key: nil)
+        #expect(try g.page()["series"] == .null && MeetingSeries.all(stores: g.stores).count == 1)
+        #expect(throws: NotFound.self) { try ChangesAPI.forgetSeries(g.app, id: MEETING) }
+    }
+
+    /// No event: the call window's title is the meeting's, its people offered for the voices (not the user).
+    @Test func theCallWindowNamesAMeetingWithoutAnEvent() throws {
+        let f = try Fixture()
+        try write(.object([("app", .string("teams")), ("title", .string("Northwind sync")),
+                           ("participants", .strings(["Valerie", "Timo Strauß", "Kim"])), ("read_at", .string("2026-10-27T16:05:00+01:00"))]),
+                  to: f.paths.callWindow)
+        let page = try f.page()
+        #expect(page["title"] == .string("Northwind sync") && page["title_from"] == .string("call"))
+        #expect(page["call_window"]?["participants"] == .strings(["Valerie", "Kim"]))
+        try CalendarEvents.save(f.paths, CalendarEvent(title: "Contoso", start: C0, end: try C0.adding(seconds: 600), uid: "c"))
+        let withEvent = try f.page()
+        #expect(withEvent["title"] == .string("Contoso") && withEvent["call_window"]?["participants"] == .strings([]))
+    }
 }
 
 /// Any vectors will do: the test is about which meetings are indexed, not what they mean.

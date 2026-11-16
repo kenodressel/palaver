@@ -260,7 +260,7 @@ public enum Attribution {
     /// What a source is called where no reason was kept.
     public static let SOURCE_TEXT: [String: String] = [
         "you": "you", "calendar": "time match", "voice": "voice", "inferred": "inferred", "rules": "rules",
-        "model": "the model", "email": "email address", "unknown": "",
+        "model": "the model", "email": "email address", "remembered": "remembered series", "unknown": "",
     ]
     public static let _KIND_TEXT: [String: String] = ["event": "Event", "project": "Project", "speaker": "Speaker", "org": "Organization"]
     /// projects.py says "auto" for its rules.

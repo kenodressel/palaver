@@ -628,9 +628,23 @@ public enum Pipeline {
 
     // MARK: - the calendar
 
-    /// `_attach_calendar`: the recording's event, stored or looked up once in the calendar. Never fails processing: no
-    /// calendar access means no event.
+    /// `_attach_calendar`: the recording's event, stored or looked up once in the calendar, then the remembered series
+    /// it joins (#24), which may bring its event. Never fails processing: no calendar access means no event.
     static func attachCalendar(_ paths: RecordingPaths, _ setup: Setup, log: SessionLog) -> CalendarEvent? {
+        let event = attachEvent(paths, setup, log: log)
+        do {
+            let provider = setup.calendar.enabled ? setup.calendar.provider : nil
+            if let series = try MeetingSeries.attach(paths, provider: provider, stores: setup.stores) {
+                Stage.event("series", log: log, [("series", .string(series.id)), ("learned", .string(series.learned))])
+                return CalendarEvents.load(paths)
+            }
+        } catch {
+            setup.say("warning: the meeting's series could not be looked up: \(error)")
+        }
+        return event
+    }
+
+    static func attachEvent(_ paths: RecordingPaths, _ setup: Setup, log: SessionLog) -> CalendarEvent? {
         if FileManager.default.fileExists(atPath: paths.calendar.path) || !setup.calendar.enabled {
             return CalendarEvents.load(paths)
         }

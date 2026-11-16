@@ -37,7 +37,7 @@ import { inferredText, importedLine, importedText, GLOBAL_COMMANDS, sourceName, 
 import { followUpButton, followUpAddedText, recapTitle } from "./logic.js";
 import { recordingNow, recordingCommand, RECORD_TEXT } from "./logic.js";
 import { mutedIn, muteUnfollowed, mutedText, unfollowedText } from "./logic.js";
-import { eventPickerChoices, EVENT_FILTER_AFTER } from "./logic.js";
+import { eventPickerChoices, EVENT_FILTER_AFTER, seriesView, titleSourceText } from "./logic.js";
 import { openExport, pickImport, wireDrop, importFile, askVoices, decideVoices, dialog } from "./exchange.js";
 // Updates and uninstalling (#60).
 import { updateIndicator, updateView, SETTINGS_PANES, settingsPane, settingsEntries } from "./logic.js";
@@ -370,7 +370,7 @@ function meetingItem(m, current, { withDay = false } = {}) {
   const needs = needsOf(m.id);
   return h("button", { class: "item", "data-id": m.id, "aria-current": String(m.id === current),
     onclick: () => openMeeting(m.id), oncontextmenu: (e) => listMenu(m, e),
-    title: m.title_from === "notes" ? "No calendar event; title from the notes" : null },
+    title: titleSourceText(m) },
     needs ? h("span", { class: "needs-dot", title: `Needs you: ${needs.parts.join(", ")}` },
       h("span", { class: "visually-hidden" }, `Needs you: ${needs.parts.join(", ")}`)) : null,
     h("span", { class: "item-title" }, m.title || fallbackTitle(m)),
@@ -975,6 +975,7 @@ const ICONS = {
   transcribe: "M4 12a8 8 0 0 1 14-5.3M20 4v4h-4M20 12a8 8 0 0 1-14 5.3M4 20v-4h4",
   localOnly: "M6 11h12v10H6zM9 11V7a3 3 0 0 1 6 0v4",
   forgetSeries: "M4 4l16 16M7 5h12a2 2 0 0 1 2 2v10M3 9v10a2 2 0 0 0 2 2h12M3 9h6",
+  forgetLinkedSeries: "M4 4l16 16M6 5h12a3 3 0 0 1 3 3v10M3 10v8a3 3 0 0 0 3 3h12M3 10h7",
   export: "M12 3v12M7 8l5-5 5 5M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5",
   markdown: "M6 3h9l4 4v14H6zM14 3v5h5M9 13h7M9 17h7",
   notionOpen: "M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5",
@@ -1010,6 +1011,7 @@ const ACTIONS = tracked("meeting", {
   localOnly: (m, from) => toggleLocalOnly(m, from),
   shared: (m, from) => markShared(m, !m.shared?.meeting, from),
   forgetSeries: (m, from) => rememberSeries(m, false, from),
+  forgetLinkedSeries: (m, from) => forgetLinkedSeries(m, from),
   export: (m) => openExport(m, titleOf(m)),
   markdown: async (m) => {
     try {
@@ -1028,7 +1030,7 @@ const ACTIONS = tracked("meeting", {
 // The ⋯ menu, in the spec's order: Move to Trash last, red, after a separator.
 const MENU_ORDER = ["transcribe", "rename", "changeEvent", "joinPrevious", "joinNext", "split", "reviewAgain", "export", "markdown",
   "notionOpen", "notionUpload", "localOnly",
-  "shared", "forgetSeries", "report", null, "deleteAudio", "trash"];
+  "shared", "forgetSeries", "forgetLinkedSeries", "report", null, "deleteAudio", "trash"];
 function itemsFor(m, from) {
   const c = meetingCommands(m);
   return MENU_ORDER.filter((name) => !name || !c[name].hidden).map((name) => name && {
@@ -1470,7 +1472,8 @@ function renderRibbon(m, color) {
   const ribbon = h("section", { class: "ribbon", "aria-label": "Who spoke when" });
   // Names to pick from: this meeting's invitees first, then everyone known.
   ribbon.append(h("datalist", { id: "meeting-names" },
-    [...new Set([...(m.calendar?.invited || []), ...(m.calendar?.attendees || []).map((a) => a.name), ...state.names])]
+    [...new Set([...(m.calendar?.invited || []), ...(m.calendar?.attendees || []).map((a) => a.name),
+      ...(m.call_window?.participants || []), ...state.names])]
       .map((n) => h("option", { value: n }))));
   // Unnamed voices of a few seconds are mostly fragments: folded away.
   const brief = m.speakers.filter((s) => !s.is_user && !s.name && !s.shared && s.talk_seconds < 10);
@@ -1556,6 +1559,9 @@ function renderRibbon(m, color) {
       const invited = (m.calendar?.invited || []).filter((name) => !offered.has(name));
       for (const name of invited.slice(0, INVITED_CHIPS)) hints.push([name, "invited"]);
       if (invited.length > INVITED_CHIPS) hints.push([null, `+${invited.length - INVITED_CHIPS} more invited: type a name`]);
+      // No event: the people the call window showed (#24), a hint only.
+      const inCall = (m.call_window?.participants || []).filter((name) => !offered.has(name) && !invited.includes(name));
+      for (const name of inCall.slice(0, INVITED_CHIPS)) hints.push([name, "in the call"]);
     }
     if (hints.length) {
       group.append(h("div", { class: "hints" },
@@ -1886,6 +1892,24 @@ async function rememberSeries(m, on, from) {
   showSpeakers(m.id, r);
   remember(on ? `The next meetings of “${titleOf(m)}” start out marked` : `The next meetings of “${titleOf(m)}” start out unmarked`,
     () => mergeBack(m.id, r.undo));
+}
+
+// A remembered series (#24) is forgotten: the next recordings no longer join it by themselves. Undoable.
+async function forgetLinkedSeries(m, from) {
+  const name = m.series?.name;
+  let r;
+  try {
+    r = await working(from, api(`/api/meetings/${encodeURIComponent(m.id)}/series/forget`, {}));
+  } catch (err) {
+    errorToast(`Not forgotten: ${err.message}`, { action: { label: "Try again", run: () => forgetLinkedSeries(m, from) } });
+    return;
+  }
+  const { undo: token, ...page } = r;
+  if (state.meeting?.id === m.id) {
+    state.meeting = page;
+    if (onPage(m.id)) renderMeeting();
+  }
+  remember(`Recordings no longer join “${name}” by themselves`, () => eventBack(m.id, token));
 }
 
 async function dismissSharedSuggestion(id, button) {
@@ -4337,7 +4361,9 @@ async function chooseEvent(id, key, title = null, button = null) {
   const chip = token && onPage(id) ? document.querySelector("#main .event-link") : null;
   if (chip) flash(chip);
   if (!token) return;
-  if (before !== key) remember(eventChangeText(key, title), () => eventBack(id, token));
+  const joins = key && key !== "current" && state.meeting?.id === id && state.meeting.series?.calendar
+    ? `; its next recordings link to “${state.meeting.series.name}” by themselves` : "";
+  if (before !== key) remember(eventChangeText(key, title) + joins, () => eventBack(id, token));
   loadList();
   showSettled(id);
 }
@@ -4372,6 +4398,18 @@ async function showSettled(id) {
 // with Pick… while the calendar is on. When events overlapped the recording
 // about as much, the question which one.
 function renderEventLink(m) {
+  const line = eventLine(m);
+  const series = seriesView(m);
+  if (!series) return line;
+  const chip = h("span", { class: "link-chip quiet series-chip", title: series.title },
+    h("span", { class: "link-kind" }, "Series"), h("span", { class: "link-title" }, series.name),
+    h("span", { class: "link-why" }, series.why));
+  if (!line) return h("div", { class: "event-link" }, chip);
+  line.append(" ", chip);
+  return line;
+}
+
+function eventLine(m) {
   const v = eventLinkView(m);
   if (!v) return null;
   if (v.kind === "question") {

@@ -183,10 +183,25 @@ public enum CalendarEvents {
         return hits.count == 1 ? hits[0] : nil
     }
 
-    /// The invitees of the recording's event, as `known` names where they resolve; nil when the recording has no event.
+    /// The invitees of the recording's event, as `known` names where they resolve; without an event, the people its
+    /// call window showed (#24: a hint for recognizing voices, never for naming one by elimination); nil with neither.
     public static func invitedNames(_ paths: RecordingPaths, _ known: [String], userName: String = "") -> [String]? {
-        guard let event = load(paths) else { return nil }
+        guard let event = load(paths) else { return callNames(paths, known, userName: userName) }
         return candidates(event, userName: userName).map { resolve($0.name, known) ?? $0.name }
+    }
+
+    /// The people the call window showed, as `known` names where they resolve, without the user; nil without any.
+    public static func callNames(_ paths: RecordingPaths, _ known: [String], userName: String = "") -> [String]? {
+        guard let people = CallWindowFile.load(paths)?.participants, !people.isEmpty else { return nil }
+        let user = Py.casefold(userName)
+        var out: [String] = []
+        for p in people {
+            let first = Py.split(p).first.map(Py.casefold)
+            if !user.isEmpty && (Py.same(Py.casefold(p), user) || first.map { Py.same($0, user) } == true) { continue }
+            let name = resolve(p, known) ?? p
+            if !out.contains(where: { Py.same($0, name) }) { out.append(name) }
+        }
+        return out.isEmpty ? nil : out
     }
 
     // MARK: - calendar.json

@@ -33,6 +33,7 @@ public enum ChangesAPI {
             case "attributions": return app.stores.attributions
             case "voices": return app.stores.voices
             case "shared_series": return app.stores.sharedSeries
+            case "meeting_series": return app.stores.meetingSeries
             default: preconditionFailure("no store \(name)")
             }
         }
@@ -173,7 +174,8 @@ public enum ChangesAPI {
         // What was prepared for the event (its waiting notes, #44) comes back on undo too.
         let prepared = event.map { $0.key.isEmpty ? [] : [MyNotes.prepFolder($0.key, stores: app.stores)] } ?? []
         return try undoToken(app, label: "event", meetings: [id],
-                             stores: storePaths(app, "projects", "prepared", "attributions") + prepared, projectsLock: true) { _ in
+                             stores: storePaths(app, "projects", "prepared", "attributions", "meeting_series") + prepared,
+                             projectsLock: true) { _ in
             let evidence = Evidence(path: app.stores.attributions)
             if let previous, event.map({ !EventsAPI.same(previous, $0) }) ?? true { evidence.rejectEvent(previous, id) }
             if let event {
@@ -183,6 +185,9 @@ public enum ChangesAPI {
                 try CalendarEvents.dismiss(paths)
             }
             try evidence.save()
+            // A recurring event chosen by hand: its next recordings join it by themselves (#24). A confirmation of the
+            // event it had teaches nothing new.
+            if key != "current" { try MeetingSeries.linkedByHand(paths, event: event, stores: app.stores) }
             if [paths.systemTurns, paths.transcriptJson, paths.meta].allSatisfy(MeetingsAPI.exists) {
                 try afterEvent(app, paths)
             }
@@ -213,6 +218,16 @@ public enum ChangesAPI {
             let evidence = Evidence(path: app.stores.attributions)
             evidence.forgetRule(series)
             try evidence.save()
+        }
+    }
+
+    /// The meeting's remembered series is forgotten: no recording joins it any more (#24). Returns the undo token.
+    public static func forgetSeries(_ app: ServerApp, id: String) throws -> String {
+        _ = try MeetingsAPI.meetingPaths(outputDir: app.outputDir, id: id)
+        guard let series = MeetingSeries.of(meeting: id, stores: app.stores) else { throw NotFound("\(id)'s series") }
+        return try undoToken(app, label: "series", stores: storePaths(app, "meeting_series")) { token in
+            try MeetingSeries.forget(series.id, stores: app.stores)
+            try Undo.note(app.outputDir, token, PyDict([("meeting", .string(id))]))
         }
     }
 
@@ -600,6 +615,10 @@ extension Router {
         post("/api/meetings/([^/]+)/event") { req, m in
             let key = try PyBody.get(req.json, "key")
             let token = try ChangesAPI.setMeetingEvent(app, id: m.group(1)!, key: key.flatMap { $0 == .null ? nil : Py.str($0) })
+            return .json(try page(m.group(1)!).adding("undo", .string(token)))
+        }
+        post("/api/meetings/([^/]+)/series/forget") { _, m in
+            let token = try ChangesAPI.forgetSeries(app, id: m.group(1)!)
             return .json(try page(m.group(1)!).adding("undo", .string(token)))
         }
         post("/api/rules/forget") { req, _ in

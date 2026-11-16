@@ -315,6 +315,19 @@ public enum DaemonFactory {
             return { log in CallMute.make(app: app, callStart: callStart, home: paths.home, huddle: huddle,
                                         teams: teamsCall, log: log) }
         }
+        // A Teams call's window: its title and people when no calendar event matches the call (#24). With the
+        // real capture only; Accessibility as the mute has it (never asked for here).
+        let callWindow: (String) -> ((URL, @escaping (String) -> Void) -> CallWindowWatcher)? = { trigger in
+            guard sources == nil, trigger == CallApp.teams.rawValue else { return nil }
+            return { folder, log in
+                // One moment for every look (its answer is kept): the minute the call's recording began.
+                let began = Date(timeIntervalSince1970: (Date().timeIntervalSince1970 / 60).rounded(.down) * 60)
+                return CallWindowWatcher(app: trigger, reader: AXTeamsCallWindow(), folder: folder, wanted: {
+                    if case .known(let key) = facts.eventKey(at: began) { return key == nil }
+                    return true  // not known yet: read, the meeting's own event decides later
+                }, log: log)
+            }
+        }
         var deps = DaemonDeps(
             detect: { detector.detect(recording: $0) },
             newSession: { trigger in
@@ -322,7 +335,7 @@ public enum DaemonFactory {
                 return RecordingSession(outputDir: config.outputDir, trigger: trigger,
                                         capture: { folder, sessionLog in
                                             LiveCapture(folder: folder, log: sessionLog, sources: captureSources(), mute: muted,
-                                                        gatesMic: gates)
+                                                        gatesMic: gates, callWindow: callWindow(trigger))
                                         },
                                         stamp: stamp, usage: usage)
             },

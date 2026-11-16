@@ -61,6 +61,10 @@ export function meetingCommands(m) {
     // Only while the event's series is remembered: a mark that came from it can be stopped at its source.
     forgetSeries: { label: "Forget for This Series", enabled: !!m.shared?.series?.remembered,
       hidden: !m.shared?.series?.remembered },
+    // #24: a series Palaver remembered (a recurring event linked by hand, a call title that repeats): its next
+    // recordings join it by themselves, until it is forgotten.
+    forgetLinkedSeries: { label: "Stop Linking This Series", paletteLabel: "Stop Linking This Meeting's Series",
+      enabled: !!m.series, hidden: !m.series },
     // #59: the report form with this meeting chosen.
     report: { label: "Report a Problem with This Meeting…", paletteLabel: "Report a Problem with This Meeting",
       enabled: true },
@@ -99,6 +103,8 @@ export function withTitle(m, title) {
   if (title) return { ...m, title, title_from: "you" };
   if (m.imported?.title) return { ...m, title: m.imported.title, title_from: "imported" };
   if (m.calendar?.title) return { ...m, title: m.calendar.title, title_from: "calendar" };
+  if (m.call_window?.title) return { ...m, title: m.call_window.title, title_from: "call" };
+  if (m.series?.name) return { ...m, title: m.series.name, title_from: "series" };
   if (m.notes?.title) return { ...m, title: m.notes.title, title_from: "notes" };
   return { ...m, title: null, title_from: null };
 }
@@ -957,6 +963,22 @@ export function eventLinkView(m) {
   return m.calendar_on ? { kind: "none" } : null;
 }
 
+// The remembered series the meeting is in (#24), as the event line shows it: its name and why recordings join it.
+export function seriesView(m) {
+  const s = m.series;
+  if (!s?.name) return null;
+  const why = s.learned === "call-window" ? "the same title in the call" : `linked by hand${s.when ? `, ${s.when}` : ""}`;
+  return { name: s.name, why, title: `Recordings of “${s.name}” are linked to it by themselves: ${why}.` };
+}
+
+// Where a title came from, when it is not obvious: the list item's tooltip.
+export function titleSourceText(m) {
+  if (m.title_from === "notes") return "No calendar event; title from the notes";
+  if (m.title_from === "call") return "No calendar event; title from the call window";
+  if (m.title_from === "series") return "No calendar event; title of its series";
+  return null;
+}
+
 // The event picker offers the events of the recording's day and the days
 // around it (#28), overlapping ones first: past this many, a title filter.
 export const EVENT_FILTER_AFTER = 8;
@@ -1396,7 +1418,8 @@ export function paletteMatch(query, entries, limit = 30) {
 }
 
 const PALETTE_COMMANDS = ["play", "transcribe", "writeNotes", "rename", "changeEvent", "joinPrevious", "joinNext", "split", "reviewAgain",
-  "export", "markdown", "notionOpen", "notionUpload", "localOnly", "shared", "forgetSeries", "report", "deleteAudio", "trash"];
+  "export", "markdown", "notionOpen", "notionUpload", "localOnly", "shared", "forgetSeries", "forgetLinkedSeries", "report", "deleteAudio",
+  "trash"];
 
 // The open meeting's commands that apply now, with their shortcuts.
 export function paletteCommands(m) {

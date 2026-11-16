@@ -212,7 +212,7 @@ public enum MeetingsAPI {
         [paths.meta, paths.transcriptJson, paths.calendar, paths.title, paths.speakers, paths.speakersAuto,
          paths.speakersMerged, paths.speakersIgnored, paths.speakersInferred, paths.speakersRejected,
          paths.speakersShared, paths.speakersUnknown, paths.speakersLines, paths.systemTurns, paths.imported, paths.source, paths.review, paths.notes,
-         paths.myNotes, paths.myNotesImages, app.stores.glossary]
+         paths.myNotes, paths.myNotesImages, app.stores.glossary, paths.callWindow, app.stores.meetingSeries]
     }
 
     /// `_list_entry`: a meeting as the list shows it — what it was, who was in it, and what is still to do (speakers

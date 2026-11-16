@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { meetingCommands, nextAfter } from "../../web/logic.js";
 
 const NAMES = ["trash", "joinPrevious", "joinNext", "changeEvent", "split", "reviewAgain", "writeNotes", "play",
-  "localOnly", "shared", "forgetSeries", "rename", "export", "markdown", "notionOpen", "notionUpload", "report", "transcribe", "deleteAudio"];
+  "localOnly", "shared", "forgetSeries", "forgetLinkedSeries", "rename", "export", "markdown", "notionOpen", "notionUpload", "report", "transcribe", "deleteAudio"];
 
 function ready(extra = {}) {
   return {
@@ -127,6 +127,14 @@ test("a remembered series can be forgotten from the menu, and only then is it th
   assert.equal(meetingCommands(ready()).forgetSeries.hidden, true);
   const c = meetingCommands(ready({ shared: { meeting: false, series: { can: true, remembered: true } } }));
   assert.deepEqual([c.forgetSeries.label, c.forgetSeries.enabled, c.forgetSeries.hidden], ["Forget for This Series", true, false]);
+});
+
+test("a series Palaver remembered (#24) can be stopped from the menu while the meeting is in one", () => {
+  assert.equal(meetingCommands(ready()).forgetLinkedSeries.hidden, true);
+  assert.equal(meetingCommands(ready()).forgetLinkedSeries.enabled, false);
+  const c = meetingCommands(ready({ series: { id: "s1", name: "Northwind sync", learned: "event" } }));
+  assert.deepEqual([c.forgetLinkedSeries.label, c.forgetLinkedSeries.enabled, c.forgetLinkedSeries.hidden],
+    ["Stop Linking This Series", true, false]);
 });
 
 test("Transcribe Again: only for a meeting not transcribed, which can then go to the trash too", async () => {
