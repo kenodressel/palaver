@@ -163,6 +163,16 @@ public enum ServeMain {
                                                   base: NotionService.api(env: env)),
                             openURL: ServerApp.opener(env: env), notifyState: env["PALAVER_NOTIFY_STATE"],
                             accessibilityState: env["PALAVER_AX_STATE"])
+        // Follow-ups (#18): the tokens from the Keychain, config.toml or the environment; the recap draft in the mail app.
+        app.keys = keys
+        app.configToml = configURL
+        app.env = env
+        app.openDraft = ServerApp.draftOpener(env: env)
+        app.notionBase = NotionService.api(env: env)
+        #if DEBUG
+        // The end-to-end tests' stand-in for Todoist's API (127.0.0.1), never the real one.
+        if let url = env[TEST_TODOIST_URL], !url.isEmpty { app.todoistBase = url }
+        #endif
         // Claude's MCP entries start `bin/palaver` with these options; `claude` is looked up in this environment.
         app.mcpSetup = McpSetup(stores: stores, executable: McpSetup.executable(), options: forwarded(o), env: env)
         #if DEBUG
@@ -180,6 +190,10 @@ public enum ServeMain {
 
     /// `PALAVER_TEST_CLAUDE_DESKTOP` (debug builds only): where Claude Desktop counts as installed.
     public static let TEST_CLAUDE_DESKTOP = "PALAVER_TEST_CLAUDE_DESKTOP"
+
+    /// `PALAVER_TEST_TODOIST_URL` (debug builds only): where Todoist's REST API is instead (an end-to-end test's stub;
+    /// Notion's is `NotionService.TEST_API`).
+    public static let TEST_TODOIST_URL = "PALAVER_TEST_TODOIST_URL"
 
     /// `PALAVER_TEST_REVEALED` (debug builds only): the file each report zip shown in Finder is written to instead.
     public static let TEST_REVEALED = "PALAVER_TEST_REVEALED"

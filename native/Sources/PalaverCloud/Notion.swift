@@ -62,10 +62,15 @@ public struct NotionClient: Sendable {
 
     /// The first column of `type` whose name holds one of the kind's keywords.
     static func column(_ schema: JSONValue, _ kind: String, _ type: String) -> String? {
+        column(schema, keywords: COLUMN_KEYWORDS[kind]!, type)
+    }
+
+    /// The first column of `type` whose name holds one of `keywords` (lower case).
+    static func column(_ schema: JSONValue, keywords: [String], _ type: String) -> String? {
         guard case .object(let props)? = schema["properties"] else { return nil }
         for (name, prop) in props where prop["type"]?.stringValue == type {
             let lowered = name.lowercased()
-            if COLUMN_KEYWORDS[kind]!.contains(where: { lowered.contains($0) }) { return name }
+            if keywords.contains(where: { lowered.contains($0) }) { return name }
         }
         return nil
     }

@@ -33,6 +33,8 @@ import { togglePalette, paletteOpen } from "./palette.js";
 import { reportMeeting, reportDraft, reportDoneText, actionCatalog, exportedText, heardSpellings } from "./logic.js";
 // Export and import of a meeting (#58).
 import { inferredText, importedLine, importedText, GLOBAL_COMMANDS, sourceName, sourceTitle } from "./logic.js";
+// Follow-ups after a call (#18).
+import { followUpButton, followUpAddedText, recapTitle } from "./logic.js";
 import { recordingNow, recordingCommand, RECORD_TEXT } from "./logic.js";
 import { mutedIn, muteUnfollowed, mutedText, unfollowedText } from "./logic.js";
 import { eventPickerChoices, EVENT_FILTER_AFTER } from "./logic.js";
@@ -161,6 +163,16 @@ const state = {
   lm: null,        // Settings → Language model (/api/language-model); never holds a key
   lmError: null,   // what the last language-model change said
   lmTests: {},     // provider id -> {text} or {error}: the Test button's last answer
+  // Follow-ups (#18): per meeting id {sig, data} (/api/meetings/<id>/follow-ups); the others' steps too;
+  // Settings → Follow-ups (/api/follow-ups, never a token), Todoist's projects and each Check's last answer.
+  followUps: new Map(),
+  followUpsOthers: false,
+  fu: null,
+  fuProjects: null,
+  fuChecks: {},
+  fuReplacing: false,
+  fuLoading: false,
+  fuError: null,
   lmReplacing: new Set(),  // providers whose key field is open to replace the key
   tr: null,        // Settings → Transcription (/api/transcription); never holds a key
   trError: null,   // what the last transcription change said
@@ -1968,12 +1980,92 @@ function renderNotes(m, color) {
           s.mine ? youMark() : null);
         }))) : null));
   }
+  if (m.status === "ready") wrap.append(followUpsRow(m));
   for (const s of n.sections) {
     wrap.append(h("h2", {}, s.heading),
       h("ul", {}, s.points.map((p) => h("li", {}, named(p.text), p.mine ? youMark() : null,
         p.details.length ? h("ul", {}, p.details.map((d) => h("li", {}, named(d)))) : null))));
   }
   return wrap;
+}
+
+// --- follow-ups after a call (#18) ---------------------------------------------------------
+
+// Under the decisions and next steps: Draft Recap Email (a draft in the mail
+// app, Palaver sends nothing) and the next steps into Todoist or Notion, each a
+// button, never automatic. What went where comes from the server; it is asked
+// again when the notes or "Keep on This Mac" change.
+function followUpsRow(m) {
+  const sig = JSON.stringify([m.notes?.next_steps, m.local_only, m.calendar?.title]);
+  const known = state.followUps.get(m.id);
+  if (known?.sig !== sig && !known?.loading) loadFollowUps(m.id, sig);
+  const f = known?.data;
+  const row = h("div", { class: "follow-ups", id: "follow-ups", "aria-label": "Follow-ups" },
+    h("button", { type: "button", class: "btn btn-quiet small", title: f ? recapTitle(f.recap_to) : null,
+      onclick: (e) => draftRecap(m, e.currentTarget) }, "Draft Recap Email"));
+  if (!f) return row;
+  const ready = f.targets.filter((t) => !t.problem);
+  for (const t of ready) {
+    const b = followUpButton(f, t, state.followUpsOthers);
+    row.append(h("button", { type: "button", class: "btn btn-quiet small", "data-target": t.id, disabled: b.disabled,
+      title: b.title, onclick: (e) => sendFollowUps(m, t, e.currentTarget) }, b.label));
+  }
+  const others = f.steps.some((s) => !s.mine);
+  if (ready.length && others && !f.local_only) {
+    row.append(h("label", { class: "follow-ups-others meta" },
+      h("input", { type: "checkbox", checked: state.followUpsOthers,
+        onchange: (e) => { state.followUpsOthers = e.target.checked; refreshFollowUpsRow(m.id); } }),
+      " Include others' next steps"));
+  }
+  if (f.local_only && ready.length) {
+    row.append(h("span", { class: "meta" }, "Kept on this Mac: next steps don't go to Todoist or Notion."));
+  } else if (!ready.length && f.steps.length) {
+    row.append(h("a", { class: "meta link", href: "#/settings/follow-ups" }, "Next steps to Todoist or Notion…"));
+  }
+  return row;
+}
+
+async function loadFollowUps(id, sig) {
+  const known = state.followUps.get(id);
+  state.followUps.set(id, { ...known, sig, loading: true });
+  try {
+    const data = await api(`/api/meetings/${encodeURIComponent(id)}/follow-ups`);
+    state.followUps.set(id, { sig, data });
+  } catch {
+    state.followUps.set(id, { sig, data: known?.data });  // asked again with the next change
+    return;
+  }
+  refreshFollowUpsRow(id);
+}
+
+function refreshFollowUpsRow(id) {
+  const m = state.meeting;
+  if (m?.id !== id || !onPage(id)) return;
+  $("#follow-ups")?.replaceWith(followUpsRow(m));
+}
+
+async function draftRecap(m, button) {
+  try {
+    const r = await busy(button, api(`/api/meetings/${encodeURIComponent(m.id)}/recap-email`, {}));
+    toast(r.to ? "The recap is open as a draft in your mail app." : "The recap is open as a draft in your mail app: add who it goes to.");
+  } catch (err) {
+    toast(`No draft: ${err.message}`);
+  }
+}
+
+async function sendFollowUps(m, t, button) {
+  try {
+    const data = await busy(button, api(`/api/meetings/${encodeURIComponent(m.id)}/follow-ups/${t.id}`,
+      { others: state.followUpsOthers }));
+    const known = state.followUps.get(m.id);
+    state.followUps.set(m.id, { sig: known?.sig, data });
+    toast(followUpAddedText(data.added, t.label));
+  } catch (err) {
+    errorToast(`Not added to ${t.label}: ${err.message}`, { action: { label: "Try again", run: () => sendFollowUps(m, t, button) } });
+    const known = state.followUps.get(m.id);
+    if (known) state.followUps.set(m.id, { ...known, sig: null });  // some may have gone: ask again
+  }
+  refreshFollowUpsRow(m.id);
 }
 
 // On what came from the user's own notes (#44).
@@ -4936,6 +5028,7 @@ function settingsContent(pane) {
     case "transcription": return state.tr ? renderTranscription(state.tr) : [];
     case "language-model": return state.lm ? renderLanguageModel(state.lm) : [];
     case "templates": return renderTemplatesPane();
+    case "follow-ups": return followUpsPane();
     case "search": return s ? [
       h("h2", {}, "Search"),
       h("div", { class: "gloss-card settings-card" },
@@ -5615,6 +5708,133 @@ async function deleteTemplate(t, button) {
 
 async function forgetTemplateSeries(s, button) {
   await changeTemplates("/api/note-templates/series", { series: s.series }, "Not forgotten", button);
+}
+
+// --- settings: follow-ups (#18) ---------------------------------------------------
+
+// Where a meeting's next steps can go (Todoist, a Notion to-do database) and
+// the recap email. Loaded when the pane is first shown; a token is never in the page.
+function followUpsPane() {
+  if (!state.fu) {
+    if (!state.fuLoading) {
+      state.fuLoading = true;
+      api("/api/follow-ups").then((fu) => {
+        state.fu = fu;
+        if (state.view === "settings" && settingsPane(state.settingsPane) === "follow-ups") lmRender();
+      }).catch((err) => { state.fuError = `Follow-ups could not be loaded: ${err.message}`; })
+        .finally(() => { state.fuLoading = false; });
+    }
+    return [h("h2", {}, "Follow-ups"), state.fuError ? h("p", { class: "error", role: "alert" }, state.fuError) : null];
+  }
+  return [
+    h("h2", {}, "Follow-ups"),
+    h("div", { class: "gloss-card settings-card" },
+      h("p", { class: "meta" }, "After a call, a meeting's Summary offers to draft a recap email and to add next steps to Todoist ",
+        "or a Notion to-do database. Nothing goes by itself: only when you press the meeting's button, and only your own ",
+        "next steps unless you include the others'. Each step goes once. Meetings kept on this Mac send no tasks."),
+      h("p", { class: "meta" }, "Draft Recap Email opens a new message in your mail app, addressed to the event's invitees and ",
+        "written from the notes. Palaver never sends mail and needs no mail account: you edit and send it.")),
+    todoistCard(state.fu.todoist),
+    notionTasksCard(state.fu.notion),
+  ];
+}
+
+async function changeFollowUps(body, focus, done) {
+  try {
+    state.fu = await api("/api/follow-ups", body);
+    state.followUps.clear();  // the meeting pages ask again
+    state.fuError = null;
+    if (done) toast(done, { short: true });
+  } catch (err) {
+    state.fuError = `Not saved: ${err.message}`;
+  }
+  lmRender(focus);
+}
+
+async function checkFollowUps(target, button) {
+  state.fuChecks[target] = { text: "Asking…" };
+  lmRender(`fu-check-${target}`);
+  try {
+    const r = await busy($(`#main [data-lm="fu-check-${target}"]`) || button, api("/api/follow-ups/check", { target }));
+    state.fuChecks[target] = { text: r.text };
+    if (r.projects) state.fuProjects = r.projects;
+  } catch (err) {
+    state.fuChecks[target] = { error: err.message };
+  }
+  lmRender(`fu-check-${target}`);
+}
+
+function checkLine(target) {
+  const c = state.fuChecks[target];
+  return c ? h("p", { class: c.error ? "meta error" : "meta", role: "status" }, c.error || c.text) : null;
+}
+
+function todoistCard(t) {
+  let tokenRow;
+  if (t.token_set && !state.fuReplacing) {
+    tokenRow = h("div", { class: "lm-row lm-key" }, h("span", { class: "lm-key-set" }, "Token set ✓"),
+      h("span", { class: "lm-actions" },
+        h("button", { type: "button", class: "btn btn-quiet small", "data-lm": "fu-replace",
+          onclick: () => { state.fuReplacing = true; lmRender("fu-token"); } }, "Replace"),
+        t.token_saved ? h("button", { type: "button", class: "btn btn-quiet small danger",
+          onclick: () => changeFollowUps({ todoist_token_remove: true }, "fu-token", "Token removed from the Keychain.") }, "Remove") : null));
+  } else {
+    const input = h("input", { type: "password", class: "lm-input", autocomplete: "off", spellcheck: "false", "data-lm": "fu-token",
+      "aria-label": "Todoist API token", placeholder: "API token", title: "Saved in the Keychain with Save" });
+    const save = () => {
+      const token = input.value;
+      input.value = "";
+      if (!token.trim()) return;
+      state.fuReplacing = false;
+      changeFollowUps({ todoist_token: token }, "fu-check-todoist", "Token saved in the Keychain.");
+    };
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
+    tokenRow = h("div", { class: "lm-row lm-key" }, input,
+      h("span", { class: "lm-actions" }, h("button", { type: "button", class: "btn small", "data-lm": "fu-save-token", onclick: save }, "Save")));
+  }
+  // The Inbox unless a project is chosen; the list comes with Check.
+  const projects = state.fuProjects || [];
+  const options = [["", "Inbox"], ...projects.filter((p) => !p.inbox).map((p) => [p.id, p.name])];
+  if (t.project && !options.some(([id]) => id === t.project.id)) options.push([t.project.id, t.project.name || t.project.id]);
+  const select = h("select", { class: "filter inline lm-select", "data-lm": "fu-project", "aria-label": "Todoist project",
+    onchange: (e) => {
+      const id = e.target.value;
+      const name = options.find(([pid]) => pid === id)?.[1] || "";
+      changeFollowUps({ todoist_project: id ? { id, name } : null }, "fu-project", `Tasks go to ${id ? name : "the Inbox"}.`);
+    } }, options.map(([value, label]) => h("option", { value }, label)));
+  select.value = t.project?.id || "";
+  return h("div", { class: "gloss-card settings-card", id: "todoist-card" },
+    h("h3", { class: "lm-title" }, "Todoist"),
+    h("p", { class: "meta" }, "Your API token is in Todoist under Settings → Integrations → Developer. Tasks go to the project below; ",
+      "each one says which meeting it came from, and its due date when the step names a day."),
+    tokenRow,
+    lmField("Project", select),
+    state.fuError ? h("p", { class: "error", role: "alert" }, state.fuError) : null,
+    h("div", { class: "lm-row" }, h("span", { class: "meta" }, t.token_set ? "Check lists your projects." : "Save a token first."),
+      h("span", { class: "lm-actions" }, h("button", { type: "button", class: "btn small", "data-lm": "fu-check-todoist",
+        disabled: !t.token_set, onclick: (e) => checkFollowUps("todoist", e.currentTarget) }, "Check"))),
+    checkLine("todoist"));
+}
+
+function notionTasksCard(n) {
+  const input = h("input", { type: "text", class: "lm-input", spellcheck: "false", "data-lm": "fu-database", value: n.database,
+    "aria-label": "Notion to-do database", placeholder: "The database's link or id" });
+  const save = () => changeFollowUps({ notion_database: input.value }, "fu-database",
+    input.value.trim() ? "Notion to-do database saved." : "No Notion to-do database.");
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
+  return h("div", { class: "gloss-card settings-card", id: "notion-tasks-card" },
+    h("h3", { class: "lm-title" }, "Notion to-do database"),
+    h("p", { class: "meta" }, "A row per next step: the step in the title column; a due date, owner, meeting or link column ",
+      "is filled when the database has one (by its name: Due, Owner, Meeting, Link, or in German). Share the database with ",
+      "your Notion integration (in Notion: ••• → Connections)."),
+    lmField("Database", input),
+    n.token_set ? null : h("p", { class: "meta lm-problem" }, "No Notion token: Settings → Notion says how to add one."),
+    h("div", { class: "lm-row" }, h("span", { class: "meta" }, n.database ? "Check opens the database." : "Save a database first."),
+      h("span", { class: "lm-actions" },
+        h("button", { type: "button", class: "btn small", "data-lm": "fu-save-database", onclick: save }, "Save"),
+        h("button", { type: "button", class: "btn small", "data-lm": "fu-check-notion", disabled: !n.database || !n.token_set,
+          onclick: (e) => checkFollowUps("notion", e.currentTarget) }, "Check"))),
+    checkLine("notion"));
 }
 
 // --- settings: transcription (#54) ---------------------------------------------------

@@ -104,6 +104,7 @@ extension Router {
         addMyNotesRoutes(r, app: app)
         addExchangeRoutes(r, app: app)
         addNotionRoutes(r, app: app)
+        addFollowUpRoutes(r, app: app)
         addSettingsRoutes(r, app: app)
         addMcpRoutes(r, app: app)
         addSetupRoutes(r, app: app)

@@ -1511,6 +1511,42 @@ export function exportedText(answer) {
   return `Saved to ${answer.folder || "Downloads"}: “${answer.name}”`;
 }
 
+// --- follow-ups after a call (#18) ---------------------------------------------------------
+
+// A target's button on the meeting page (``f``: /api/meetings/<id>/follow-ups,
+// ``t`` one of its targets; ``others``: the others' next steps too):
+// {label, disabled, title}. Each step goes once; when every one has gone, the
+// button says so.
+export function followUpButton(f, t, others) {
+  const mine = f.mine || 0;
+  const total = others ? (f.steps || []).length : mine;
+  const fresh = others ? t.new_all : t.new_mine;
+  const label = others ? `Add all next steps to ${t.label}` : `Add my next steps to ${t.label}`;
+  if (f.local_only) {
+    return { label, disabled: true, title: `This meeting is kept on this Mac: its next steps don't go to ${t.label}` };
+  }
+  if (!total) return { label, disabled: true, title: others ? "This meeting has no next steps" : "None of the next steps are yours" };
+  if (!fresh) return { label: `Added to ${t.label} ✓`, disabled: true, title: null };
+  const where = t.project ? ` (${t.project})` : "";
+  if (fresh < total) {
+    return { label: `Add ${fresh} new next step${fresh === 1 ? "" : "s"} to ${t.label}`, disabled: false,
+      title: `The others went to ${t.label} before${where}` };
+  }
+  return { label, disabled: false, title: t.project ? `Into ${t.project}` : null };
+}
+
+// The toast once tasks went.
+export function followUpAddedText(n, label) {
+  return n ? `${n} next step${n === 1 ? "" : "s"} added to ${label}` : `Nothing new to add to ${label}`;
+}
+
+// The recap button's hint: who the draft is addressed to.
+export function recapTitle(to) {
+  if (!to?.length) return "The meeting's event has no invitees with an email address: the draft has no addressees yet";
+  const names = to.length > 3 ? `${to.slice(0, 3).join(", ")} and ${to.length - 3} more` : to.join(", ");
+  return `A draft to ${names}, written from the notes, in your mail app. Palaver sends nothing.`;
+}
+
 // Whether a dropped or picked file is one to import.
 export const isMeetingZip = (name) => /\.zip$/i.test(String(name || ""));
 
@@ -1578,7 +1614,7 @@ export function inferredText(inferred) {
 export const SETTINGS_PANES = [
   ["general", "General"], ["recording", "Recording"], ["calendar", "Calendar"], ["notifications", "Notifications"],
   ["transcription", "Transcription"], ["language-model", "Language Model"], ["templates", "Note Templates"],
-  ["search", "Search"],
+  ["follow-ups", "Follow-ups"], ["search", "Search"],
   ["storage", "Storage"], ["memory", "Memory"], ["mcp", "Claude Access"], ["notion", "Notion"], ["update", "Updates"],
 ];
 // What each pane is found by in the palette, besides its name: the settings in it.
@@ -1591,6 +1627,7 @@ const PANE_WORDS = {
   "language-model": ["notes", "llm", "gemma", "anthropic", "claude", "openai", "provider", "api", "key", "cloud", "model"],
   templates: ["notes", "template", "sections", "interview", "1:1", "one-on-one", "stand-up", "standup", "workshop",
     "customer", "sales"],
+  "follow-ups": ["todoist", "tasks", "to-do", "todo", "next steps", "recap", "email", "mail", "token"],
   search: ["meaning", "semantic", "index"],
   storage: ["disk", "space", "audio", "delete", "models", "size", "gb", "free"],
   memory: ["ram", "budget", "workers"],

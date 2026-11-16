@@ -186,7 +186,7 @@ public enum ReportSecrets {
     /// account. Only items that are there are read (`has` first); a read may ask the user, as config.py's did for a
     /// report. Python's report scrubbed only the tokens; a provider key printed into a log is scrubbed too now.
     public static func keychain(_ keys: KeyStore) -> [String: String] {
-        let accounts = [Tokens.NOTION, Tokens.HF]
+        let accounts = [Tokens.NOTION, Tokens.HF, Tokens.TODOIST]
             + ModelChoice.providers.filter { $0.key != "none" }.map { ProviderSettings.keyAccount($0.id) }
         var out: [String: String] = [:]  // fixed ASCII account names
         for account in accounts where keys.has(account) {

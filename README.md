@@ -118,6 +118,17 @@ to the new folders at the first start.
   transcript in one .md file in Downloads. Settings → Storage → Markdown
   folder keeps every meeting as a Markdown file in a folder of your choice
   (an Obsidian vault, say), rewritten when the meeting changes.
+- **Follow-ups.** Under a meeting's decisions and next steps, Draft Recap
+  Email opens a new message in your mail app: addressed to the calendar
+  event's invitees, written from the notes (summary, decisions, next steps
+  and whose they are), in the meeting's language. Palaver never sends mail
+  and has no access to your mail account; you edit and send the draft.
+  "Add my next steps to Todoist" (or to a Notion to-do database) puts your
+  own next steps there, with their due day when the step names one and the
+  meeting they came from; the others' only when you include them. Nothing
+  happens by itself: each is a button you press, each step goes once, and a
+  meeting kept on this Mac sends no tasks. Set Todoist (its token stays in
+  the Keychain) and the Notion database up in Settings → Follow-ups.
 - **Dark mode.** The window follows your Mac's appearance.
 
 ![Notes in dark mode: decisions, next steps and the topics](docs/images/notes-dark.png)
@@ -301,6 +312,11 @@ You don't need any of these. Each one is off until you set it up.
   to; an uploaded meeting links its Notion page ("In Notion", and Open in
   Notion in its ⋯ menu), and Upload to Notion (Again) there uploads it by
   hand. Changing the target leaves meetings uploaded before where they are.
+- **Todoist and a Notion to-do database** (Settings → Follow-ups): a
+  meeting's next steps, only when you press its button (see Follow-ups
+  above). Each task carries the step, whose it is when it isn't yours, its
+  due day and the meeting's title and date (and a link to its Notion page
+  when it was uploaded there); nothing else of the meeting.
 - **Claude (MCP):** `palaver mcp --install` lets Claude Code read your
   meetings, notes, projects and people (`--install --desktop` for
   Claude Desktop). It only reads, except `import_meeting`, which adds

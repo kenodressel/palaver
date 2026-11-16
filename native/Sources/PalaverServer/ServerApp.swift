@@ -1,7 +1,9 @@
 // What the routes need (webapp/server.py `App`, webapp/__init__.py `build_app`): where the
 // recordings are, the config, the app's recording, the language model's helpers, the locks api.py
 // keeps in its process, and the drain of the changes being made (Inflight).
+import AppKit
 import Foundation
+import PalaverCloud
 import PalaverCore
 import PalaverDomain
 
@@ -81,6 +83,22 @@ public final class ServerApp: @unchecked Sendable {
     /// daemon.log (the server's SessionLog), for what api.py logs itself; set by HTTPServer when it has one.
     public var log: SessionLog?
 
+    // Follow-ups after a call (#18). ServeMain sets the real ones; a test sets what it needs (nothing: no tokens).
+    /// The Keychain the Todoist and Notion tokens are read from and the Todoist token saved in; nil: none.
+    public var keys: KeyStore?
+    /// config.toml, where a token may be written too; nil: none.
+    public var configToml: URL?
+    /// The environment a token may be set in (NOTION_TOKEN, TODOIST_TOKEN).
+    public var env: [String: String] = [:]
+    /// What the next steps go out through, and where Todoist's and Notion's APIs are: a test's stubs.
+    public var followUpHTTP = HTTPClient()
+    public var todoistBase = TodoistClient.BASE_URL
+    public var notionBase = NotionClient.BASE_URL
+    /// Where a recap email's draft (.eml) is written before it is opened.
+    public var draftsDir = FileManager.default.temporaryDirectory.appendingPathComponent("palaver-recap", isDirectory: true)
+    /// Opens a recap draft (an .eml file, or a mailto: URL as the fallback) in the mail app.
+    public var openDraft: (String) -> Void
+
     private let nameLock = NSLock()
     private var name: String
 
@@ -132,6 +150,7 @@ public final class ServerApp: @unchecked Sendable {
         self.notion = notion ?? StubNotionLink()
         self.speechHere = speechHere ?? { probe.speechHere() }
         self.openURL = openURL
+        openDraft = openURL
         self.notifyState = notifyState
         self.accessibilityState = accessibilityState
         jobs = ModelJobs.root(outputDir)
@@ -161,6 +180,29 @@ public final class ServerApp: @unchecked Sendable {
         if let file = env[TEST_OPENED], !file.isEmpty { return { appendLine(file, $0) } }
         #endif
         return ServerApp.open
+    }
+
+    /// What `openDraft` does: `openInMailApp`; in a debug build with `$PALAVER_TEST_OPENED` set, a line in that file.
+    public static func draftOpener(env: [String: String]) -> (String) -> Void {
+        #if DEBUG
+        if let file = env[TEST_OPENED], !file.isEmpty { return { appendLine(file, $0) } }
+        #endif
+        return openInMailApp
+    }
+
+    /// A recap draft in the mail app the user chose as their default (the one mailto: links open: Mail, Outlook),
+    /// not whatever app opens .eml files; a mailto: URL as it is.
+    public static func openInMailApp(_ target: String) {
+        guard !target.hasPrefix("mailto:"), let mailto = URL(string: "mailto:"),
+              let mail = NSWorkspace.shared.urlForApplication(toOpen: mailto) else { return open(target) }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        p.arguments = ["-a", mail.path, target]
+        p.standardInput = FileHandle.nullDevice
+        do {
+            try p.run()
+            p.waitUntilExit()
+        } catch {}
     }
 
     /// One line appended to `file` (the end-to-end tests' record of what would have been opened).

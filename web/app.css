@@ -630,6 +630,10 @@ h1 {
 .note-card.todo h2 { color: var(--coral-ink); }
 .note-card ul { padding-left: 1.1em; }
 .note-card .decision { font: inherit; }  /* as the next steps beside it */
+/* Follow-ups (#18): the recap draft and the next steps out, quiet buttons under the cards. */
+.follow-ups { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 0; }
+.follow-ups .meta { font-size: 13px; }
+.follow-ups-others { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 .note-card li + li { margin-top: 6px; }
 .notes ul { margin: 0; padding-left: 1.2em; }
 .notes li { margin: 4px 0; }

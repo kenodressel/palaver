@@ -627,12 +627,14 @@ def _serve_swift(root: Path, key: str | None, config_home: Path, *, recordings: 
     extra = env or {}
     env = {k: v for k, v in os.environ.items()
            if k not in ("HF_HOME", "HF_HUB_CACHE", "HF_TOKEN", "HF_TOKEN_PATH", "HF_ENDPOINT", "PALAVER_WEB_KEY",
-                        "PALAVER_NOTIFY", "PALAVER_TEST_CALENDAR", "CLAUDE_CONFIG_DIR", "NOTION_TOKEN")}
+                        "PALAVER_NOTIFY", "PALAVER_TEST_CALENDAR", "CLAUDE_CONFIG_DIR", "NOTION_TOKEN", "TODOIST_TOKEN")}
     env.update({
         # Model downloads never reach Hugging Face: nothing listens there (a test's stub hub replaces it).
         "HF_ENDPOINT": "http://127.0.0.1:9",
         # Nor Notion (#34): a test with Notion set up runs a stub (stub_notion.py) and gives its token.
         "PALAVER_TEST_NOTION_API": "http://127.0.0.1:9/v1",
+        # Nor Todoist (#18): next steps go to a test's stub, or nowhere.
+        "PALAVER_TEST_TODOIST_URL": "http://127.0.0.1:9",
         "HOME": str(home), "PALAVER_HOME": str(home), "XDG_CONFIG_HOME": str(config_home),
         "PALAVER_TEST_PROBE": str(tmp / "probe.json"), "PALAVER_TEST_FREE_GB": str(tmp / "free-gb"),
         "PALAVER_NOTIFY_STATE": str(tmp / "notify-state"), "PALAVER_TEST_OPENED": str(tmp / "opened"),

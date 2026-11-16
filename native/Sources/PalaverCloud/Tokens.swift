@@ -1,5 +1,5 @@
-// The Notion and Hugging Face tokens (config.py `_token`): the environment, then config.toml ([notion].token,
-// [hf].token), then the Keychain (account NOTION_TOKEN / HF_TOKEN under "palaver", then under the app's old name
+// The Notion, Hugging Face and Todoist tokens (config.py `_token`; Todoist's since #18): the environment, then
+// config.toml ([notion].token, [hf].token, [todoist].token), then the Keychain (account NOTION_TOKEN / HF_TOKEN under "palaver", then under the app's old name
 // "meeting-transcribe") — apps started from Finder or at login don't see the shell's environment. A token is never
 // logged or shown; `present` only says whether there is one and never reads a secret from the Keychain.
 import Foundation
@@ -9,12 +9,16 @@ import PalaverDomain
 public enum Tokens {
     public static let NOTION = "NOTION_TOKEN"
     public static let HF = "HF_TOKEN"
+    /// Todoist's API token, for the next steps the user sends there (#18): saved in Settings → Follow-ups (the
+    /// Keychain), or `[todoist].token` / TODOIST_TOKEN like the others.
+    public static let TODOIST = "TODOIST_TOKEN"
 
     /// The config.toml key each token is set under.
     static func tomlKey(_ name: String) -> String? {
         switch name {
         case NOTION: return "notion.token"
         case HF: return "hf.token"
+        case TODOIST: return "todoist.token"
         default: return nil
         }
     }
