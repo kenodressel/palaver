@@ -286,6 +286,8 @@ private func texts(_ paths: RecordingPaths) -> [String?]? { readJSON(paths.trans
         #expect(rich?[1]["text"]?["content"] == .string(" [14:35:17]"))
         #expect(c.services.requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer \(NOTION_TOKEN)" })
         #expect(readJSON(c.paths.notionInfo)?["page_url"] == .string("https://www.notion.so/p1"))
+        // Where it went (#34), for the window to tell once the target changes.
+        #expect(readJSON(c.paths.notionInfo)?["target_id"] == .string("parent-1") && readJSON(c.paths.notionInfo)?["mode"] == .string("page"))
         #expect(events(c.paths).contains("notion_upload_start") && events(c.paths).contains("notion_upload_done"))
         #expect(c.h.said.contains("Uploading to Notion (2 blocks)…") && c.h.said.contains("✓ https://www.notion.so/p1"))
         #expect(c.calls.isEmpty)  // no Python
@@ -303,6 +305,7 @@ private func texts(_ paths: RecordingPaths) -> [String?]? { readJSON(paths.trans
         let props = c.services.json(c.services.requests[1])?["properties"]
         #expect(props?["Datum"]?["date"]?["start"] == .string("2026-10-20T14:35:17+02:00") && props?["Titel"] != nil)
         #expect(readJSON(c.paths.notionInfo)?["page_url"] == .string("https://www.notion.so/p2"))
+        #expect(readJSON(c.paths.notionInfo)?["target_id"] == .string("db1") && readJSON(c.paths.notionInfo)?["mode"] == .string("database"))
     }
 
     @Test func aRefusedUploadFailsRunAndLeavesNoNotionJson() async throws {

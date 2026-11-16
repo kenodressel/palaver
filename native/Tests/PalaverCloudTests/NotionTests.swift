@@ -115,3 +115,95 @@ private func utterance(_ speaker: String, _ start: Double, _ text: String) -> Ut
         #expect(info?["uploaded_at"]?.stringValue.flatMap { Py.fromIso($0) } != nil)
     }
 }
+
+// Where uploads go (#34): the target config.toml names, described by Notion for Settings (the workspace, the page's or
+// database's title and link), and recorded in notion.json with each upload so a meeting uploaded to another target
+// can say so. Fake ids and a fake workspace only.
+@Suite struct NotionTargetTests {
+    static let PAGE_ID = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"
+    static let DB_ID = "1a2b3c4d5e6f47589a0b1c2d3e4f5a6b"
+
+    func config(mode: String = "page", parent: String? = PAGE_ID, database: String? = nil) -> Config {
+        var c = Config()
+        c.notionMode = mode
+        c.notionParentPageId = parent
+        c.notionDatabaseId = database
+        return c
+    }
+
+    @Test func theTargetIsThePageOrTheDatabaseConfigTomlNames() {
+        #expect(NotionTarget.configured(config()) == NotionTarget(mode: "page", id: Self.PAGE_ID))
+        #expect(NotionTarget.configured(config(mode: "database", database: Self.DB_ID)) == NotionTarget(mode: "database", id: Self.DB_ID))
+        #expect(NotionTarget.configured(config(parent: nil)) == nil)
+        #expect(NotionTarget.configured(config(mode: "database", database: "")) == nil)
+    }
+
+    @Test func anIdIsTheSameWithOrWithoutDashesInAnyCase() {
+        let dashed = NotionTarget(mode: "page", id: Self.PAGE_ID)
+        #expect(dashed.isSame(NotionTarget(mode: "page", id: Self.PAGE_ID.replacingOccurrences(of: "-", with: "").uppercased())))
+        #expect(!dashed.isSame(NotionTarget(mode: "database", id: Self.PAGE_ID)))
+        #expect(!dashed.isSame(NotionTarget(mode: "page", id: Self.DB_ID)))
+    }
+
+    @Test func aPageTargetIsDescribedByItsWorkspaceTitleAndLink() async throws {
+        let fake = Routes([
+            "GET \(API)/users/me": [.ok(#"{"object": "user", "type": "bot", "bot": {"workspace_name": "Contoso"}}"#)],
+            "GET \(API)/pages/\(Self.PAGE_ID)": [.ok("""
+                {"object": "page", "url": "https://www.notion.so/Meetings-0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+                 "properties": {"title": {"type": "title", "title": [{"plain_text": "Team "}, {"plain_text": "Meetings"}]}}}
+                """)],
+        ])
+        let d = await NotionSync.describe(config: config(), token: TOKEN, client: NotionClient(token: TOKEN, http: fake.client))
+        #expect(d == NotionSync.Described(mode: "page", id: Self.PAGE_ID, workspace: "Contoso", title: "Team Meetings",
+                                          url: "https://www.notion.so/Meetings-0f1e2d3c4b5a69788796a5b4c3d2e1f0", error: nil))
+        #expect(fake.requests.allSatisfy { $0.httpMethod == "GET" })  // describing never writes
+    }
+
+    @Test func aDatabaseTargetIsDescribedByItsTitle() async throws {
+        let fake = Routes([
+            "GET \(API)/users/me": [.ok(#"{"bot": {"workspace_name": "Northwind"}}"#)],
+            "GET \(API)/databases/\(Self.DB_ID)": [.ok(#"{"object": "database", "title": [{"plain_text": "Calls"}], "url": "https://www.notion.so/1a2b3c4d5e6f47589a0b1c2d3e4f5a6b"}"#)],
+        ])
+        let d = await NotionSync.describe(config: config(mode: "database", database: Self.DB_ID), token: TOKEN,
+                                          client: NotionClient(token: TOKEN, http: fake.client))
+        #expect(d.workspace == "Northwind" && d.title == "Calls" && d.mode == "database" && d.error == nil)
+        #expect(d.url == "https://www.notion.so/1a2b3c4d5e6f47589a0b1c2d3e4f5a6b")
+    }
+
+    @Test func whatGoesWrongIsSaidInWordsWithoutTheToken() async throws {
+        let rejected = Routes(["GET \(API)/users/me": [.json(401, #"{"message": "API token is invalid: \#(TOKEN)"}"#)]])
+        var d = await NotionSync.describe(config: config(), token: TOKEN, client: NotionClient(token: TOKEN, http: rejected.client))
+        #expect(d.error == "Notion refused the token (401): make a new one at notion.so/profile/integrations")
+        let unshared = Routes(["GET \(API)/users/me": [.ok(#"{"bot": {"workspace_name": "Contoso"}}"#)],
+                               "GET \(API)/pages/\(Self.PAGE_ID)": [.json(404, #"{"message": "Could not find page"}"#)]])
+        d = await NotionSync.describe(config: config(), token: TOKEN, client: NotionClient(token: TOKEN, http: unshared.client))
+        #expect(d.workspace == "Contoso" && d.title == nil)
+        #expect(d.error == "The page \(Self.PAGE_ID) isn't shared with the integration (404): in Notion, add it under ••• → Connections")
+        d = await NotionSync.describe(config: config(parent: nil), token: TOKEN, client: NotionClient(token: TOKEN, http: Routes().client))
+        #expect(d.error == "[notion].parent_page_id is required" && d.id == nil)
+        let offline = Routes()  // nothing answers: the connection never reaches Notion
+        d = await NotionSync.describe(config: config(), token: TOKEN, client: NotionClient(token: TOKEN, http: offline.client))
+        #expect(d.error?.hasPrefix("Notion can't be reached") == true && d.error?.contains(TOKEN) == false)
+    }
+
+    @Test func notionJsonRecordsWhereThePageWentOldFilesStayValid() throws {
+        let dir = tempFolder("notion-info")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = RecordingPaths(dir.appendingPathComponent("2026-10-20T14-30-00"))
+        try FileManager.default.createDirectory(at: paths.folder, withIntermediateDirectories: true)
+        let target = NotionTarget(mode: "page", id: Self.PAGE_ID)
+        try NotionSync.writeInfo(paths, url: "https://www.notion.so/p1", target: target, workspace: "Contoso")
+        let info = try #require(NotionSync.info(paths))
+        #expect(info.url == "https://www.notion.so/p1" && info.target == target && info.workspace == "Contoso")
+        #expect(PythonJSON.read(paths.notionInfo)?["target_id"] == .string(Self.PAGE_ID))
+        #expect(info.wentElsewhere(than: target) == false)
+        #expect(info.wentElsewhere(than: NotionTarget(mode: "database", id: Self.DB_ID)) == true)
+        #expect(info.wentElsewhere(than: nil) == false)  // nothing set up now: nothing to compare with
+        // An upload from before #34: only the page and the time; where it went is not known, so it isn't "elsewhere".
+        try PythonJSON.write(.object([("page_url", .string("https://www.notion.so/p0")), ("uploaded_at", .string("2026-10-20T15:00:00.000000"))]),
+                             to: paths.notionInfo, indent: 2, ensureAscii: true)
+        let old = try #require(NotionSync.info(paths))
+        #expect(old.url == "https://www.notion.so/p0" && old.target == nil && old.workspace == nil)
+        #expect(old.wentElsewhere(than: target) == false)
+    }
+}

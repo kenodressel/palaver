@@ -1,9 +1,10 @@
 // What the server asks of other processes: the menu bar app (app.sock), the language model's
-// helpers, the provider helper, the setup probe. One protocol each with its real implementation
+// helpers, the provider helper, the setup probe, Notion. One protocol each with its real implementation
 // (ServeMain.makeApp wires them all); the internal `Stub*` ones answer 503 for tests that leave
 // one out. The menu bar app's is `Remote` (Remote.swift).
 import Darwin
 import Foundation
+import PalaverCloud
 import PalaverCore
 import PalaverDomain
 
@@ -97,7 +98,29 @@ public protocol ReportMaker: AnyObject {
     func create(_ body: JSONValue) throws -> JSONValue
 }
 
+/// Notion as the window shows it (#34): where uploads go, and one meeting uploaded when the user asks. `NotionService`
+/// is the real one (NotionService.swift).
+public protocol NotionLink: AnyObject {
+    /// The page or database uploads go to now, from config.toml alone (no request, no secret read): nil when Notion
+    /// isn't set up (no token, or no page or database named).
+    func configured() -> NotionTarget?
+    /// Where uploads go as Notion names them (`NotionSync.Described`'s JSON and `auto_sync`), asked of Notion at most
+    /// every few minutes; nil when there is no Notion token.
+    func target() -> JSONValue?
+    /// The meeting uploaded as `palaver-worker sync` uploads it, notion.json written; the page's URL. Throws
+    /// `NotionError` when Notion refuses, `Conflict` while the meeting is being uploaded already.
+    func upload(_ paths: RecordingPaths) throws -> String
+}
+
 let notWired = "not wired"
+
+/// For tests that leave it out: Notion isn't set up.
+final class StubNotionLink: NotionLink {
+    init() {}
+    func configured() -> NotionTarget? { nil }
+    func target() -> JSONValue? { nil }
+    func upload(_ paths: RecordingPaths) throws -> String { throw Unavailable(notWired) }
+}
 
 /// For tests that leave it out: 503.
 final class StubHelperRunner: HelperRunner {

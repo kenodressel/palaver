@@ -129,6 +129,28 @@ public struct NotionClient: Sendable {
 
     static func text(_ data: Data) -> String { String(decoding: data, as: UTF8.self) }
 
+    // MARK: - Where uploads go (#34)
+
+    /// GET `path` (under the API); the answer's JSON and status. Only reads: describing a target never changes it.
+    func get(_ path: String) async throws -> (JSONValue?, Int) {
+        let (data, status) = try await request("GET", "\(base)/\(path)")
+        return (try? PythonJSON.parse(data), status)
+    }
+
+    /// A rich text's words (`plain_text`, else `text.content`), joined.
+    static func plain(_ richText: JSONValue?) -> String {
+        (richText?.arrayValue ?? []).map { $0["plain_text"]?.stringValue ?? $0["text"]?["content"]?.stringValue ?? "" }.joined()
+    }
+
+    /// A page's title (its one `title` property), a database's (`title`).
+    static func title(_ object: JSONValue) -> String {
+        if object["object"]?.stringValue != "page", object["title"]?.arrayValue != nil { return plain(object["title"]) }
+        if case .object(let props)? = object["properties"] {
+            for (_, prop) in props where prop["type"]?.stringValue == "title" { return plain(prop["title"]) }
+        }
+        return ""
+    }
+
     // MARK: - Requests
 
     /// A connection that provably never reached Notion (no route, no host, refused). A dropped connection or a timeout
@@ -171,6 +193,29 @@ public struct NotionClient: Sendable {
         }
         throw NotionError("unreachable")
     }
+}
+
+/// Where meetings are uploaded to (#34): the parent page (`mode = "page"`) or the database (`mode = "database"`) that
+/// config.toml names. Ids are compared without dashes and case: Notion writes them both ways.
+public struct NotionTarget: Equatable, Sendable {
+    public let mode: String
+    public let id: String
+
+    public init(mode: String, id: String) {
+        self.mode = mode
+        self.id = id
+    }
+
+    /// The page or database `config` uploads to; nil when it names none.
+    public static func configured(_ config: Config) -> NotionTarget? {
+        let id = config.notionMode == "database" ? config.notionDatabaseId : config.notionParentPageId
+        guard let id, !Py.strip(id).isEmpty else { return nil }
+        return NotionTarget(mode: config.notionMode, id: Py.strip(id))
+    }
+
+    static func normalized(_ id: String) -> String { id.replacingOccurrences(of: "-", with: "").lowercased() }
+
+    public func isSame(_ other: NotionTarget) -> Bool { mode == other.mode && Self.normalized(id) == Self.normalized(other.id) }
 }
 
 /// `palaver sync <folder>` (cli.py `_cmd_sync`): the meeting's transcript to Notion, as config.toml says (page or
@@ -219,13 +264,105 @@ public enum NotionSync {
         return try await client.createPage(parentPageId: parent, title: plan.title, blocks: plan.blocks)
     }
 
-    /// notion.json: `{page_url, uploaded_at}` (local time without offset, to the microsecond, as Python wrote it).
-    public static func writeInfo(_ paths: RecordingPaths, url: String, now: Date = Date()) throws {
+    /// notion.json: `{page_url, uploaded_at}` (local time without offset, to the microsecond, as Python wrote it),
+    /// and since #34 where the page went (`target_id`, `mode`, and `workspace` when the caller knows it), so a meeting
+    /// uploaded before the target changed can say it is in the earlier one.
+    public static func writeInfo(_ paths: RecordingPaths, url: String, target: NotionTarget? = nil, workspace: String? = nil,
+                                 now: Date = Date()) throws {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.timeZone = .current
         f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSSSS"
-        try PythonJSON.write(.object([("page_url", .string(url)), ("uploaded_at", .string(f.string(from: now)))]),
-                             to: paths.notionInfo, indent: 2, ensureAscii: true)
+        var fields: [(String, JSONValue)] = [("page_url", .string(url)), ("uploaded_at", .string(f.string(from: now)))]
+        if let target { fields += [("target_id", .string(target.id)), ("mode", .string(target.mode))] }
+        if let workspace, !workspace.isEmpty { fields.append(("workspace", .string(workspace))) }
+        try PythonJSON.write(.object(fields), to: paths.notionInfo, indent: 2, ensureAscii: true)
+    }
+
+    /// A meeting's notion.json as read back.
+    public struct Uploaded: Equatable, Sendable {
+        public let url: String
+        public let uploadedAt: String?
+        /// Where it went; nil in a file written before #34.
+        public let target: NotionTarget?
+        public let workspace: String?
+
+        /// It went to another page or database than `now` (today's target). Not known (an old file) or nothing set up
+        /// now: false.
+        public func wentElsewhere(than now: NotionTarget?) -> Bool {
+            guard let target, let now else { return false }
+            return !target.isSame(now)
+        }
+    }
+
+    /// The meeting's notion.json; nil when it was not uploaded (or the file holds no page).
+    public static func info(_ paths: RecordingPaths) -> Uploaded? {
+        guard let info = PythonJSON.read(paths.notionInfo), let url = info["page_url"]?.stringValue, !url.isEmpty else { return nil }
+        let target = info["target_id"]?.stringValue.map { NotionTarget(mode: info["mode"]?.stringValue ?? "page", id: $0) }
+        return Uploaded(url: url, uploadedAt: info["uploaded_at"]?.stringValue, target: target,
+                        workspace: info["workspace"]?.stringValue)
+    }
+
+    /// Where uploads go, as Notion names it: the workspace, the page's or database's title and link; or why that can't
+    /// be said (`error`), in words for Settings, never with the token.
+    public struct Described: Equatable, Sendable {
+        public var mode: String
+        public var id: String?
+        public var workspace: String?
+        public var title: String?
+        public var url: String?
+        public var error: String?
+
+        public init(mode: String, id: String?, workspace: String? = nil, title: String? = nil, url: String? = nil,
+                    error: String? = nil) {
+            self.mode = mode
+            self.id = id
+            self.workspace = workspace
+            self.title = title
+            self.url = url
+            self.error = error
+        }
+
+        public var json: JSONValue {
+            .object([("mode", .string(mode)), ("id", .str(id)), ("workspace", .str(workspace)), ("title", .str(title)),
+                     ("url", .str(url)), ("error", .str(error))])
+        }
+    }
+
+    /// The target `config` names, asked of Notion as `palaver doctor` asks it: the token's workspace (`/users/me`),
+    /// then the page or database (`/pages/<id>`, `/databases/<id>`). Reads only.
+    public static func describe(config: Config, token: String, client: NotionClient) async -> Described {
+        let mode = config.notionMode
+        let kind = mode == "database" ? "database" : "page"
+        guard let target = NotionTarget.configured(config) else {
+            return Described(mode: mode, id: nil, error: mode == "database"
+                             ? "[notion].database_id is required when mode = \"database\"" : "[notion].parent_page_id is required")
+        }
+        var d = Described(mode: mode, id: target.id)
+        do {
+            let (me, status) = try await client.get("users/me")
+            if status == 401 {
+                d.error = "Notion refused the token (401): make a new one at notion.so/profile/integrations"
+                return d
+            }
+            guard status == 200 else {
+                d.error = "Notion answered \(status) when asked for the token's workspace"
+                return d
+            }
+            d.workspace = me?["bot"]?["workspace_name"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 }
+            let (object, found) = try await client.get("\(kind == "database" ? "databases" : "pages")/\(target.id)")
+            guard found == 200, let object else {
+                d.error = found == 404 || found == 403
+                    ? "The \(kind) \(target.id) isn't shared with the integration (\(found)): in Notion, add it under ••• → Connections"
+                    : "Notion answered \(found) when asked for the \(kind) \(target.id)"
+                return d
+            }
+            let title = NotionClient.title(object)
+            d.title = title.isEmpty ? "Untitled" : title
+            d.url = object["url"]?.stringValue
+        } catch {
+            d.error = "Notion can't be reached (\(HTTPClient.redactedDescription(error, key: token)))"
+        }
+        return d
     }
 }

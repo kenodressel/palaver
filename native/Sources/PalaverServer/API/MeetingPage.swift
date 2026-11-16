@@ -54,6 +54,7 @@ extension MeetingsAPI {
         }
         let (title, titleFrom) = Titles.resolve(paths, event: .known(event), meetingNotes: .known(notes), stores: app.stores)
         let status = state(paths)
+        let notionNow = app.notion.configured()  // where uploads go today (#34), from config.toml alone
         let used = Set(names.values.map(ScalarKey.init))
         let transcript: [JSONValue] = utterances.map { u in
             let l = lane(u)
@@ -103,6 +104,10 @@ extension MeetingsAPI {
             ("audio_deleted", Storage.deleted(paths) ?? .null),  // #9: its transcript stays, the audio went
             ("reviewed", try get(PythonJSON.read(paths.review) ?? .object([]), "reviewed")),
             ("local_only", .bool(exists(paths.localOnly))),
+            // Its Notion page, and whether it went to another target than today's (#34); Upload to Notion is offered
+            // only while Notion is set up.
+            ("notion", NotionAPI.meetingField(paths, now: notionNow)),
+            ("notion_set_up", .bool(notionNow != nil)),
             ("imported", try imported(paths)),
             ("source", LegacyImport.brief(paths) ?? .null),  // a meeting from before Palaver: where it came from (#4)
             ("transcribed_by", transcribedBy(paths)),

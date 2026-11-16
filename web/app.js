@@ -595,9 +595,47 @@ function dateLine(m, start) {
       ? h("a", { class: "from imported-mark", href: m.source.url, target: "_blank", rel: "noopener", title: sourceTitle(m.source) },
         `Imported from ${sourceName(m.source)}`)
       : h("span", { class: "from imported-mark", title: sourceTitle(m.source) }, `Imported from ${sourceName(m.source)}`)) : null,
+    m.notion ? notionLink(m) : null,
   ].filter(Boolean);
   return h("div", { class: "when" },
     parts.flatMap((p, i) => (i ? [h("span", { class: "sep", "aria-hidden": "true" }, "·"), p] : [p])));
+}
+
+// #34: where the meeting is in Notion, so a wrong workspace shows at once. One uploaded before the target changed stays
+// where it went, and says so.
+function notionLink(m) {
+  const where = m.notion.workspace ? ` in ${m.notion.workspace}` : "";
+  const title = m.notion.elsewhere
+    ? `Uploaded${where} to where uploads went before; it stays there. Settings → Notion shows where they go now.`
+    : `Uploaded to Notion${where}. Open the page in Notion.`;
+  return h("button", { type: "button", class: "link notion-link", title, onclick: () => openInNotion(m) },
+    m.notion.elsewhere ? "In Notion (earlier target)" : "In Notion");
+}
+
+// The window can't open a link itself: the server opens the meeting's Notion page, and only that.
+async function openInNotion(m) {
+  try {
+    await api(`/api/meetings/${encodeURIComponent(m.id)}/notion/open`, {});
+  } catch (err) {
+    errorToast(`Not opened: ${err.message}`);
+  }
+}
+
+// Upload to Notion (Again), asked for here only: a new page where uploads go now; one uploaded before stays.
+async function uploadToNotion(m, from) {
+  const again = !!m.notion;
+  try {
+    const answer = await working(from, api(`/api/meetings/${encodeURIComponent(m.id)}/notion/upload`, {}));
+    if (state.meeting?.id === m.id) {
+      state.meeting = { ...state.meeting, notion: answer.notion };
+      renderMeeting();
+    }
+  } catch (err) {
+    errorToast(`Not uploaded: ${err.message}`);
+    return;
+  }
+  toast(again ? "Uploaded to Notion again. The earlier page stays in Notion until you remove it there."
+    : "Uploaded to Notion.", { short: true });
 }
 
 // The people on the left, the projects on the right; wrapping when narrow.
@@ -918,6 +956,8 @@ const ICONS = {
   forgetSeries: "M4 4l16 16M7 5h12a2 2 0 0 1 2 2v10M3 9v10a2 2 0 0 0 2 2h12M3 9h6",
   export: "M12 3v12M7 8l5-5 5 5M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5",
   markdown: "M6 3h9l4 4v14H6zM14 3v5h5M9 13h7M9 17h7",
+  notionOpen: "M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5",
+  notionUpload: "M12 15V4M8 8l4-4 4 4M5 20h14",
   shared: "M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM16 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM2 20c0-3 3-5 6-5s6 2 6 5M14.5 15.3A6.5 6.5 0 0 1 16 15c3 0 6 2 6 5",
   report: "M5 21V4M5 4h12l-2 4 2 4H5",
   trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
@@ -957,6 +997,8 @@ const ACTIONS = tracked("meeting", {
       toast(`Not saved: ${err.message}`);
     }
   },
+  notionOpen: (m) => openInNotion(m),
+  notionUpload: (m, from) => uploadToNotion(m, from),
   report: (m) => openReport(m.id),
   deleteAudio: (m, from) => deleteAudio(m, from),
   trash: (m, from) => trashMeeting(m, from),
@@ -964,7 +1006,7 @@ const ACTIONS = tracked("meeting", {
 
 // The ⋯ menu, in the spec's order: Move to Trash last, red, after a separator.
 const MENU_ORDER = ["transcribe", "rename", "changeEvent", "joinPrevious", "joinNext", "split", "reviewAgain", "export", "markdown",
-  "localOnly",
+  "notionOpen", "notionUpload", "localOnly",
   "shared", "forgetSeries", "report", null, "deleteAudio", "trash"];
 function itemsFor(m, from) {
   const c = meetingCommands(m);
@@ -4477,6 +4519,7 @@ async function openSettings(how = "push", pane = null) {
       api("/api/setup/recommendations").catch(() => null),
       api("/api/update").catch(() => null), api("/api/setup/calendar").catch(() => null),
       api("/api/accessibility").catch(() => null), refreshUsageStats()]);
+    refreshNotion();  // asks Notion: shown when it answers, never holding up the page
     state.recommended = rec?.recommendations || null;
     showUpdateIndicator();
     state.error = state.lmError = state.trError = null;
@@ -4700,6 +4743,7 @@ function settingsContent(pane) {
     case "storage": return [renderStorageSection()];
     case "memory": return [renderMemorySection()];
     case "mcp": return [renderMcpSection()];
+    case "notion": return [renderNotionSection()];
     case "update": return [renderUpdateSection()];
     default: return [
       h("h2", {}, "General"),
@@ -4920,6 +4964,60 @@ function renderMemorySection() {
 }
 
 setInterval(() => { if (memoryPolling(state.view, document.hidden)) refreshMemory(); }, 5000);
+
+// --- Notion (#34) -----------------------------------------------------------------------
+
+async function refreshNotion() {
+  try {
+    state.notion = await api("/api/notion");
+  } catch (err) {
+    state.notion = { set_up: true, error: err.message };
+  }
+  document.getElementById("notion-section")?.replaceWith(renderNotionSection());
+}
+
+// Where uploads go: the workspace and the page or database, by name, so a wrong one shows before a meeting goes there.
+// The target and the automatic upload are set in config.toml; this pane only shows them.
+function renderNotionSection() {
+  const n = state.notion;
+  const section = h("section", { id: "notion-section" }, h("h2", {}, "Notion"));
+  if (!n) {
+    section.append(h("p", { class: "meta" }, "Asking Notion…"));
+    return section;
+  }
+  if (!n.set_up) {
+    section.append(h("div", { class: "gloss-card settings-card" },
+      h("p", {}, "Notion isn't set up: meetings stay on this Mac."),
+      h("p", { class: "meta" }, "To upload them, add a Notion token and the page or database to upload to in ",
+        "~/.config/palaver/config.toml (the README says how).")));
+    return section;
+  }
+  const kind = n.mode === "database" ? "database" : "page";
+  const where = n.title
+    ? h("p", { class: "notion-target" }, "Uploads go to ", h("strong", {}, n.workspace || "Notion"), " → ",
+      h("strong", {}, n.title), ` (${n.mode === "database" ? "a row in this database" : "a page under this page"})`)
+    : null;
+  const open = n.url ? h("button", { type: "button", class: "btn btn-quiet small",
+    onclick: (e) => openNotionTarget(e.currentTarget) }, "Open in Notion") : null;
+  section.append(h("div", { class: "gloss-card settings-card" },
+    where || open ? h("div", { class: "lm-row" }, where, open) : null,
+    n.error ? h("p", { class: "error notion-error" }, n.error) : null,
+    h("p", { class: "meta" }, n.auto_sync
+      ? "Every transcribed meeting is uploaded after the call."
+      : "Meetings are uploaded only when you choose Upload to Notion in their ⋯ menu.",
+    ` The ${kind} and the automatic upload are set in config.toml ([notion]).`),
+    h("p", { class: "meta" }, "Meetings uploaded before the target changed stay where they went; their page says so, ",
+      "and Upload to Notion Again in their ⋯ menu puts them where uploads go now.")));
+  return section;
+}
+
+async function openNotionTarget(button) {
+  try {
+    await busy(button, api("/api/notion/open", {}));
+  } catch (err) {
+    errorToast(`Not opened: ${err.message}`);
+  }
+}
 
 // --- storage (#9) --------------------------------------------------------------------
 

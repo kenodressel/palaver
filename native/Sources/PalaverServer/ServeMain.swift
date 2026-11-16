@@ -157,6 +157,9 @@ public enum ServeMain {
                             staticDir: o.staticDir.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? ServerApp.defaultStaticDir,
                             freeMemoryGB: ServerApp.freeMemory(env: env), recording: recording, calendar: calendar, probe: probe,
                             helpers: helpers, nextQuestion: nextQuestion, provider: provider, report: report,
+                            // Where uploads go and Upload to Notion (#34), with the server's key store.
+                            notion: NotionService(configURL: configURL, stores: stores, keys: keys, env: env,
+                                                  base: NotionService.api(env: env)),
                             openURL: ServerApp.opener(env: env), notifyState: env["PALAVER_NOTIFY_STATE"],
                             accessibilityState: env["PALAVER_AX_STATE"])
         // Claude's MCP entries start `bin/palaver` with these options; `claude` is looked up in this environment.

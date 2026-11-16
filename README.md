@@ -287,6 +287,10 @@ You don't need any of these. Each one is off until you set it up.
   estimated cost this month.
 - **Notion:** each meeting's transcript can be uploaded to a Notion page or
   database after the call (see [Advanced settings](#advanced-settings)).
+  Settings → Notion names the workspace and the page or database uploads go
+  to; an uploaded meeting links its Notion page ("In Notion", and Open in
+  Notion in its ⋯ menu), and Upload to Notion (Again) there uploads it by
+  hand. Changing the target leaves meetings uploaded before where they are.
 - **Claude (MCP):** `palaver mcp --install` lets Claude Code read your
   meetings, notes, projects and people (`--install --desktop` for
   Claude Desktop). It only reads, except `import_meeting`, which adds
@@ -371,7 +375,7 @@ enabled = true
 
 [notion]
 parent_page_id = "<your-parent-page-id>"  # with a token, meetings upload here
-auto_sync = true                          # false: upload by hand (palaver sync <folder>)
+auto_sync = true                          # false: upload by hand (⋯ → Upload to Notion, or palaver sync <folder>)
 ```
 
 For Notion, create an internal integration at notion.so/profile/integrations,

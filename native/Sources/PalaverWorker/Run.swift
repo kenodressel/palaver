@@ -38,7 +38,9 @@ public enum Run {
                 info["page_url"] = .string(url)
                 return url
             }
-            try NotionSync.writeInfo(paths, url: url)
+            // Where it went (#34): the window says so once the target changes. The workspace's name would cost another
+            // request; the window's own uploads record it.
+            try NotionSync.writeInfo(paths, url: url, target: NotionTarget.configured(setup.config))
             setup.say("✓ \(url)")
             Notify.send(title: "Uploaded to Notion", message: url)
             return 0

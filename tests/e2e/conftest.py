@@ -571,7 +571,7 @@ def _first_line(process: subprocess.Popen, timeout: float = 30) -> str:
 
 
 def _serve_swift(root: Path, key: str | None, config_home: Path, *, recordings: bool = True, user: str = USER,
-                 events: list | None = None, env: dict | None = None):
+                 events: list | None = None, env: dict | None = None, config_extra: str = ""):
     if not SERVER_BIN.exists() or not LM_BIN.exists():
         pytest.fail(f"palaver-server or palaver-lm is not built ({SERVER_BIN.parent}): run `make test-build`", pytrace=False)
     if config_home.resolve() in {Path.home().resolve(), (Path.home() / ".config").resolve()}:
@@ -584,7 +584,7 @@ def _serve_swift(root: Path, key: str | None, config_home: Path, *, recordings: 
     # a CLI that is not there, so this Mac's Claude Code is never found.
     config.write_text(f'[user]\nname = {json.dumps(user)}\n\n[recording]\noutput_dir = {json.dumps(str(root))}\n\n'
                       f'[notes]\nclaude = {json.dumps(str(tmp / "no-claude"))}\n\n'
-                      "[calendar]\nenabled = false\n")
+                      "[calendar]\nenabled = false\n" + config_extra)
     worker = None
     if recordings:
         worker = subprocess.Popen(["/bin/sleep", "3600"])  # a running process: no Python to start
@@ -609,10 +609,12 @@ def _serve_swift(root: Path, key: str | None, config_home: Path, *, recordings: 
     extra = env or {}
     env = {k: v for k, v in os.environ.items()
            if k not in ("HF_HOME", "HF_HUB_CACHE", "HF_TOKEN", "HF_TOKEN_PATH", "HF_ENDPOINT", "PALAVER_WEB_KEY",
-                        "PALAVER_NOTIFY", "PALAVER_TEST_CALENDAR", "CLAUDE_CONFIG_DIR")}
+                        "PALAVER_NOTIFY", "PALAVER_TEST_CALENDAR", "CLAUDE_CONFIG_DIR", "NOTION_TOKEN")}
     env.update({
         # Model downloads never reach Hugging Face: nothing listens there (a test's stub hub replaces it).
         "HF_ENDPOINT": "http://127.0.0.1:9",
+        # Nor Notion (#34): a test with Notion set up runs a stub (stub_notion.py) and gives its token.
+        "PALAVER_TEST_NOTION_API": "http://127.0.0.1:9/v1",
         "HOME": str(home), "PALAVER_HOME": str(home), "XDG_CONFIG_HOME": str(config_home),
         "PALAVER_TEST_PROBE": str(tmp / "probe.json"), "PALAVER_TEST_FREE_GB": str(tmp / "free-gb"),
         "PALAVER_NOTIFY_STATE": str(tmp / "notify-state"), "PALAVER_TEST_OPENED": str(tmp / "opened"),
@@ -663,16 +665,17 @@ def _serve_swift(root: Path, key: str | None, config_home: Path, *, recordings: 
 
 
 def _serve(root: Path, key: str | None = None, config_home: Path | None = None, *, recordings: bool = True,
-           user: str = USER, events: list | None = None, env: dict | None = None):
+           user: str = USER, events: list | None = None, env: dict | None = None, config_extra: str = ""):
     """The window's server over fresh recordings in ``root`` (none: ``recordings`` False);
     ``config_home``: its XDG_CONFIG_HOME (the test's own when it is None); ``user``:
     config.toml's name; ``events``: the calendar's (Event.to_dict), the calendar is off without; ``env``: more of the
-    server's environment (a stub hub's HF_ENDPOINT).
+    server's environment (a stub hub's HF_ENDPOINT); ``config_extra``: more of config.toml (a [notion] table).
     Its home (Application Support, Downloads, Desktop) is ``root.parent / "home"``: never
     this Mac's, so no installed Palaver's update.json or models show."""
     if config_home is None:
         config_home = Path(os.environ["XDG_CONFIG_HOME"])  # the root conftest's, for this test
-    return _serve_swift(root, key, config_home, recordings=recordings, user=user, events=events, env=env)
+    return _serve_swift(root, key, config_home, recordings=recordings, user=user, events=events, env=env,
+                        config_extra=config_extra)
 
 
 @pytest.fixture

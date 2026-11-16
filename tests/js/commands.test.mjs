@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { meetingCommands, nextAfter } from "../../web/logic.js";
 
 const NAMES = ["trash", "joinPrevious", "joinNext", "changeEvent", "split", "reviewAgain", "writeNotes", "play",
-  "localOnly", "shared", "forgetSeries", "rename", "export", "markdown", "report", "transcribe", "deleteAudio"];
+  "localOnly", "shared", "forgetSeries", "rename", "export", "markdown", "notionOpen", "notionUpload", "report", "transcribe", "deleteAudio"];
 
 function ready(extra = {}) {
   return {
@@ -23,6 +23,29 @@ test("meetingCommands has every command the native menu names", () => {
     assert.equal(typeof c.label, "string", name);
     assert.equal(typeof c.enabled, "boolean", name);
   }
+});
+
+test("Notion (#34): its page when it was uploaded; uploading only while Notion is set up, never kept on this Mac", () => {
+  let c = meetingCommands(ready());
+  assert.equal(c.notionOpen.hidden, true);
+  assert.equal(c.notionUpload.hidden, true);  // Notion isn't set up
+  assert.equal(c.notionUpload.enabled, false);  // nor in the palette
+  c = meetingCommands(ready({ notion_set_up: true }));
+  assert.equal(c.notionUpload.hidden, false);
+  assert.equal(c.notionUpload.enabled, true);
+  assert.equal(c.notionUpload.label, "Upload to Notion");
+  c = meetingCommands(ready({ notion_set_up: true, notion: { url: "https://www.notion.so/p1", elsewhere: true } }));
+  assert.equal(c.notionOpen.hidden, false);
+  assert.equal(c.notionOpen.enabled, true);
+  assert.equal(c.notionUpload.label, "Upload to Notion Again");
+  c = meetingCommands(ready({ notion_set_up: true, local_only: true, notion: { url: "https://www.notion.so/p1" } }));
+  assert.equal(c.notionUpload.hidden, true);
+  assert.equal(c.notionOpen.hidden, false);  // uploaded before it was kept here: the page is still there
+  c = meetingCommands(ready({ notion_set_up: true, status: "processing" }));
+  assert.equal(c.notionUpload.enabled, false);
+  c = meetingCommands(ready({ notion_set_up: true, source: { kind: "notion", url: "https://www.notion.so/n1" } }));
+  assert.equal(c.notionUpload.hidden, true);  // it came from Notion (#4): it is there already
+  assert.equal(c.notionUpload.enabled, false);
 });
 
 test("meetingCommands disables trash/join/split while live", () => {

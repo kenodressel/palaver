@@ -130,7 +130,7 @@ final class TestServer {
          calendar: CalendarProvider? = nil,
          notesEnabled: Bool? = nil, nextQuestion: NextQuestionAsker = StubNextQuestionAsker(),
          provider: ProviderHelper = StubProviderHelper(), report: ReportMaker = StubReportMaker(),
-         settingsDefaults: SettingsValues? = nil,
+         notion: NotionLink = StubNotionLink(), settingsDefaults: SettingsValues? = nil,
          freeMemoryGB: @escaping () -> Double = { .infinity }, dir: URL? = nil,
          meetings: (URL) throws -> Void = { _ in }, routes: (Router, ServerApp) -> Void = { _, _ in }) throws {
         owned = dir == nil
@@ -143,7 +143,7 @@ final class TestServer {
         try meetings(out)
         app = ServerApp(outputDir: out, userName: userName, stores: stores, staticDir: staticDir ?? ServerApp.defaultStaticDir,
                         settingsDefaults: settingsDefaults, notesEnabled: notesEnabled, freeMemoryGB: freeMemoryGB, recording: recording, calendar: calendar,
-                        probe: probe, helpers: helpers, nextQuestion: nextQuestion, provider: provider, report: report, speechHere: speechHere, openURL: openURL,
+                        probe: probe, helpers: helpers, nextQuestion: nextQuestion, provider: provider, report: report, notion: notion, speechHere: speechHere, openURL: openURL,
                         notifyState: notifyState, accessibilityState: accessibilityState)
         let router = Router.palaver(app: app)
         routes(router, app)

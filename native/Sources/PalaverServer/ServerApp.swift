@@ -49,6 +49,8 @@ public final class ServerApp: @unchecked Sendable {
     public let provider: ProviderHelper
     /// Report a Problem: the zip on the Desktop (`SwiftReport`).
     public let report: ReportMaker
+    /// Where Notion uploads go, and Upload to Notion (#34): `NotionService`; not set up unless one is given.
+    public let notion: NotionLink
     /// The server's own background work: warming the search, the sweep, the cut lookups, the searcher by meaning.
     public let background = Background()
     /// What the search keeps per meeting while its files are unchanged.
@@ -93,7 +95,7 @@ public final class ServerApp: @unchecked Sendable {
                 recording: RecordingRemote? = nil, calendar: CalendarProvider? = nil,
                 probe: SetupProbe? = nil, helpers: HelperRunner? = nil,
                 nextQuestion: NextQuestionAsker? = nil, provider: ProviderHelper? = nil,
-                report: ReportMaker? = nil, speechHere: (() -> Bool)? = nil, openURL: @escaping (String) -> Void = ServerApp.open,
+                report: ReportMaker? = nil, notion: NotionLink? = nil, speechHere: (() -> Bool)? = nil, openURL: @escaping (String) -> Void = ServerApp.open,
                 notifyState: String? = ProcessInfo.processInfo.environment["PALAVER_NOTIFY_STATE"],
                 accessibilityState: String? = ProcessInfo.processInfo.environment["PALAVER_AX_STATE"]) {
         self.outputDir = outputDir
@@ -124,6 +126,7 @@ public final class ServerApp: @unchecked Sendable {
         self.nextQuestion = nextQuestion ?? StubNextQuestionAsker()
         self.provider = provider ?? StubProviderHelper()
         self.report = report ?? StubReportMaker()
+        self.notion = notion ?? StubNotionLink()
         self.speechHere = speechHere ?? { probe.speechHere() }
         self.openURL = openURL
         self.notifyState = notifyState

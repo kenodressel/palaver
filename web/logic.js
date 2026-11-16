@@ -25,6 +25,7 @@ export function meetingCommands(m) {
   const ready = m.status === "ready" && !live;
   const untranscribed = m.status === "failed" || m.status === "waiting";
   const nb = m.neighbours || {};
+  const uploadable = !!m.notion_set_up && !m.local_only && m.source?.kind !== "notion";
   return {
     play: { label: "Play", shortcut: "Space", enabled: !!m.has_audio },
     // A title is harmless metadata: any meeting, also one being recorded.
@@ -41,6 +42,14 @@ export function meetingCommands(m) {
     export: { label: "Export…", paletteLabel: "Export Meeting…", enabled: ready },
     // The meeting as one Markdown file in Downloads (#17).
     markdown: { label: "Save as Markdown", paletteLabel: "Save Meeting as Markdown", enabled: ready },
+    // #34: the Notion page it was uploaded to. Uploading (again) is only ever asked for here, while Notion is set up,
+    // and never for a meeting kept on this Mac or one that came from Notion (#4); the page uploaded before stays where
+    // it went.
+    notionOpen: { label: "Open in Notion", paletteLabel: "Open Meeting in Notion", enabled: !!m.notion?.url,
+      hidden: !m.notion?.url },
+    notionUpload: { label: m.notion ? "Upload to Notion Again" : "Upload to Notion",
+      paletteLabel: m.notion ? "Upload Meeting to Notion Again" : "Upload Meeting to Notion",
+      enabled: ready && uploadable, hidden: !uploadable },
     // #9: the space goes, the transcript and notes stay; not to be played or transcribed again.
     deleteAudio: { label: "Delete Audio…", paletteLabel: "Delete This Meeting's Audio…", danger: true,
       enabled: ready && !!m.has_audio, hidden: !m.has_audio },
@@ -1332,7 +1341,7 @@ export function paletteMatch(query, entries, limit = 30) {
 }
 
 const PALETTE_COMMANDS = ["play", "transcribe", "writeNotes", "rename", "changeEvent", "joinPrevious", "joinNext", "split", "reviewAgain",
-  "export", "markdown", "localOnly", "shared", "forgetSeries", "report", "deleteAudio", "trash"];
+  "export", "markdown", "notionOpen", "notionUpload", "localOnly", "shared", "forgetSeries", "report", "deleteAudio", "trash"];
 
 // The open meeting's commands that apply now, with their shortcuts.
 export function paletteCommands(m) {
@@ -1508,7 +1517,7 @@ export const SETTINGS_PANES = [
   ["general", "General"], ["recording", "Recording"], ["calendar", "Calendar"], ["notifications", "Notifications"],
   ["transcription", "Transcription"], ["language-model", "Language Model"], ["templates", "Note Templates"],
   ["search", "Search"],
-  ["storage", "Storage"], ["memory", "Memory"], ["mcp", "Claude Access"], ["update", "Updates"],
+  ["storage", "Storage"], ["memory", "Memory"], ["mcp", "Claude Access"], ["notion", "Notion"], ["update", "Updates"],
 ];
 // What each pane is found by in the palette, besides its name: the settings in it.
 const PANE_WORDS = {
@@ -1524,6 +1533,7 @@ const PANE_WORDS = {
   storage: ["disk", "space", "audio", "delete", "models", "size", "gb", "free"],
   memory: ["ram", "budget", "workers"],
   mcp: ["mcp", "claude", "desktop", "code", "access", "log"],
+  notion: ["upload", "sync", "workspace", "page", "database", "target"],
   update: ["updates", "version", "uninstall", "release", "check"],
 };
 
