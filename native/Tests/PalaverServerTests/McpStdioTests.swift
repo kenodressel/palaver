@@ -114,7 +114,7 @@ private final class McpProcess {
         #expect(hello["serverInfo"]?["name"] == .string("palaver") && hello["instructions"]?.truthy == true)
         p.send(.object([("jsonrpc", .string("2.0")), ("method", .string("notifications/initialized"))]))
         let tools = try p.request(2, "tools/list")["tools"]?.arrayValue ?? []
-        #expect(tools.count == 7)
+        #expect(tools.count == 8)
         #expect(until(5) { FileManager.default.fileExists(atPath: p.heartbeat.path) })
         #expect(McpLog.clients(stores: p.stores).first?["client"]?["name"] == .string("claude-code"))
 

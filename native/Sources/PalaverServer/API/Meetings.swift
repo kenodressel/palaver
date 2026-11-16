@@ -176,10 +176,12 @@ public enum MeetingsAPI {
         }
         names.keys.forEach(add)
         let shared = SharedMic.display(paths, labels: labels)
+        // A meeting from before Palaver (#4) has one voice for everyone: not "Speaker 1".
+        let legacy = LegacyImport.isLegacy(paths)
         var out = PyDict<String>()
         for label in labels {
             out[label] = [shared[label], names[label]].compactMap { $0 }.first { !$0.isEmpty }
-                ?? labelDisplay(merges[label] ?? label)
+                ?? (legacy && Py.same(label, LegacyImport.LABEL) ? LegacyImport.SPEAKERS : labelDisplay(merges[label] ?? label))
         }
         return out
     }
@@ -209,7 +211,7 @@ public enum MeetingsAPI {
     static func signatureFiles(_ paths: RecordingPaths, _ app: ServerApp) -> [URL] {
         [paths.meta, paths.transcriptJson, paths.calendar, paths.title, paths.speakers, paths.speakersAuto,
          paths.speakersMerged, paths.speakersIgnored, paths.speakersInferred, paths.speakersRejected,
-         paths.speakersShared, paths.speakersUnknown, paths.speakersLines, paths.systemTurns, paths.imported, paths.review, paths.notes,
+         paths.speakersShared, paths.speakersUnknown, paths.speakersLines, paths.systemTurns, paths.imported, paths.source, paths.review, paths.notes,
          paths.myNotes, paths.myNotesImages, app.stores.glossary]
     }
 
@@ -253,6 +255,7 @@ public enum MeetingsAPI {
             ("invited", .strings(event.map { CalendarEvents.candidates($0, userName: "").map(\.name) } ?? [])),
             ("has_notes", .bool(notes != nil)),
             ("imported", importedBrief(paths)),
+            ("source", LegacyImport.brief(paths) ?? .null),  // a meeting from before Palaver, e.g. a Notion note (#4)
             ("notes_stale", .bool(!raw.isEmpty && notes != nil && Notes.isStale(paths, raw))),
         ])
     }

@@ -538,12 +538,21 @@ it.
 ### Claude (MCP)
 
 `palaver mcp` serves the meetings to Claude and other MCP clients over
-stdio, read-only. Tools:
+stdio, read-only but for one tool. Tools:
 - `list_meetings`, `search_meetings`: filter by project, person, dates;
 - `get_meeting`: notes first, the transcript or a time range only on request;
 - `list_projects`, `get_project`;
 - `list_people`;
-- `open_next_steps`.
+- `open_next_steps`;
+- `import_meeting` (#4), the only one that writes: a meeting note from before
+  Palaver that Claude fetched with its Notion connector becomes a meeting
+  (`PalaverDomain/Files/LegacyImport.swift`; `palaver import notes.json` does
+  the same from files). It writes `source.json` beside the usual files; the
+  meeting has no audio, one "Unknown speakers" lane and Notion's summary as
+  notes (`"source": "notion"`: `palaver notes` keeps them unless `--force`).
+  A note imported before (same id or content) is not imported again, nor one
+  of a call Palaver recorded (started within 5 minutes of the note, or well
+  under way when it began).
 
 They use the same data as the window, with names, merges and the glossary
 applied. A meeting marked "Keep on This Mac" is left out of lists, searches,

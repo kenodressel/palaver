@@ -1,7 +1,8 @@
 // What Claude's tools answer (mcp_server.py `Meetings`, issue #35): meetings with their notes and transcripts,
 // projects, people and open next steps, read-only, from the same functions as the window (MeetingsAPI, SearchAPI,
 // ProjectsAPI, PeopleAPI), so names, merges and the glossary apply here too. Transcripts are long, so tools answer with
-// summaries and excerpts first; the transcript (or a time range of it) only when asked for.
+// summaries and excerpts first; the transcript (or a time range of it) only when asked for. The one tool that writes,
+// `importMeeting` (#4), adds a meeting from before Palaver (LegacyImport).
 //
 // Meetings kept on this Mac (#53) are invisible: no tool shows them or what is in them, not even as a name or project
 // the search read out of the query; a project whose meetings are all kept on this Mac answers like one that doesn't
@@ -135,6 +136,9 @@ public final class McpTools {
         if let imported = m["imported"], imported.truthy {  // recorded by a colleague, not the user (#58)
             out.append(("imported_from", imported["from"] ?? .null))
         }
+        if let source = m["source"], source.truthy {  // from before Palaver: a Notion AI meeting note (#4)
+            out.append(("source", source["kind"] ?? .null))
+        }
         return out
     }
 
@@ -226,6 +230,12 @@ public final class McpTools {
             out.append(("imported_from", from))
             out.append(("note", .string("Imported from \(Py.str(from)): recorded by them, not by the user.")))
         }
+        if let source = m["source"], source.truthy {
+            let kind = LegacyImport.sourceName(source["kind"]?.stringValue ?? "")
+            out.append(("source", .object([("kind", source["kind"] ?? .null), ("url", source["url"] ?? .null)])))
+            out.append(("note", .string("Imported from a \(kind) meeting note: its notes are \(kind)'s summary; the "
+                                        + "transcript has no speaker names and its times are estimated.")))
+        }
         out.append(("notes", .object(["summary", "sections", "next_steps", "decisions", "decisions_mine"].compactMap { k in
             guard let v = notes[k], v.truthy else { return nil }
             return (k, v)
@@ -308,6 +318,19 @@ public final class McpTools {
             }
         }
         return .array(out)
+    }
+
+    // MARK: - the one tool that writes
+
+    /// `import_meeting` (#4): a meeting note from before Palaver (a Notion AI meeting note Claude fetched) as a meeting,
+    /// unless it was imported before or Palaver recorded the call; the projects' rules sort it. What is wrong with the
+    /// note is said to Claude. A meeting kept on this Mac it matched is named by its id only.
+    public func importMeeting(_ arguments: JSONValue) throws -> JSONValue {
+        let note: LegacyNote
+        do { note = try LegacyNote(json: arguments) } catch let e as ExchangeRejected { throw McpToolError(e.message) }
+        let result = try LegacyImport.importNote(note, outputDir: app.outputDir, userName: userName(), stores: app.stores)
+        guard privateMeetings().contains(ScalarKey(result.id)) else { return result.json }
+        return LegacyImported(outcome: result.outcome, id: result.id, title: "").json
     }
 
     // MARK: - text

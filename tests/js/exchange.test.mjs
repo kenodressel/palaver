@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { exportChoices, exportRequest, exportedText, isMeetingZip, collisionText, importedText, importedLine,
-  voicesQuestion, inferredText, meetingCommands, paletteCommands, GLOBAL_COMMANDS, linkWhy }
+  voicesQuestion, inferredText, meetingCommands, paletteCommands, GLOBAL_COMMANDS, linkWhy, sourceName, sourceTitle }
   from "../../web/logic.js";
 
 const ready = { id: "2026-10-29T10-00-00", status: "ready", transcript: [] };
@@ -86,4 +86,14 @@ test("Export is a command of a finished meeting, in ⌘K too; Import needs no me
 
 test("an event linked by an import says so", () => {
   assert.equal(linkWhy({ source: "imported", reason: "" }), "imported");
+});
+
+test("a meeting from before Palaver (#4) says where it came from", () => {
+  const fmt = () => "4 Mar";
+  assert.equal(sourceName({ kind: "notion" }), "Notion");
+  assert.equal(sourceName({ kind: "other" }), "other");
+  assert.equal(sourceTitle({ kind: "notion", imported_at: "2026-03-04T10:00:00+01:00" }, fmt),
+    "Imported from a Notion meeting note on 4 Mar: no audio, speakers not told apart");
+  assert.equal(sourceTitle({ kind: "notion", imported_at: null }, fmt),
+    "Imported from a Notion meeting note: no audio, speakers not told apart");
 });

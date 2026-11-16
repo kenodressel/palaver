@@ -2,7 +2,7 @@
 // is two people who both took part and a date range; "what did we decide about the test phase" looks in decisions for
 // "test phase"; "where did Mara talk about pricing" looks in the lines Mara said. Known people, projects and
 // organizations become filters when their name is typed; a name in quotes stays a word. Filters can be written out
-// too: person: project: org: since: until: in: by: is:reviewed has:steps.
+// too: person: project: org: since: until: in: by: is:reviewed is:imported has:steps.
 //
 // Rules, not a language model: every filter knows the part of the text it came from (a span of Unicode scalar offsets,
 // Python's string indices), so the page shows it as a chip the user can take out again. Words compare as Python does:
@@ -75,7 +75,11 @@ public struct SearchQuery {
     public var scope: String? { values("in").first ?? nil }
     public var saidBy: String? { values("said").first ?? nil }
     /// is:reviewed (true) or is:unreviewed (false), the last one written; nil when neither is.
-    public var reviewed: Bool? { values("is").last.map { $0 == "reviewed" } }
+    public var reviewed: Bool? {
+        values("is").last { $0 == "reviewed" || $0 == "unreviewed" }.map { $0 == "reviewed" }
+    }
+    /// is:imported: only meetings from before Palaver (#4), e.g. Notion AI meeting notes.
+    public var imported: Bool { values("is").contains("imported") }
     public var hasSteps: Bool { values("has").contains("steps") }
     public var empty: Bool { words.isEmpty && filters.isEmpty }
 
@@ -119,6 +123,7 @@ public struct SearchQuery {
         case "project": return f.value?.isEmpty == false ? "Project" : "No project has this name"
         case "org": return "Someone from \(value) took part"
         case "in": return SearchParser.scopeLabels[value]!.1
+        case "is" where value == "imported": return "Imported from before Palaver"
         case "is": return value == "reviewed" ? "Marked as reviewed" : "Not marked as reviewed yet"
         default: return "The notes have next steps"
         }
@@ -429,6 +434,7 @@ public enum SearchParser {
             guard let scope = scopes[ScalarKey(folded)] else { return [] }
             return [SearchFilter("in", scope, scopeLabels[scope]!.0, span)]
         case "is":
+            if Py.same(folded, "imported") { return [SearchFilter("is", "imported", "Imported", span)] }
             guard ["reviewed", "unreviewed", "not-reviewed"].contains(where: { Py.same($0, folded) }) else { return [] }
             let done = Py.same(folded, "reviewed")
             return [SearchFilter("is", done ? "reviewed" : "unreviewed", done ? "Reviewed" : "Not reviewed", span)]

@@ -574,6 +574,29 @@ private func script(_ url: URL, _ body: String) throws {
         #expect(receiver.run(["import", junk.path]) == 1 && receiver.out.first?.hasPrefix("Not imported: ") == true)
     }
 
+    @Test func importTakesInNotionNotesFromJSONFiles() throws {
+        let c = CLI()
+        try c.meeting()  // recorded 2026-10-27 16:03:07 (+01:00)
+        func note(_ start: String, _ id: String, _ words: String) -> String {
+            #"{"title": "Sync \#(id)", "start": "\#(start)", "transcript": "\#(words)", "#
+                + #""source": {"kind": "notion", "url": "https://www.notion.so/example-\#(id)", "id": "\#(id)"}}"#
+        }
+        let one = c.ctx.cwd.appendingPathComponent("one.json")
+        try Data(note("2026-03-04T10:00:00+01:00", "a", "Hallo.").utf8).write(to: one)
+        let many = c.ctx.cwd.appendingPathComponent("many.json")
+        try Data(("[" + [note("2026-03-05T10:00:00+01:00", "b", "Hallo b."), note("2026-10-27T16:04:00+01:00", "c", "Hallo c."),
+                         #"{"start": "2026-03-06"}"#].joined(separator: ", ") + "]").utf8).write(to: many)
+        #expect(c.run(["import", "one.json", many.path]) == 1)  // one note was refused
+        #expect(c.out == ["imported 2026-03-04T10-00-00 (Sync a)", "imported 2026-03-05T10-00-00 (Sync b)",
+                          "recorded by Palaver: \(MEETING) (Hiring debrief) — not imported again",
+                          "\(many.path)[2]: not imported: start has no time zone",
+                          "2 imported. `palaver projects suggest` sorts what the rules could not into projects, with the model."])
+        #expect(c.run(["import", "one.json"]) == 0 && c.out == ["already there: 2026-03-04T10-00-00 (Sync a)"])
+        #expect(LegacyImport.isLegacy(RecordingPaths(c.recordings.appendingPathComponent("2026-03-04T10-00-00"))))
+        // A zip and notes together: one kind at a time.
+        #expect(c.run(["import", "a.zip", "one.json"]) == 2)
+    }
+
     @Test func exportAsksBeforeAMeetingKeptOnThisMacAndKnowsNoUnknownOne() throws {
         let c = CLI()
         let paths = try c.meeting()

@@ -338,6 +338,9 @@ h1 {
   font-variant-numeric: tabular-nums; }
 .when .sep { color: var(--ink-3); }
 .when .from { font-size: 13px; }
+/* A meeting from before Palaver (#4): quiet, its link to the source like the text around it. */
+.when a.imported-mark { color: inherit; text-decoration: underline dotted; text-underline-offset: 2px; }
+.item-state.imported-mark { color: var(--ink-3); }
 
 /* Why it records, or how it started and stopped (#47). */
 .recorded { margin-top: 4px; color: var(--ink-3); font-size: 13px; }

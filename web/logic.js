@@ -823,6 +823,9 @@ export function mcpArgsText(entry, titleOf) {
     words.push(titleOf(args.meeting_id) || args.meeting_id, transcriptPart(args));
   } else if (entry.tool === "get_project") {
     words.push(args.project);
+  } else if (entry.tool === "import_meeting") {
+    // The one call that writes (#4): what was imported.
+    words.push("imported", args.title ? `“${args.title}”` : args.start);
   } else {
     if (args.query != null) words.push(`“${args.query}”`);
     for (const [key, word] of Object.entries(ARG_WORDS)) if (args[key] != null) words.push(`${word} ${args[key]}`);
@@ -1451,6 +1454,19 @@ export function collisionText(q) {
 export function importedText(title, answer) {
   const left = (answer.warnings || []).join(" ");
   return `“${title}” imported from ${answer.from}${left ? ` · ${left}` : ""}`;
+}
+
+// A meeting from before Palaver (#4): "Notion" for its source's kind.
+export function sourceName(source) {
+  const kind = source?.kind || "";
+  return kind.toLowerCase() === "notion" ? "Notion" : kind;
+}
+
+// "Imported from a Notion meeting note on 16 Nov: no audio, speakers not told apart".
+export function sourceTitle(source, fmt = (d) => d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })) {
+  const at = source?.imported_at ? new Date(source.imported_at) : null;
+  const when = at && !Number.isNaN(at.getTime()) ? ` on ${fmt(at)}` : "";
+  return `Imported from a ${sourceName(source)} meeting note${when}: no audio, speakers not told apart`;
 }
 
 // The quiet line on an imported meeting: from whom and when, and the

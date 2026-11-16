@@ -44,6 +44,13 @@ private func days(_ n: Double) -> Date { NOW.addingTimeInterval(-n * 86400) }
                 == ["2026-09-01T10-00-00-2", "2026-09-30T10-00-00", "2026-09-30T11-00-00"])
     }
 
+    @Test func meetingsFromBeforePalaverAreNotPruned() throws {
+        let t = TempFolder("prune"); defer { t.remove() }
+        let folder = try recording(t.url, "2026-03-04T10-00-00", synced: false, start: days(200))
+        try Data("{}".utf8).write(to: RecordingPaths(folder).source)  // imported from Notion (#4): no recording to retire
+        #expect(Prune.plan(t.url, retentionDays: 14, now: NOW, includeUnsynced: true, timeZone: UTC) == Prune.Plan())
+    }
+
     @Test func test_prune_deletes_and_reports_freed_space_and_a_dry_run_deletes_nothing() throws {
         let t = TempFolder("prune"); defer { t.remove() }
         let folder = try recording(t.url, "2026-09-30T10-00-00", synced: true, start: days(20))

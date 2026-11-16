@@ -244,6 +244,7 @@ public enum SearchAPI {
             }
             let paths = paths(app, m)
             if let reviewed = q.reviewed, MeetingsAPI.exists(paths.review) != reviewed { continue }
+            if q.imported && !(m["source"]?.truthy ?? false) { continue }
             let who = try participants(app, paths, userName: userName)
             let took = q.people.map { tookPart($0, who) }
             if !took.isEmpty && !(q.anyPerson ? took.contains { $0 != 0 } : took.allSatisfy { $0 != 0 }) { continue }

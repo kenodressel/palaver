@@ -139,7 +139,10 @@ private func refused(_ text: String, _ body: () throws -> Any) -> Bool {
         let f = try Fixture()
         let tools = try #require(f.request("tools/list")?["result"]?["tools"]?.arrayValue)
         #expect(Set(tools.compactMap { $0["name"]?.stringValue }) == ["list_meetings", "search_meetings", "get_meeting",
-                                                                         "list_projects", "get_project", "list_people", "open_next_steps"])
+                                                                         "list_projects", "get_project", "list_people", "open_next_steps",
+                                                                         "import_meeting"])
+        // Only import_meeting writes, and says so.
+        #expect(tools.filter { $0["annotations"]?["readOnlyHint"] == .bool(false) }.map { $0["name"] } == [.string("import_meeting")])
         func tool(_ name: String) -> JSONValue { tools.first { $0["name"]?.stringValue == name } ?? .null }
         // The parameters, defaults and required ones as the Python SDK described them.
         let list = tool("list_meetings")["inputSchema"]!
@@ -159,6 +162,42 @@ private func refused(_ text: String, _ body: () throws -> Any) -> Bool {
         #expect(tool("get_meeting")["outputSchema"]?["title"] == .string("get_meetingDictOutput"))
         #expect(tool("search_meetings")["outputSchema"]?["title"] == .string("search_meetingsDictOutput"))
         #expect(tool("get_meeting")["description"]?.stringValue?.hasPrefix("One recorded meeting or call: who was invited and spoke") == true)
+    }
+
+    @Test func importMeetingTakesInANotionNoteOnce() throws {
+        let f = try Fixture()
+        let tools = try #require(f.request("tools/list")?["result"]?["tools"]?.arrayValue)
+        let schema = try #require(tools.first { $0["name"] == .string("import_meeting") }?["inputSchema"])
+        #expect(schema["required"] == .strings(["start"]))
+        #expect(schema["properties"]?["attendees"]?["anyOf"]?.arrayValue?.first
+                == .object([("items", .object([("type", .string("string"))])), ("type", .string("array"))]))
+        let args: [(String, JSONValue)] = [
+            ("title", .string("Contoso kickoff")), ("start", .string("2026-03-04T09:00:00.000Z")),
+            ("attendees", .strings(["Valerie", "Timo"])),
+            ("summary", .string("### Action Items\n- [ ] Valerie: send the plan [^https://app.notion.com/p/example#b1]")),
+            ("transcript", .string("Hallo zusammen.\n\nLet's start.")),
+            ("source_url", .string("https://www.notion.so/example-contoso-kickoff")), ("source_id", .string("contoso-1")),
+        ]
+        let first = f.call("import_meeting", args)
+        #expect(first["isError"] == .bool(false), "\(first)")
+        let answer = try #require(first["structuredContent"])
+        let id = try #require(answer["meeting_id"]?.stringValue)
+        #expect(answer["status"] == .string("imported") && RecordingPaths.isRecordingFolderName(id))
+        #expect(f.call("import_meeting", args)["structuredContent"]?["status"] == .string("already"))
+        // Claude sees it like any meeting, marked as Notion's.
+        #expect(try f.tools.listMeetings().arrayValue?.first?["source"] == .string("notion"))
+        let meeting = try f.tools.getMeeting(meetingId: id)
+        #expect(meeting["notes"]?["next_steps"] == .array([.object([("owner", .string("Valerie")), ("task", .string("send the plan"))])]))
+        #expect(meeting["note"]?.stringValue?.hasPrefix("Imported from a Notion meeting note") == true)
+        // The access log has the call, with the meeting.
+        let logged = try #require(try f.log().first { $0["tool"] == .string("import_meeting") })
+        #expect(logged["meetings"] == .strings([id]))
+        // What is wrong with a note is said.
+        let bad = f.call("import_meeting", [("start", .string("2026-03-04 09:00")), ("transcript", .string("Hallo."))])
+        #expect(bad["isError"] == .bool(true)
+                && bad["content"]?.arrayValue?.first?["text"] == .string("Error executing tool import_meeting: start has no time zone"))
+        let notAList = f.call("import_meeting", [("start", .string("2026-03-05T09:00:00Z")), ("attendees", .string("Valerie"))])
+        #expect(notAList["isError"] == .bool(true))
     }
 
     @Test func test_install_adds_the_server_to_claude_code() throws {
@@ -354,7 +393,9 @@ private func refused(_ text: String, _ body: () throws -> Any) -> Bool {
         for word in ["transcripts with speaker names", "next steps", "decisions", "1:1", "customer", "search_meetings"] {
             #expect(instructions.contains(word), "\(word)")
         }
-        #expect(r["instructions"]?.stringValue?.hasSuffix("Meetings the user keeps on this Mac are not shared here.") == true)
+        #expect(instructions.contains("Meetings the user keeps on this Mac are not shared here."))
+        #expect(instructions.hasSuffix("import_meeting is the only tool that changes anything: it adds a meeting from before "
+                                       + "Palaver (a Notion AI meeting note), only when the user asks for that."))
         #expect(r["capabilities"]?["tools"] == .object([("listChanged", .bool(false))]))
         // The window sees the client in the heartbeat file.
         let client = try #require(McpLog.clients(stores: f.stores).first)

@@ -51,6 +51,11 @@ test("mcpArgsText: the arguments in short, a meeting's title rather than its id"
   assert.equal(mcpArgsText({ tool: "list_people", args: {} }, title), "everyone");
   assert.equal(mcpArgsText({ tool: "list_meetings" }, title), "all meetings");
   assert.equal(mcpArgsText({ tool: "something_new", args: {} }, title), "");
+  // The one call that writes (#4).
+  assert.equal(mcpArgsText({ tool: "import_meeting", args: { title: "Weekly sync", start: "2026-03-04T10:00:00Z" } }, title),
+    "imported · “Weekly sync”");
+  assert.equal(mcpArgsText({ tool: "import_meeting", args: { start: "2026-03-04T10:00:00Z" } }, title),
+    "imported · 2026-03-04T10:00:00Z");
 });
 
 test("mcpSizeText: how much went out", () => {

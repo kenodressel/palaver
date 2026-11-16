@@ -43,6 +43,19 @@ import PalaverDomain
         #expect(again.asked.first?.prompt == fake.asked.first?.prompt)
     }
 
+    @Test func notesThatCameFromNotionAreKeptUnlessForced() async throws {
+        let home = Home()
+        let paths = home.meeting()
+        try NotesFile.save(paths, .object([("title", .string("Weekly sync")), ("summary", .string("From Notion.")),
+                                           ("source", .string("notion"))]))
+        let fake = FakeModel(json: NOTES_ANSWER, ControlFallback.suggest)
+        #expect(try await run(["notes", paths.folder.path], home.context(fake)) == 0)
+        #expect(fake.asked.isEmpty && Notes.load(paths)?["summary"] == .string("From Notion."))
+        #expect(home.said.last == "The notes came from Notion; --force writes new ones")
+        #expect(try await run(["notes", paths.folder.path, "--force"], home.context(fake)) == 0)
+        #expect(Notes.load(paths)?["title"] == .string("Angebot für Contoso"))
+    }
+
     @Test func aBrokenAnswerIsAskedForAgainAndRepaired() async throws {
         let home = Home()
         let paths = home.meeting()

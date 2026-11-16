@@ -189,8 +189,10 @@ public enum CLIMain {
                        CLIOpt(names: ["--audio"], help: "Include the audio (default: no)"),
                        CLIOpt(names: ["-o", "--output"], value: "FILE", help: "The file to write (default: '<date> <title>.zip' here)"),
                        CLIOpt(names: ["--yes"], help: "Export a meeting kept on this Mac without asking")]),
-        CLISpec(name: "import", summary: "Import a meeting a colleague exported (its .zip)",
-                args: [CLIArg(name: "file", help: "the .zip")],
+        CLISpec(name: "import", summary: "Import a meeting a colleague exported (its .zip), or meeting notes from before "
+                + "Palaver (.json: Notion AI meeting notes)",
+                args: [CLIArg(name: "file", help: "the .zip, or .json files of meeting notes (one object or a list each: "
+                              + "title, start, end, attendees, summary, transcript, source {kind, url, id})", count: .many)],
                 opts: [CLIOpt(names: ["--separate"], help: "When the meeting is here already, import it beside it without asking")]),
         CLISpec(name: "voices", summary: "List stored voices used for speaker recognition, or forget one",
                 args: [CLIArg(name: "action", help: "list (the default) or forget", count: .optional, choices: ["list", "forget"]),

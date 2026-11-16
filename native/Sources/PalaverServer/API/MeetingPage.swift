@@ -101,6 +101,7 @@ extension MeetingsAPI {
             ("reviewed", try get(PythonJSON.read(paths.review) ?? .object([]), "reviewed")),
             ("local_only", .bool(exists(paths.localOnly))),
             ("imported", try imported(paths)),
+            ("source", LegacyImport.brief(paths) ?? .null),  // a meeting from before Palaver: where it came from (#4)
             ("transcribed_by", transcribedBy(paths)),
             ("failure", lastFailure(paths) ?? .null),  // a failed run, offered for a report (#59)
             ("neighbours", try neighbours(app, paths)),
@@ -156,8 +157,8 @@ extension MeetingsAPI {
 
         let mic = SharedMic.micRoom(paths)  // several people at the user's microphone (#56)
         let mine = utterances.filter { Py.same($0.speaker, userName) && ($0.label ?? "").isEmpty }
-        // An imported meeting the user said nothing in has no lane of theirs (#58).
-        let you = !exists(paths.imported) || !mine.isEmpty
+        // An imported meeting the user said nothing in has no lane of theirs (#58), nor has one from before Palaver (#4).
+        let you = !(exists(paths.imported) || exists(paths.source)) || !mine.isEmpty
         let hasAudio = exists(paths.systemWav)
         var out: [JSONValue] = []
         if you {

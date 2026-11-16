@@ -49,6 +49,8 @@ public struct RecordingPaths: Hashable, Sendable {
     /// Voices that came with an import, waiting for the user's yes: apart from speaker_embeddings.json,
     /// so nothing recognizes or learns them before it (#58).
     public var importedVoices: URL { file("imported_voices.json") }
+    /// Where a meeting from before Palaver came from (a Notion AI meeting note, #4): kind, url, id, content hash.
+    public var source: URL { file("source.json") }
     /// The user said no to the suggested cut (#40).
     public var cutDismissed: URL { file("cut_dismissed.json") }
     /// The user said no to removing the silence at the start or end.

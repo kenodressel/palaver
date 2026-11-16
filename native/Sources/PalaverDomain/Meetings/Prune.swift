@@ -1,6 +1,6 @@
 // Retention (palaver/prune.py, #3): `palaver prune` deletes recording folders older than `retention_days`. Only
 // folders named as `newRecordingFolder` names them count. By default only synced recordings go (their transcript is
-// safe in Notion); old unsynced ones are reported and kept.
+// safe in Notion); old unsynced ones are reported and kept. Meetings imported from before Palaver (#4) are never pruned.
 import Darwin
 import Foundation
 import PalaverCore
@@ -39,6 +39,8 @@ public enum Prune {
             let folder = outputDir.appendingPathComponent(name, isDirectory: true)
             var st = stat()
             guard lstat(folder.path, &st) == 0, st.st_mode & S_IFMT == S_IFDIR else { continue }  // no links, no files
+            // A meeting from before Palaver (#4) is no recording to retire: it was imported to be kept, and has no audio.
+            if FileManager.default.fileExists(atPath: RecordingPaths(folder).source.path) { continue }
             guard let started = start(folder, stamp: stamp, timeZone: timeZone), started < cutoff else { continue }
             if includeUnsynced || FileManager.default.fileExists(atPath: RecordingPaths(folder).notionInfo.path) {
                 plan.delete.append(folder)

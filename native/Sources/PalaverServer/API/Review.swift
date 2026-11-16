@@ -27,10 +27,11 @@ public enum ReviewAPI {
         ])
     }
 
-    /// `review_queue`: finished meetings not reviewed yet, newest first, with what is open.
+    /// `review_queue`: finished meetings not reviewed yet, newest first, with what is open; none from before Palaver.
     public static func queue(_ app: ServerApp, userName: String) throws -> [JSONValue] {
+        // Meetings from before Palaver (#4) were dealt with back then: hundreds of them would bury the new ones.
         let meetings = try MeetingsAPI.listMeetings(app: app).filter {
-            $0["status"]?.stringValue == "ready" && !MeetingsAPI.exists(SearchAPI.paths(app, $0).review)
+            $0["status"]?.stringValue == "ready" && !MeetingsAPI.exists(SearchAPI.paths(app, $0).review) && !($0["source"]?.truthy ?? false)
         }
         let suggestions = meetings.isEmpty ? [] : try GlossaryAPI.suggestions(app, userName: userName)
         let titles = GlossaryAPI.titles(meetings)
@@ -79,10 +80,11 @@ public enum ReviewAPI {
     }
 
     /// `open_questions`: what Palaver is unsure of and asks the user (#48), newest meeting first: which event, when
-    /// several overlapped a recording, and every unsure link (event, speaker, project).
+    /// several overlapped a recording, and every unsure link (event, speaker, project). None of meetings from before
+    /// Palaver (#4): hundreds of imported meetings would bury the new ones; their page still shows each link.
     public static func questions(_ app: ServerApp) throws -> [JSONValue] {
         var out: [JSONValue] = []
-        for m in try MeetingsAPI.listMeetings(app: app) where m["status"]?.stringValue == "ready" {
+        for m in try MeetingsAPI.listMeetings(app: app) where m["status"]?.stringValue == "ready" && !(m["source"]?.truthy ?? false) {
             let paths = SearchAPI.paths(app, m)
             let made = try app.reviewCaches.questions.get(key: paths.folder.path, files: MeetingsAPI.signatureFiles(paths, app)) {
                 JSONValue.object([("event_question", MeetingsAPI.eventQuestion(paths)),
@@ -217,10 +219,11 @@ public enum ReviewAPI {
     }
 
     /// `needs`: what waits on the user, per meeting, newest first. Of a reviewed meeting only what appeared after its
-    /// review: what was open then the user saw and left. `count`: the meetings with anything open.
+    /// review: what was open then the user saw and left. `count`: the meetings with anything open. Meetings from before
+    /// Palaver (#4) need nothing.
     public static func needs(_ app: ServerApp) throws -> JSONValue {
         var out: [JSONValue] = []
-        for m in try MeetingsAPI.listMeetings(app: app) where m["status"]?.stringValue == "ready" {
+        for m in try MeetingsAPI.listMeetings(app: app) where m["status"]?.stringValue == "ready" && !(m["source"]?.truthy ?? false) {
             var items = try meetingNeeds(app, m, calendar: app.calendar != nil)
             if let seen = try MeetingsAPI.seen(SearchAPI.paths(app, m)) {
                 items = items.filter { $0["kind"]?.stringValue != "review" && !seen.contains(ScalarKey($0["id"]?.stringValue ?? "")) }

@@ -222,6 +222,16 @@ final class MeetingsWindow: NSObject, NSWindowDelegate, WKUIDelegate, WKScriptMe
 
     /// Import… (#58) and Add image in my notes. Without this WebKit opens no panel and the click
     /// does nothing.
+    /// A link that opens a new window (`target="_blank"`, e.g. an imported meeting's Notion page, #4) opens in the
+    /// browser; only web links, and never inside this window.
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        if let url = navigationAction.request.url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+            NSWorkspace.shared.open(url)
+        }
+        return nil
+    }
+
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
         guard let window = webView.window else { return completionHandler(nil) }

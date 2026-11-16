@@ -2,8 +2,9 @@
 // message per line. A small hand-written loop rather than the SDK: the server needs `initialize`, `ping`, `tools/list`
 // and `tools/call` (plus empty `prompts/list` and `resources/list`), and the app links no extra package for them.
 //
-// The server is called "palaver" (McpSetup.NAME; "meetings" before 0.6.3) and gives Claude its instructions and seven
-// read-only tools, with the Python server's names, parameters and defaults. The instructions and descriptions say what
+// The server is called "palaver" (McpSetup.NAME; "meetings" before 0.6.3) and gives Claude its instructions, seven
+// read-only tools with the Python server's names, parameters and defaults, and one that writes: `import_meeting` (#4),
+// which takes in a meeting note from before Palaver (a Notion AI meeting note Claude fetched). The instructions and descriptions say what
 // it serves in the words a user asks with (meetings, calls, Teams, transcripts, next steps, customers …), so Claude
 // picks it for such a question. A tool's answer is its JSON (one text block per item of
 // a list, as the Python SDK sent it) and the same value as `structuredContent`. Every call that runs leaves one line
@@ -26,7 +27,8 @@ public final class McpServer {
         search_meetings or list_meetings; read a meeting with get_meeting (notes first; ask for the transcript only when \
         the notes are not enough, preferably a time range). get_project and open_next_steps gather across meetings. \
         Meeting ids look like 2026-10-21T16-29-29 (the start, local time). Meetings the user keeps on this Mac are not \
-        shared here.
+        shared here. import_meeting is the only tool that changes anything: it adds a meeting from before Palaver (a \
+        Notion AI meeting note), only when the user asks for that.
         """
 
     /// The protocol versions this server speaks, newest first: a client's own is answered with itself, any other with
@@ -51,7 +53,7 @@ public final class McpServer {
 
     // MARK: - the tools
 
-    enum Kind: String { case string, integer, number, boolean }
+    enum Kind: String { case string, integer, number, boolean, array }
 
     struct Param {
         let name: String
@@ -62,6 +64,12 @@ public final class McpServer {
         var title: String { name.split(separator: "_").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ") }
 
         var schema: JSONValue {
+            if kind == .array {  // a list of text
+                let items: (String, JSONValue) = ("items", .object([("type", .string("string"))]))
+                guard fallback == .null else { return .object([items, ("title", .string(title)), ("type", .string("array"))]) }
+                return .object([("anyOf", .array([.object([items, ("type", .string("array"))]), .object([("type", .string("null"))])])),
+                                ("default", .null), ("title", .string(title))])
+            }
             switch fallback {
             case nil: return .object([("title", .string(title)), ("type", .string(kind.rawValue))])
             case .null?: return .object([("anyOf", .array([.object([("type", .string(kind.rawValue))]), .object([("type", .string("null"))])])),
@@ -86,6 +94,8 @@ public final class McpServer {
         let params: [Param]
         /// What one item of its list answer is (`_ITEMS`; search_meetings' are its "meetings").
         let items: String?
+        /// Whether it changes anything (import_meeting); every other tool only reads.
+        var writes = false
         let run: (Args) throws -> JSONValue
 
         /// Whether it answers a list (else an object).
@@ -109,9 +119,15 @@ public final class McpServer {
                             ("type", .string("object")), ("title", .string("\(name)Output"))])
         }
 
+        /// The hints a client shows the user before a call: reads only, or adds (never deletes or changes) a meeting.
+        var annotations: JSONValue {
+            .object([("readOnlyHint", .bool(!writes)), ("destructiveHint", .bool(false)), ("idempotentHint", .bool(true)),
+                     ("openWorldHint", .bool(false))])
+        }
+
         var json: JSONValue {
             .object([("name", .string(name)), ("description", .string(description)), ("inputSchema", inputSchema),
-                     ("outputSchema", outputSchema)])
+                     ("outputSchema", outputSchema), ("annotations", annotations)])
         }
     }
 
@@ -195,6 +211,31 @@ public final class McpServer {
                 try t.openNextSteps(project: a.string("project"), person: a.string("person"), owner: a.string("owner"),
                                     since: a.string("since"))
             },
+            Tool(name: "import_meeting", description: """
+                Add a meeting from before Palaver to the user's meetings: a Notion AI
+                meeting note. The only tool that writes; use it only when the user asks
+                to import notes (e.g. "import my Notion AI meeting notes from October").
+                Palaver has no Notion access of its own: read the notes with your Notion
+                connector, then call this once per note; each becomes a meeting marked
+                "Imported", without audio. Fetch the note with its transcript, and pass:
+                title: the note's title. start: when the meeting began, ISO 8601 with
+                its UTC offset (the linked calendar event's start, else the note's
+                created time). end: the calendar event's end, if there is one (left
+                out, it is estimated from the transcript). attendees: the attendees'
+                names (no emails). summary: Notion's AI summary as Markdown, as fetched
+                (action items, sections; citations are removed here). transcript: the
+                transcript as fetched (paragraphs separated by blank lines). source_url
+                and source_id: the note's page URL and id. Answers status "imported"
+                with the new meeting_id, or why nothing was imported: "already" (this
+                note was imported before) or "recorded" (Palaver recorded this call
+                itself), with that meeting's id.
+                """,
+                 params: [Param(name: "start", kind: .string, fallback: nil), Self.optional("title"), Self.optional("end"),
+                          Self.optional("attendees", .array), Self.optional("summary"), Self.optional("transcript"),
+                          Self.optional("source_url"), Self.optional("source_id")],
+                 items: nil, writes: true) { a in
+                try t.importMeeting(.object(a.values.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }))
+            },
         ]
     }()
 
@@ -242,6 +283,8 @@ public final class McpServer {
             default: throw Invalid(param: p.name, message: "Input should be a valid boolean")
             }
         case (.boolean, _): throw Invalid(param: p.name, message: "Input should be a valid boolean")
+        case (.array, .array(let items)) where items.allSatisfy({ $0.stringValue != nil }): return v
+        case (.array, _): throw Invalid(param: p.name, message: "Input should be a valid list of text")
         }
     }
 
@@ -280,6 +323,9 @@ public final class McpServer {
             out.append(("meetings", .int(1)))
             ids = [result["id"]?.stringValue].compactMap { $0 }
             if let transcript = result["transcript"]?.arrayValue { out.append(("lines", .int(transcript.count))) }
+        } else if tool.name == "import_meeting" {
+            out.append(("meetings", .int(1)))
+            ids = [result["meeting_id"]?.stringValue].compactMap { $0 }
         } else if tool.name == "get_project" {
             let meetings = result["meetings"]?.arrayValue ?? []
             out += [("projects", .int(1)), ("meetings", .int(meetings.count)),

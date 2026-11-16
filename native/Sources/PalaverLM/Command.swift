@@ -181,9 +181,13 @@ public enum NotesRun {
     }
 
     /// `write_notes_for` / `_write_notes`: notes.json for the transcript, unless it is up to date (also once the run
-    /// this one waited for wrote it). A failure only warns: the transcript is there either way, and notes can be
-    /// retried.
+    /// this one waited for wrote it), or came with a meeting from before Palaver (#4: Notion's, kept unless `force`).
+    /// A failure only warns: the transcript is there either way, and notes can be retried.
     public static func write(_ paths: RecordingPaths, force: Bool, _ ctx: LMMain.Context, log: RunLog) async throws -> Bool {
+        if !force, case .string(let source)? = Notes.load(paths)?["source"], !source.isEmpty {
+            ctx.say("The notes came from \(LegacyImport.sourceName(source)); --force writes new ones")
+            return true
+        }
         let all = try utterances(paths)
         guard let start = PythonJSON.read(paths.meta)?["start_time"]?.stringValue else {
             throw LMError("\(paths.meta.lastPathComponent) has no start_time")

@@ -505,4 +505,51 @@ func fakeLiveWorker(_ folder: URL) throws -> Foundation.Process {
                          #"{"level": "ERROR", "message": "command failed"}"#])?["error"] == .string("it stopped"))
         #expect(try log([#"{"event": "notes_failed", "error": null}"#])?["error"] == .string(""))
     }
+
+    // MARK: - a meeting from before Palaver (#4)
+
+    @Test func aNotionNoteShowsItsSourceAndNoVoiceOrYourLane() throws {
+        let f = try Fixture()
+        try pageMeeting(f.out)
+        let note = try LegacyNote(json: .object([
+            ("title", .string("Weekly sync")), ("start", .string("2026-03-04T10:00:00+01:00")),
+            ("end", .string("2026-03-04T10:30:00+01:00")),
+            ("summary", .string("### Action Items\n- [ ] Valerie: send the offer\n### Pricing\n- Ten percent")),
+            ("transcript", .string("Hallo zusammen.\n\nThe budget is fine.")),
+            ("source", .object([("kind", .string("notion")), ("url", .string("https://www.notion.so/example-weekly-sync")),
+                                ("id", .string("abc"))])),
+        ]))
+        let id = try LegacyImport.importNote(note, outputDir: f.out, userName: "Timo", stores: f.stores).id
+        let entry = try #require(try f.list().first { $0["id"] == .string(id) })
+        #expect(entry["source"]?["kind"] == .string("notion")
+                && entry["source"]?["url"] == .string("https://www.notion.so/example-weekly-sync"))
+        #expect(entry["status"] == .string("ready") && entry["title"] == .string("Weekly sync") && entry["unnamed"] == .int(0))
+        #expect(entry["summary"] == .string("Topics: Pricing."))
+        #expect(try f.list().first { $0["id"] == .string(MEETING) }?["source"] == .null)
+        let page = try f.page(id)
+        #expect(page["source"]?["url"] == .string("https://www.notion.so/example-weekly-sync"))
+        #expect(page["has_audio"] == .bool(false) && page["notes_stale"] == .bool(false))
+        let speakers = try #require(page["speakers"]?.arrayValue)
+        #expect(speakers.count == 1)  // no lane of the user's: nothing tells their words apart
+        #expect(speakers.first?["display"] == .string("Unknown speakers") && speakers.first?["unknown"] == .bool(true))
+        #expect(speakers.first?["clips"] == .array([]))
+        #expect(page["transcript"]?.arrayValue?.map { $0["speaker"] } == [.string("Unknown speakers"), .string("Unknown speakers")])
+        // Nothing to review, nothing that needs the user: it was dealt with back then.
+        #expect(try ReviewAPI.queue(f.app, userName: "Timo").map { $0["id"] } == [.string(MEETING)])
+        let needs = try ReviewAPI.needs(f.app)
+        #expect((needs["meetings"]?.arrayValue ?? []).map { $0["id"] } == [.string(MEETING)], "\(needs)")
+        try ProjectsAPI.setMeetingProject(f.app, id: id, name: "Pricing")
+        let store = ProjectStore(path: f.stores.projects)
+        try store.locked {  // as the rules propose it: unsure, a question for a recording
+            store.reload()
+            store.unassign(id, try #require(store.find("Pricing")))
+            _ = try store.assign(id, try #require(store.find("Pricing")), by: "auto", why: "like another", confidence: 0.7)
+            try store.save()
+        }
+        #expect(try ReviewAPI.questions(f.app).isEmpty)
+        // Searched like any meeting; is:imported only these.
+        #expect(try SearchAPI.run(f.app, "budget", userName: "Timo").1.map { $0["id"] } == [.string(id)])
+        #expect(try SearchAPI.run(f.app, "is:imported", userName: "Timo").1.map { $0["id"] } == [.string(id)])
+        #expect(try SearchAPI.run(f.app, "salary is:imported", userName: "Timo").1.isEmpty)
+    }
 }

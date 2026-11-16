@@ -29,7 +29,7 @@ import { togglePalette, paletteOpen } from "./palette.js";
 // Report a Problem and the usage counts (#59).
 import { reportMeeting, reportDraft, reportDoneText, actionCatalog, exportedText } from "./logic.js";
 // Export and import of a meeting (#58).
-import { inferredText, importedLine, importedText, GLOBAL_COMMANDS } from "./logic.js";
+import { inferredText, importedLine, importedText, GLOBAL_COMMANDS, sourceName, sourceTitle } from "./logic.js";
 import { recordingNow, recordingCommand, RECORD_TEXT } from "./logic.js";
 import { mutedIn, muteUnfollowed, mutedText, unfollowedText } from "./logic.js";
 import { eventPickerChoices, EVENT_FILTER_AFTER } from "./logic.js";
@@ -357,6 +357,7 @@ function meetingItem(m, current, { withDay = false } = {}) {
       who ? h("span", { class: "item-people" }, who) : null,
       m.imported ? h("span", { class: "item-state", title: `Imported from ${m.imported.from}` },
         `from ${m.imported.from}`) : null,
+      m.source ? h("span", { class: "item-state imported-mark", title: sourceTitle(m.source) }, "Imported") : null,
       stateText ? h("span", { class: m.status === "recording" ? "item-state recording" : "item-state" }, stateText) : null),
     m.projects.length ? h("span", { class: "item-projects" }, m.projects.map((p) => p.name).join(" · ")) : null,
     m.summary ? h("span", { class: "item-summary" }, m.summary) : null,
@@ -584,6 +585,11 @@ function dateLine(m, start) {
       title: "Transcribed on this Mac, no cloud model gets this meeting, and Claude can't read it through MCP" },
     "On this Mac only") : null,
     m.imported ? h("span", { class: "from", title: importedLine(m.imported) }, `from ${m.imported.from}`) : null,
+    // A meeting from before Palaver (#4): where it came from, a link to it when there is one.
+    m.source ? (m.source.url
+      ? h("a", { class: "from imported-mark", href: m.source.url, target: "_blank", rel: "noopener", title: sourceTitle(m.source) },
+        `Imported from ${sourceName(m.source)}`)
+      : h("span", { class: "from imported-mark", title: sourceTitle(m.source) }, `Imported from ${sourceName(m.source)}`)) : null,
   ].filter(Boolean);
   return h("div", { class: "when" },
     parts.flatMap((p, i) => (i ? [h("span", { class: "sep", "aria-hidden": "true" }, "·"), p] : [p])));

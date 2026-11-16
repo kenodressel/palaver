@@ -199,6 +199,37 @@ advance.
 **A meeting's ⋯ menu** has Export…, Save as Markdown, Keep on This Mac, Delete Audio… and
 Move to Trash, among others. Most changes can be undone.
 
+**Meetings from before Palaver (Notion AI meeting notes).** Claude can bring
+them in, so they are searched, sorted into projects and asked about like
+your recordings:
+
+1. Set up Palaver's MCP server in Claude (`palaver mcp --install`, see
+   [Optional: cloud services](#optional-cloud-services)), and connect
+   Claude's Notion connector.
+2. Ask Claude, e.g. "Import my Notion AI meeting notes from October into
+   Palaver."
+3. Claude reads each note with its Notion connector and hands it to
+   Palaver's `import_meeting` tool: title, start, attendees, Notion's
+   summary and the transcript. Or have Claude save them as JSON and run
+   `palaver import notes.json`.
+
+Each note becomes a meeting marked "Imported", with a link to the Notion
+page. Notion's summary is its notes (no model rewrites them unless you ask),
+the attendees are its people, and the projects' rules sort it. It has no
+audio and no speaker names: the transcript is one "Unknown speakers" lane,
+its times estimated. A note imported before, or a call Palaver recorded
+itself, is not imported again. Imported meetings stay out of Review and
+"Needs you"; `is:imported` in the search finds them.
+
+This needs an active Claude subscription with the Notion connector. Why
+through Claude: Notion's public API gives AI meeting notes only to
+integrations in the same workspace, on a plan with AI meeting notes, and
+only for meetings that integration's user attended, and an integration of
+Palaver's own would have to be shared with every note page. Claude's Notion
+connector reads them with your own access, so Palaver needs no Notion access
+for this. It is a first step: a more general import (other sources, without
+Claude) may come later.
+
 ## Privacy
 
 - **On your Mac by default.** Recording, transcription, speaker detection,
@@ -252,8 +283,10 @@ You don't need any of these. Each one is off until you set it up.
 - **Notion:** each meeting's transcript can be uploaded to a Notion page or
   database after the call (see [Advanced settings](#advanced-settings)).
 - **Claude (MCP):** `palaver mcp --install` lets Claude Code read your
-  meetings, notes, projects and people, read-only (`--install --desktop` for
-  Claude Desktop). The server is called "palaver" (it was "meetings" before
+  meetings, notes, projects and people (`--install --desktop` for
+  Claude Desktop). It only reads, except `import_meeting`, which adds
+  meetings from before Palaver when you ask (see
+  [Using Palaver](#using-palaver)). The server is called "palaver" (it was "meetings" before
   0.6.6; the app renames that entry). Settings → Claude Access shows what
   Claude read.
 
@@ -303,6 +336,7 @@ palaver voices                 # whose voices are stored
 palaver voices forget "Valerie"  # delete someone's voice
 palaver export <meeting>       # a meeting as a .zip for a colleague
 palaver import <zip>           # a meeting a colleague exported
+palaver import notes.json      # meeting notes from before Palaver (e.g. Notion's, saved by Claude)
 palaver report create -m "…"   # a problem report on the Desktop
 palaver mcp --install          # let Claude Code read your meetings
 palaver --help                 # everything else

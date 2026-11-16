@@ -123,6 +123,10 @@ import Testing
                              "in steps", "is reviewed", "has steps", "person Tom", "said Tom"])
         #expect(q.words == ["budget"] && q.reviewed == true && q.hasSteps)
         #expect(parse("is:unreviewed").reviewed == false)
+        // Meetings from before Palaver (#4): a filter of its own, not a review state.
+        let imported = parse("is:unreviewed is:imported budget")
+        #expect(kinds(imported) == ["is unreviewed", "is imported"] && imported.imported && imported.reviewed == false)
+        #expect(imported.chips()[1]["label"] == .string("Imported") && !parse("is:reviewed").imported)
         let unknown = parse("project:nope")
         #expect(kinds(unknown) == ["project nil"] && unknown.filters[0].label == "nope")  // finds nothing
     }

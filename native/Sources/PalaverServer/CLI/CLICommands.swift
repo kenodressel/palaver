@@ -230,13 +230,73 @@ struct CLICommand {
         return 0
     }
 
-    /// `_cmd_import`: a colleague's meeting as one of this Mac's; the same meeting here already only beside it after a
-    /// yes (or `--separate`); voices it came with join the voice bank only after a yes.
+    /// `palaver import`: .json files are meeting notes from before Palaver (`importNotes`); else one colleague's .zip.
     func importMeeting() -> Int32 {
+        let files = parsed.all("file")
+        if files.isEmpty {
+            say("usage: palaver import <file.zip> | <notes.json> …")
+            return 2
+        }
+        if files.allSatisfy({ ($0 as NSString).pathExtension.lowercased() == "json" }) { return importNotes(files) }
+        guard files.count == 1 else {
+            say("error: one .zip at a time (several files only of meeting notes, .json)")
+            return 2
+        }
+        return importPackage(files[0])
+    }
+
+    /// Meeting notes from before Palaver (#4), e.g. Notion AI meeting notes Claude saved: each file one note (a JSON
+    /// object) or a list of them. One line per note: imported, there already, or recorded by Palaver itself (not
+    /// imported again); then the imported ones are sorted into projects by the rules. Exit 1 when a note was refused.
+    func importNotes(_ files: [String]) -> Int32 {
         let config = config
         let user = userName(config)
         let out = config.outputDir
-        let file = path(parsed.one("file")!)
+        var imported: [String] = [], refused = 0
+        for given in files {
+            let notes: [JSONValue]
+            do {
+                let value = try PythonJSON.parse(try Data(contentsOf: path(given)))
+                notes = value.arrayValue ?? [value]
+            } catch {
+                say("\(given): not imported: it is no JSON file of meeting notes (\(error))")
+                refused += 1
+                continue
+            }
+            for (i, value) in notes.enumerated() {
+                let which = notes.count > 1 ? "\(given)[\(i)]" : given
+                do {
+                    let result = try LegacyImport.importNote(try LegacyNote(json: value), outputDir: out, userName: user,
+                                                             sortIntoProjects: false, stores: ctx.stores)
+                    if result.outcome == .imported { imported.append(result.id) }
+                    say(result.line)
+                } catch let e as ExchangeRejected {
+                    say("\(which): not imported: \(e.message)")
+                    refused += 1
+                } catch {
+                    say("\(which): error: \(error)")
+                    refused += 1
+                }
+            }
+        }
+        do {
+            try LegacyImport.sort(out, imported, userName: user, stores: ctx.stores)
+        } catch {
+            say("warning: sorting into projects failed: \(error)")
+        }
+        if !imported.isEmpty {
+            say("\(imported.count) imported. `palaver projects suggest` sorts what the rules could not into projects, with the model.")
+        }
+        return refused == 0 ? 0 : 1
+    }
+
+    /// `_cmd_import`: a colleague's meeting as one of this Mac's; the same meeting here already only beside it after a
+    /// yes (or `--separate`); voices it came with join the voice bank only after a yes.
+    func importPackage(_ given: String) -> Int32 {
+        let config = config
+        let user = userName(config)
+        let out = config.outputDir
+        let file = path(given)
         do {
             let package = try Exchange.readPackage(file)
             var separate = parsed.flag("--separate")
