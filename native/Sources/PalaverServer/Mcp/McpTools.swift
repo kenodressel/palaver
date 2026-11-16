@@ -1,12 +1,12 @@
 // What Claude's tools answer (mcp_server.py `Meetings`, issue #35): meetings with their notes and transcripts,
-// projects, people and open next steps, read-only, from the same functions as the window (MeetingsAPI, SearchAPI,
+// projects, meeting series (#39), people and open next steps, read-only, from the same functions as the window (MeetingsAPI, SearchAPI,
 // ProjectsAPI, PeopleAPI), so names, merges and the glossary apply here too. Transcripts are long, so tools answer with
 // summaries and excerpts first; the transcript (or a time range of it) only when asked for. The one tool that writes,
 // `importMeeting` (#4), adds a meeting from before Palaver (LegacyImport).
 //
 // Meetings kept on this Mac (#53) are invisible: no tool shows them or what is in them, not even as a name or project
 // the search read out of the query; a project whose meetings are all kept on this Mac answers like one that doesn't
-// exist, and a person met only there is not listed.
+// exist, and a person met only there is not listed. So does a series of only such meetings.
 import Foundation
 import PalaverCore
 import PalaverDomain
@@ -80,6 +80,49 @@ public final class McpTools {
         return pid
     }
 
+    /// `project` as a list's filter: a project of the Projects page (its id; a hidden one answers like one that
+    /// doesn't exist) or one the user gave meeting series (its name, #39).
+    struct ProjectFilter {
+        let pid: String?
+        let name: String
+    }
+
+    func projectFilter(_ project: String?) throws -> ProjectFilter? {
+        guard let project, !project.isEmpty else { return nil }
+        let folded = Py.casefold(Py.strip(project))
+        if let name = visibleSeries().compactMap(\.project).first(where: { Py.same(Py.casefold($0), folded) }) {
+            let store = ProjectStore(path: app.stores.projects)
+            let pid = store.projects[project] != nil ? project : store.find(project)
+            let hidden = hiddenProjects(privateMeetings())
+            return ProjectFilter(pid: pid.flatMap { hidden.contains(ScalarKey($0)) ? nil : $0 }, name: name)
+        }
+        guard let pid = try projectId(project) else { return nil }
+        let store = ProjectStore(path: app.stores.projects)
+        return ProjectFilter(pid: pid, name: store.projects[pid]?["name"].map(Py.str) ?? project)
+    }
+
+    /// The meeting series, without the meetings kept on this Mac; a series of only those is left out whole (its name
+    /// came from them).
+    func visibleSeries() -> [MeetingSeriesEntry] {
+        let hidden = privateMeetings()
+        return MeetingSeries.all(stores: app.stores).compactMap { s in
+            var s = s
+            let all = s.meetings
+            s.meetings = all.filter { !hidden.contains(ScalarKey($0)) }
+            return !all.isEmpty && s.meetings.isEmpty ? nil : s
+        }
+    }
+
+    /// `series` named, by its name (any case) or id.
+    func seriesNamed(_ series: String) throws -> MeetingSeriesEntry {
+        let all = visibleSeries()
+        let folded = Py.casefold(Py.strip(series))
+        guard let found = all.first(where: { $0.id == series }) ?? all.first(where: { Py.same(Py.casefold($0.name), folded) }) else {
+            throw McpToolError("no meeting series \(Py.repr(.string(series))); list_series shows them")
+        }
+        return found
+    }
+
     /// `_projects`: the window's projects without the meetings kept on this Mac (their people and dates left out too),
     /// and a project of only those left out whole.
     func projects() throws -> [JSONValue] {
@@ -107,9 +150,16 @@ public final class McpTools {
         return out
     }
 
-    /// `_matches`: in the project, with the person (spoke or invited; part of a name is enough), between the dates.
-    func matches(_ m: JSONValue, project: String?, person: String?, since: String?, until: String?) -> Bool {
-        if let project, !(m["projects"]?.arrayValue ?? []).contains(where: { Py.same(Self.id($0), project) }) { return false }
+    /// `_matches`: in the project (or in a series of it), in the series, with the person (spoke or invited; part of a
+    /// name is enough), between the dates.
+    func matches(_ m: JSONValue, project: ProjectFilter?, series: String? = nil, person: String?, since: String?,
+                 until: String?) -> Bool {
+        if let project {
+            let inProject = project.pid.map { pid in (m["projects"]?.arrayValue ?? []).contains { Py.same(Self.id($0), pid) } } ?? false
+            let ofSeries = m["series"]?["project"]?.stringValue.map { Py.same(Py.casefold($0), Py.casefold(project.name)) } ?? false
+            if !inProject && !ofSeries { return false }
+        }
+        if let series, !Py.same(m["series"]?["id"]?.stringValue ?? "", series) { return false }
         if let person, !person.isEmpty {
             let wanted = Py.casefold(person)
             let names = Self.strings(m["people"]) + Self.strings(m["invited"])
@@ -139,28 +189,30 @@ public final class McpTools {
         if let source = m["source"], source.truthy {  // from before Palaver: a Notion AI meeting note (#4)
             out.append(("source", source["kind"] ?? .null))
         }
+        if let series = m["series"], series.truthy {  // a meeting series of Palaver's own (#39)
+            out.append(("series", series["name"] ?? .null))
+        }
         return out
     }
 
     // MARK: - the tools
 
     public func listMeetings(project: String? = nil, person: String? = nil, since: String? = nil, until: String? = nil,
-                             limit: Int = 30) throws -> JSONValue {
-        let pid = try projectId(project)
-        let found = try meetings().filter { matches($0, project: pid, person: person, since: since, until: until) }
+                             series: String? = nil, limit: Int = 30) throws -> JSONValue {
+        let filter = try projectFilter(project)
+        let sid = try series.flatMap { $0.isEmpty ? nil : try seriesNamed($0).id }
+        let found = try meetings().filter { matches($0, project: filter, series: sid, person: person, since: since, until: until) }
         return .array(Self.slice(found, limit).map { .object(Self.brief($0)) })
     }
 
     /// The window's search: the query read the same way (people, projects, organizations, dates, decisions, who said
     /// it), the parameters as written-out filters, then meetings found by meaning.
     public func searchMeetings(query: String, project: String? = nil, person: String? = nil, organization: String? = nil,
-                               since: String? = nil, until: String? = nil, limit: Int = 10) throws -> JSONValue {
+                               since: String? = nil, until: String? = nil, series: String? = nil, limit: Int = 10) throws -> JSONValue {
         let name = userName()
         var text = query
-        if let project, !project.isEmpty, let pid = try projectId(project) {
-            let store = ProjectStore(path: app.stores.projects)
-            text += " project:\"\(store.projects[pid]?["name"].map(Py.str) ?? "")\""
-        }
+        if let filter = try projectFilter(project) { text += " project:\"\(Self.quotable(filter.name))\"" }
+        if let series, !series.isEmpty { text += " series:\"\(Self.quotable(try seriesNamed(series).name))\"" }
         for (key, value) in [("person", person), ("org", organization), ("since", since), ("until", until)] {
             if let value, !value.isEmpty, !Self.quotable(value).isEmpty { text += " \(key):\"\(Self.quotable(value))\"" }
         }
@@ -287,6 +339,28 @@ public final class McpTools {
         ])
     }
 
+    /// The meeting series (#39): recurring meetings Palaver groups, from the calendar, the call's title or the user,
+    /// the one met last first, with their project and how many meetings.
+    public func listSeries() throws -> JSONValue {
+        let latest = PyDict<JSONValue>(try meetings().map { (Self.id($0), $0["start"] ?? .null) })
+        let rows: [(latest: String, row: JSONValue)] = visibleSeries().map { s in
+            let last = s.meetings.compactMap { latest[$0]?.stringValue }.max { Py.less($0, $1) }
+            let how = ["event": "calendar series", "call-window": "call title", "you": "made by the user"][s.learned] ?? s.learned
+            return (last ?? "", .object([("id", .string(s.id)), ("name", .string(s.name)), ("project", .str(s.project)),
+                                         ("meetings", .int(s.meetings.count)), ("latest", .str(last)), ("learned_from", .string(how))]))
+        }
+        return .array(Py.stableSorted(rows) { Py.less($1.latest, $0.latest) }.map(\.row))
+    }
+
+    /// A meeting series' last `limit` meetings, newest first (get_meeting reads each).
+    public func getSeries(series: String, limit: Int = 5) throws -> JSONValue {
+        let s = try seriesNamed(series)
+        let found = try meetings().filter { Py.same($0["series"]?["id"]?.stringValue ?? "", s.id) }
+        return .object([("id", .string(s.id)), ("name", .string(s.name)), ("project", .str(s.project)),
+                        ("meetings_in_series", .int(found.count)),
+                        ("meetings", .array(Self.slice(found, limit).map { .object(Self.brief($0)) }))])
+    }
+
     /// People from the meetings that are shared: someone met only in meetings kept on this Mac is not listed.
     public func listPeople() throws -> JSONValue {
         let hidden = privateMeetings()
@@ -307,7 +381,7 @@ public final class McpTools {
     /// agreed.
     public func openNextSteps(project: String? = nil, person: String? = nil, owner: String? = nil,
                               since: String? = nil) throws -> JSONValue {
-        let pid = try projectId(project)
+        let pid = try projectFilter(project)
         let glossary = Glossary.current(stores: app.stores)
         var out: [JSONValue] = []
         for m in try meetings() {

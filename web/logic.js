@@ -34,6 +34,11 @@ export function meetingCommands(m) {
     transcribe: { label: "Transcribe Again", enabled: untranscribed, hidden: !untranscribed },
     writeNotes: { label: m.notes ? "Rewrite notes" : "Write notes", shortcut: "⌘⇧N", enabled: ready },
     changeEvent: { label: "Change Event…", enabled: ready },
+    // #39: a meeting series of the user's: any meeting, also one being recorded; one series at most.
+    addToSeries: { label: m.series ? "Move to Series…" : "Add to Series…",
+      paletteLabel: m.series ? "Move Meeting to Another Series…" : "Add Meeting to a Series…", enabled: true },
+    leaveSeries: { label: "Remove from Series", paletteLabel: "Remove Meeting from Its Series", enabled: !!m.series,
+      hidden: !m.series },
     joinPrevious: { label: "Join with Previous", shortcut: "⌘J", enabled: ready && !!nb.previous },
     joinNext: { label: "Join with Next", enabled: ready && !!nb.next },
     split: { label: "Split At…", enabled: ready && (m.transcript || []).length > 1 },
@@ -530,13 +535,15 @@ export function notesEstimate(history) {
 // id>, #/people[/<name>], #/projects[/<id>], #/upcoming/<key>, or one of the
 // plain pages.
 const PLAIN = new Set(["glossary", "settings", "review", "coach", "today"]);
+// Pages of their own with something in focus: a person, a project, a meeting series (#39).
+const FOCUSED = new Set(["people", "projects", "series"]);
 export function placeOf(hash) {
   const path = String(hash || "").replace(/^#\/?/, "");
   const [head, ...rest] = path.split("/");
   const tail = rest.length ? decodeURIComponent(rest.join("/")) : null;
   if (!path) return { view: "today" };
   if (path === "meetings") return { view: "meetings", id: null };
-  if (head === "people" || head === "projects") return { view: head, focus: tail };
+  if (FOCUSED.has(head)) return { view: head, focus: tail };
   if (head === "upcoming" && tail) return { view: "prep", key: tail };
   if (head === "setup") return { view: "setup", step: tail };
   if (head === "report") return { view: "report", meeting: tail };  // #59: the meeting it is about, if said
@@ -547,7 +554,7 @@ export function placeOf(hash) {
 
 export function hashOf(place) {
   const part = (x) => encodeURIComponent(x);
-  if (place.view === "people" || place.view === "projects") return `#/${place.view}${place.focus ? `/${part(place.focus)}` : ""}`;
+  if (FOCUSED.has(place.view)) return `#/${place.view}${place.focus ? `/${part(place.focus)}` : ""}`;
   if (place.view === "prep") return `#/upcoming/${part(place.key)}`;
   if (place.view === "setup") return `#/setup${place.step ? `/${part(place.step)}` : ""}`;
   if (place.view === "report") return `#/report${place.meeting ? `/${part(place.meeting)}` : ""}`;
@@ -963,12 +970,82 @@ export function eventLinkView(m) {
   return m.calendar_on ? { kind: "none" } : null;
 }
 
-// The remembered series the meeting is in (#24), as the event line shows it: its name and why recordings join it.
+// The series the meeting is in (#24, #39), as the event line shows it: its name, its project, and why recordings
+// join it; one the user put together joins nothing by itself until it knows the call's title or a calendar series.
 export function seriesView(m) {
   const s = m.series;
   if (!s?.name) return null;
-  const why = s.learned === "call-window" ? "the same title in the call" : `linked by hand${s.when ? `, ${s.when}` : ""}`;
-  return { name: s.name, why, title: `Recordings of “${s.name}” are linked to it by themselves: ${why}.` };
+  const when = s.when ? `, ${s.when}` : "";
+  let why;
+  if (s.learned === "call-window") why = "the same title in the call";
+  else if (s.learned !== "you") why = `linked by hand${when}`;
+  else if (s.calendar) why = `its calendar series${when}`;
+  else if (s.call_title) why = "the same title in the call";
+  const title = why ? `Recordings of “${s.name}” are linked to it by themselves: ${why}.` : `“${s.name}”: a series you put together.`;
+  return { id: s.id, name: s.name, project: s.project || null, why: why || "your series", title: `${title} Click to open it.` };
+}
+
+// "Add to Series…" (#39): an existing series by its name (any case), else a new one of that name; null for nothing.
+export function seriesChoice(typed, all) {
+  const name = String(typed || "").trim().replace(/\s+/g, " ");
+  if (!name) return null;
+  const same = (all || []).find((s) => fold(s.name) === fold(name));
+  return same ? { series: same.id, name: same.name } : { name };
+}
+
+// The toast after a meeting changed series: ``m`` as it was, ``after`` as the server answered.
+export function seriesMovedText(m, after) {
+  const name = after?.series?.name;
+  if (!name) return m.series ? `Removed from “${m.series.name}”` : "Removed from its series";
+  if (m.series?.id === after.series.id) return `Already in “${name}”`;
+  return m.series ? `Moved to “${name}”` : `Added to “${name}”`;
+}
+
+// A series' ⋯ on its page: Rename, Merge Into… (when there is another), and Delete in red.
+export function seriesCommands(d, s) {
+  const others = (d?.series || []).filter((o) => o.id !== s.id);
+  return [
+    { name: "rename", label: "Rename", enabled: true },
+    others.length ? { name: "mergeInto", label: "Merge Into…", enabled: true } : undefined,
+    null,
+    { name: "delete", label: "Delete Series", danger: true, enabled: true },
+  ].filter((x) => x !== undefined);
+}
+
+// The toast after a series' name or project changed.
+export function seriesEditText(s, body) {
+  if (body.name !== undefined) return `“${s.name}” is now “${body.name.trim().replace(/\s+/g, " ")}”`;
+  const project = String(body.project || "").trim();
+  return project ? `“${s.name}” is in project ${project}` : `“${s.name}” is in no project now`;
+}
+
+// How a series came to be, and when it meets, under its name on its page.
+export function seriesLede(s) {
+  const how = { event: "From a recurring calendar event you linked", "call-window": "From a call title that repeated",
+    you: "Put together by you" }[s.learned] || "Remembered by Palaver";
+  const joins = s.calendar || s.call_title
+    ? `; new recordings join it by themselves${s.when ? ` (${s.when})` : ""}` : "; add recordings from their ⋯ menu";
+  return `${how}${joins}.`;
+}
+
+// The series in the meeting list's filter (#39): name, how many meetings, id; most meetings first.
+export function seriesFilterGroups(meetings) {
+  const found = new Map();
+  for (const m of meetings || []) {
+    if (!m.series?.id) continue;
+    found.set(m.series.id, [m.series.name, (found.get(m.series.id)?.[1] || 0) + 1]);
+  }
+  return [...found].map(([id, [name, n]]) => [name, n, id]).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+
+// The series the palette finds, from the meeting list: each once, with its project.
+export function seriesEntries(meetings) {
+  const found = new Map();
+  for (const m of meetings || []) {
+    if (m.series?.id && !found.has(m.series.id)) found.set(m.series.id, m.series);
+  }
+  return [...found.values()].map((s) => ({ kind: "series", id: s.id, label: s.name,
+    detail: s.project ? `Series · ${s.project}` : "Series", keywords: s.project ? [s.project] : [] }));
 }
 
 // Where a title came from, when it is not obvious: the list item's tooltip.
@@ -1395,7 +1472,7 @@ export function cutAtPointer(fraction, duration, lines) {
 const folded = (s) => String(s || "").normalize("NFKD").replace(/[̀-ͯ]/g, "")
   .replace(/ß/g, "ss").toLocaleLowerCase();
 const wordsOf = (s) => folded(s).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
-const KIND_RANK = { command: 0, page: 1, setting: 2, meeting: 3, person: 4, project: 5 };
+const KIND_RANK = { command: 0, page: 1, setting: 2, meeting: 3, person: 4, project: 5, series: 6 };
 
 // What the palette finds for ``query``: every word typed starts a word of
 // the label or of its keywords (people, projects). A label that starts with
@@ -1418,8 +1495,8 @@ export function paletteMatch(query, entries, limit = 30) {
 }
 
 const PALETTE_COMMANDS = ["play", "transcribe", "writeNotes", "rename", "changeEvent", "joinPrevious", "joinNext", "split", "reviewAgain",
-  "export", "markdown", "notionOpen", "notionUpload", "localOnly", "shared", "forgetSeries", "forgetLinkedSeries", "report", "deleteAudio",
-  "trash"];
+  "export", "markdown", "notionOpen", "notionUpload", "localOnly", "shared", "addToSeries", "leaveSeries", "forgetSeries", "forgetLinkedSeries",
+  "report", "deleteAudio", "trash"];
 
 // The open meeting's commands that apply now, with their shortcuts.
 export function paletteCommands(m) {
@@ -1448,13 +1525,15 @@ export function paletteMove(at, delta, count) {
 // The recent places the palette shows before typing: meetings as the list
 // has them now, people and projects only while they exist (``people``:
 // names, ``projects``: ids); at most ``max``.
-export function paletteRecentShown(recent, { meetings = [], people = [], projects = [] }, max = 6) {
+export function paletteRecentShown(recent, { meetings = [], people = [], projects = [], series = [] }, max = 6) {
   const names = new Set(people);
   const ids = new Set(projects);
+  const seriesIds = new Set(series);
   return (recent || []).map((r) => {
     if (r.kind === "meeting") return meetings.find((x) => x.id === r.id) || null;
     if (r.kind === "person") return names.has(r.id) ? r : null;
     if (r.kind === "project") return ids.has(r.id) ? r : null;
+    if (r.kind === "series") return seriesIds.has(r.id) ? r : null;
     return r;
   }).filter(Boolean).slice(0, max);
 }
@@ -1724,6 +1803,7 @@ export function actionCatalog() {
       ...laneCommands(m, { is_user: true, shared: "lane" })]),
     ...named("line", lineCommands(m, 1, true)),
     ...named("project", projectCommands({ projects: [{ id: "a" }, { id: "b" }] }, { id: "a" })),
+    ...named("series", seriesCommands({ series: [{ id: "a" }, { id: "b" }] }, { id: "a" })),
     ...named("person", personCommands({ meetings: [{ clip: 1 }] })),
     ...named("voice", voiceCommands({ voices: [{ clip: 1 }] })),
     ...named("term", termCommands()),

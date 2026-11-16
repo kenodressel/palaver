@@ -139,7 +139,7 @@ private func refused(_ text: String, _ body: () throws -> Any) -> Bool {
         let f = try Fixture()
         let tools = try #require(f.request("tools/list")?["result"]?["tools"]?.arrayValue)
         #expect(Set(tools.compactMap { $0["name"]?.stringValue }) == ["list_meetings", "search_meetings", "get_meeting",
-                                                                         "list_projects", "get_project", "list_people", "open_next_steps",
+                                                                         "list_projects", "get_project", "list_series", "get_series", "list_people", "open_next_steps",
                                                                          "import_meeting"])
         // Only import_meeting writes, and says so.
         #expect(tools.filter { $0["annotations"]?["readOnlyHint"] == .bool(false) }.map { $0["name"] } == [.string("import_meeting")])
@@ -162,6 +162,45 @@ private func refused(_ text: String, _ body: () throws -> Any) -> Bool {
         #expect(tool("get_meeting")["outputSchema"]?["title"] == .string("get_meetingDictOutput"))
         #expect(tool("search_meetings")["outputSchema"]?["title"] == .string("search_meetingsDictOutput"))
         #expect(tool("get_meeting")["description"]?.stringValue?.hasPrefix("One recorded meeting or call: who was invited and spoke") == true)
+    }
+
+    // MARK: - meeting series (#39)
+
+    @Test func seriesAreListedWithTheirProjectAndTheirLastMeetingsGiven() throws {
+        let f = try Fixture()
+        try f.withAPrivateMeeting()
+        let other = "2026-10-20T16-03-07"
+        try f.meeting(other)
+        let weekly = try MeetingSeries.put(f.paths(), intoNamed: "Contoso weekly", stores: f.stores)
+        try MeetingSeries.put(f.paths(other), into: weekly.id, stores: f.stores)
+        try MeetingSeries.put(f.paths(PRIVATE), into: weekly.id, stores: f.stores)
+        try MeetingSeries.setProject(weekly.id, "Contoso", stores: f.stores)
+        // A series of only meetings kept on this Mac is not shown: its name came from them.
+        try MeetingSeries.put(f.paths(PRIVATE), intoNamed: "Secret deal sync", stores: f.stores)
+        try MeetingSeries.create(name: "Northwind 1:1", stores: f.stores)
+        let m = f.tools
+
+        let all = try #require(try m.listSeries().arrayValue)
+        #expect(all.compactMap { $0["name"]?.stringValue } == ["Contoso weekly", "Northwind 1:1"])
+        #expect(all[0]["project"] == .string("Contoso") && all[0]["meetings"] == .int(2)
+                && all[0]["latest"] == .string("2026-10-27T16:03:07+01:00") && all[0]["learned_from"] == .string("made by the user"))
+        let last = try m.getSeries(series: "contoso WEEKLY", limit: 1)
+        #expect(last["meetings_in_series"] == .int(2) && ids(last["meetings"]) == [MEETING])
+        #expect(last["meetings"]?.arrayValue?.first?["series"] == .string("Contoso weekly"))
+        #expect(ids(try m.getSeries(series: weekly.id)["meetings"]) == [MEETING, other])
+        #expect(refused("no meeting series 'Secret deal sync'; list_series shows them") { try m.getSeries(series: "Secret deal sync") })
+        // The lists filter by series and by a series' project, which needs no project of the Projects page.
+        #expect(ids(try m.listMeetings(series: "Contoso weekly")) == [MEETING, other])
+        #expect(ids(try m.listMeetings(project: "contoso")) == [MEETING, other])
+        #expect(ids(try m.searchMeetings(query: "salary", series: "Contoso weekly")["meetings"]) == [MEETING, other])
+        #expect(ids(try m.searchMeetings(query: "salary", project: "Contoso")["meetings"]) == [MEETING, other])
+        #expect(try m.openNextSteps(project: "Contoso").arrayValue?.count == 2)
+        noSecrets(try m.listSeries())
+        noSecrets(try m.getSeries(series: weekly.id))
+        // Logged as what went out.
+        _ = f.call("get_series", [("series", .string("Contoso weekly"))])
+        let line = try #require(try f.log().last)
+        #expect(line["tool"] == .string("get_series") && line["meetings"] == .strings([MEETING, other]))
     }
 
     @Test func importMeetingTakesInANotionNoteOnce() throws {

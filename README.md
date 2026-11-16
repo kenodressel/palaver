@@ -103,6 +103,12 @@ to the new folders at the first start.
   have the same call title twice, and Palaver remembers the series: the next
   recordings join it by themselves, and keep its name if the calendar loses
   the event (⋯ → Stop Linking This Series undoes it).
+- **Series.** Put a meeting into a series of your own (⋯ → Add to Series…,
+  a new one by typing its name), move it to another or take it out. A
+  series' page (its chip under the date, or ⌘K) lists its meetings, newest
+  first: rename it, give it a project ("Contoso"), merge two series of the
+  same meeting, or delete it (the meetings stay). It remembers the note
+  template you chose for it. The search knows `series:` and `project:`.
 - **Projects.** Meetings join the project they clearly belong to: the same
   people, title words or customer. Otherwise the notes model suggests one.
   Rename, merge and correct projects; a meeting you take out stays out.
@@ -325,7 +331,7 @@ You don't need any of these. Each one is off until you set it up.
   due day and the meeting's title and date (and a link to its Notion page
   when it was uploaded there); nothing else of the meeting.
 - **Claude (MCP):** `palaver mcp --install` lets Claude Code read your
-  meetings, notes, projects and people (`--install --desktop` for
+  meetings, notes, projects, series and people (`--install --desktop` for
   Claude Desktop). It only reads, except `import_meeting`, which adds
   meetings from before Palaver when you ask (see
   [Using Palaver](#using-palaver)). The server is called "palaver" (it was "meetings" before

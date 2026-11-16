@@ -4,7 +4,7 @@
 //
 // Which template writes a meeting's notes, in this order: the one the user chose for the meeting (template.json in its
 // folder), the one its notes were written with (so a rewrite never silently switches), the one remembered for its
-// calendar series, the calendar title's (rules below), else Default. The user's own templates and the series' choices
+// calendar series or else its meeting series of Palaver's own (#39), the calendar title's (rules below), else Default. The user's own templates and the series' choices
 // are in templates.json in the config dir, written under its lock like the other small stores.
 import Foundation
 import PalaverCore
@@ -213,13 +213,46 @@ public enum NoteTemplates {
     /// The series' next meetings use template `id`; nil forgets the series.
     public static func rememberSeries(_ event: CalendarEvent?, _ id: String?, stores: StorePaths) throws {
         guard let series = seriesId(event) else { throw NoteTemplateError("only a recurring calendar event has a series") }
+        try remember(series, title: event?.title ?? "", id, stores: stores)
+    }
+
+    static func remember(_ series: String, title: String, _ id: String?, stores: StorePaths) throws {
         if let id, find(id, stores: stores) == nil { throw NoteTemplateError("no template \(id)") }
         try change(stores) { data in
             var all = data["series"].flatMap { PyDict<JSONValue>($0) } ?? PyDict()
-            if let id { all[series] = .object([("template", .string(id)), ("title", .string(event?.title ?? ""))]) }
+            if let id { all[series] = .object([("template", .string(id)), ("title", .string(title))]) }
             else { _ = all.removeValue(forKey: series) }
             data["series"] = all.json
         }
+    }
+
+    // MARK: - a meeting series of Palaver's own (#39)
+
+    /// A meeting series of Palaver's own is remembered under this key, beside the calendar series' ids.
+    public static func meetingSeriesKey(_ id: String) -> String { "palaver:" + id }
+
+    /// Where the meeting's next ones remember a template: its calendar series, else the meeting series it is in;
+    /// with the title Settings lists it by. nil: neither.
+    public static func seriesKey(_ paths: RecordingPaths, event: CalendarEvent?, stores: StorePaths) -> (key: String, title: String)? {
+        if let series = seriesId(event) { return (series, event?.title ?? "") }
+        guard let own = MeetingSeries.of(meeting: paths.id, stores: stores) else { return nil }
+        return (meetingSeriesKey(own.id), own.name)
+    }
+
+    /// The template remembered for the meeting's calendar series, else for its meeting series; nil none.
+    public static func seriesChoice(_ paths: RecordingPaths, event: CalendarEvent?, stores: StorePaths) -> String? {
+        let remembered = read(stores)["series"]
+        if let series = seriesId(event), let id = remembered?[series]?["template"]?.stringValue { return id }
+        guard let own = MeetingSeries.of(meeting: paths.id, stores: stores) else { return nil }
+        return remembered?[meetingSeriesKey(own.id)]?["template"]?.stringValue
+    }
+
+    /// The next meetings of the meeting's series (its calendar's, else its own) use template `id`; nil forgets it.
+    public static func rememberSeries(_ paths: RecordingPaths, event: CalendarEvent?, _ id: String?, stores: StorePaths) throws {
+        guard let key = seriesKey(paths, event: event, stores: stores) else {
+            throw NoteTemplateError("only a meeting of a series can remember a template for it")
+        }
+        try remember(key.key, title: key.title, id, stores: stores)
     }
 
     /// Forgets a series by its id (from the Settings list).
@@ -276,7 +309,7 @@ public enum NoteTemplates {
         if let t = found(written?["template"]?.stringValue) { return (t, FROM_NOTES) }
         let calendar: CalendarEvent?
         if case .known(let e) = event { calendar = e } else { calendar = CalendarEvents.load(paths) }
-        if let t = found(seriesChoice(calendar, stores: stores)) { return (t, FROM_SERIES) }
+        if let t = found(seriesChoice(paths, event: calendar, stores: stores)) { return (t, FROM_SERIES) }
         if let title = calendar?.title, let t = found(byTitle(title)) { return (t, FROM_TITLE) }
         return (builtin[0], FROM_DEFAULT)
     }

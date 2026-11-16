@@ -265,6 +265,7 @@ public enum MeetingsAPI {
     public static func listMeetings(app: ServerApp) throws -> [JSONValue] {
         guard isDirectory(app.outputDir) else { return [] }
         let store = ProjectStore(path: app.stores.projects)
+        let series = seriesOf(app)
         let names = (try? FileManager.default.contentsOfDirectory(atPath: app.outputDir.path)) ?? []
         var out: [JSONValue] = []
         for name in Py.stableSorted(names, by: Py.less).reversed() {
@@ -278,7 +279,18 @@ public enum MeetingsAPI {
             entry["status"] = .string(status)
             entry["finishing"] = .bool(finishing(paths, status))
             entry["projects"] = try projectsOf(store, name)
+            entry["series"] = series[ScalarKey(name)] ?? .null
             out.append(entry.json)
+        }
+        return out
+    }
+
+    /// Meeting id → the series it is in (#39): its id, name and project, as the list shows and filters by it.
+    static func seriesOf(_ app: ServerApp) -> [ScalarKey: JSONValue] {
+        var out: [ScalarKey: JSONValue] = [:]
+        for s in MeetingSeries.all(stores: app.stores) {
+            let brief = JSONValue.object([("id", .string(s.id)), ("name", .string(s.name)), ("project", .str(s.project))])
+            for meeting in s.meetings { out[ScalarKey(meeting)] = brief }
         }
         return out
     }

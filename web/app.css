@@ -148,11 +148,11 @@ button, input { font: inherit; color: inherit; }
 }
 @keyframes side-in { from { opacity: 0; transform: translateX(-12px); } }
 
-/* People, Projects, Glossary and Settings use the whole width. */
-body:is([data-page="today"], [data-page="people"], [data-page="projects"], [data-page="glossary"], [data-page="settings"], [data-page="setup"], [data-page="report"]) {
+/* People, Projects, Series, Glossary and Settings use the whole width. */
+body:is([data-page="today"], [data-page="people"], [data-page="projects"], [data-page="series"], [data-page="glossary"], [data-page="settings"], [data-page="setup"], [data-page="report"]) {
   grid-template-areas: "top top" "main main" "player player";
 }
-body:is([data-page="today"], [data-page="people"], [data-page="projects"], [data-page="glossary"], [data-page="settings"], [data-page="setup"], [data-page="report"]) .sidebar { display: none; }
+body:is([data-page="today"], [data-page="people"], [data-page="projects"], [data-page="series"], [data-page="glossary"], [data-page="settings"], [data-page="setup"], [data-page="report"]) .sidebar { display: none; }
 
 .list-head { display: flex; flex-direction: column; padding-top: 16px; }
 
@@ -828,6 +828,19 @@ button.mn-time:hover, button.mn-time:focus-visible { background: var(--selected)
 .link-why { min-width: 0; overflow: hidden; color: var(--ink-2); font-size: 12px; font-weight: 500;
   text-overflow: ellipsis; white-space: nowrap; }
 .event-choice { font-weight: 600; }
+/* #39: the series chip opens the series' page. */
+button.series-chip { border: 0; font: inherit; font-size: 13px; cursor: pointer; text-align: left; }
+button.series-chip:hover .link-title { text-decoration: underline; }
+.series-project { color: var(--ink-2); font-size: 12px; font-weight: 500; }
+.series-project::before, .series-project::after { content: "·"; color: var(--ink-3); }
+.series-project::before { margin-right: 6px; }
+.series-project::after { margin-left: 6px; }
+/* The series page: the project beside the name, a series' meetings as a log. */
+.series .series-project-input { flex: 0 1 200px; min-width: 0; font-size: 13px; font-weight: 500; }
+.series-all { margin: 0 0 12px; }
+.series-choice-field { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 8px; }
+.series-choice-field input { padding: 8px 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface);
+  color: var(--ink); font: inherit; }
 /* A name or an organization Palaver is not sure of. */
 .name-input.unsure-link:not(:focus) { border-style: dotted; border-color: var(--v2); }
 .org.unsure-link, .named-by.unsure-link { text-decoration: underline dotted var(--v2); text-underline-offset: 3px; }

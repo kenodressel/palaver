@@ -172,6 +172,120 @@ private typealias F = CalendarFixtures
         #expect(all.count == 1 && all[0].id == learned.id && all[0].calendarSeries == "northwind-series")
     }
 
+    // MARK: - by hand (#39)
+
+    @Test func aRecordingPutIntoANewSeriesByHandBringsTheNextOnes() throws {
+        let root = Root(); defer { root.remove() }
+        let first = try root.recording("2026-10-27T15-00-00", F.T0, call: "Contoso check-in")
+        let made = try MeetingSeries.put(first, intoNamed: "  Contoso   weekly ", stores: root.stores)
+        #expect(made.name == "Contoso weekly" && made.learned == "you" && made.meetings == [first.id])
+        #expect(made.callTitle == "contoso check-in" && made.weekday == 2 && made.minutes == 900)
+        // The same name, any case, is the same series.
+        let again = try root.recording("2026-10-27T17-00-00", at(120))
+        #expect(try MeetingSeries.put(again, intoNamed: "contoso WEEKLY", stores: root.stores).id == made.id)
+        #expect(MeetingSeries.all(stores: root.stores).count == 1)
+        // The next recording with that call title joins it by itself.
+        let next = try root.recording("2026-11-03T15-00-00", at(week), call: "Contoso Check-in")
+        #expect(try MeetingSeries.attach(next, provider: nil, stores: root.stores)?.id == made.id)
+        #expect(throws: MeetingSeriesError.self) { try MeetingSeries.put(next, intoNamed: "   ", stores: root.stores) }
+        #expect(throws: MeetingSeriesError.self) { try MeetingSeries.put(next, into: "s-gone", stores: root.stores) }
+    }
+
+    @Test func aMeetingIsInOneSeriesAndOneTakenOutStaysOut() throws {
+        let root = Root(); defer { root.remove() }
+        let a = try root.recording("2026-10-20T15-00-00", at(-week), call: "Northwind sync")
+        let b = try root.recording("2026-10-27T15-00-00", F.T0, call: "Northwind sync")
+        let learned = try #require(try MeetingSeries.attach(b, provider: nil, stores: root.stores))
+        let mine = try MeetingSeries.create(name: "Northwind with Valerie", project: "Northwind", stores: root.stores)
+        try MeetingSeries.put(b, into: mine.id, stores: root.stores)
+        #expect(MeetingSeries.of(meeting: b.id, stores: root.stores)?.id == mine.id)
+        #expect(MeetingSeries.find(learned.id, stores: root.stores)?.meetings == [a.id])
+        // The call title stays with the series that knew it first.
+        #expect(MeetingSeries.find(mine.id, stores: root.stores)?.callTitle == "")
+        // Taken out: in no series, and it doesn't join one by itself again, not even by its call title.
+        #expect(try MeetingSeries.takeOut(b.id, stores: root.stores))
+        #expect(MeetingSeries.of(meeting: b.id, stores: root.stores) == nil)
+        #expect(try MeetingSeries.attach(b, provider: nil, stores: root.stores) == nil)
+        #expect(try !MeetingSeries.takeOut(b.id, stores: root.stores))
+        // The user's own: back in, and out of what it was taken out of no longer.
+        try MeetingSeries.put(b, into: learned.id, stores: root.stores)
+        #expect(MeetingSeries.find(learned.id, stores: root.stores)?.meetings == [a.id, b.id])
+        #expect(MeetingSeries.find(learned.id, stores: root.stores)?.removed == [])
+    }
+
+    @Test func renamedWithAProjectMergedAndDeleted() throws {
+        let root = Root(); defer { root.remove() }
+        // The same meeting learned twice: from its calendar series and, in another recording, from its call title.
+        let a = try root.recording("2026-10-20T15-00-00", at(-week))
+        try MeetingSeries.linkedByHand(a, event: northwind(-week), stores: root.stores)
+        let calendar = try #require(MeetingSeries.of(meeting: a.id, stores: root.stores))
+        let b = try root.recording("2026-10-27T15-00-00", F.T0, call: "NW sync")
+        let c = try root.recording("2026-10-28T15-00-00", at(1440), call: "NW sync")
+        let call = try #require(try MeetingSeries.attach(c, provider: nil, stores: root.stores))
+        #expect(call.meetings == [b.id, c.id])
+        try MeetingSeries.rename(calendar.id, to: "Northwind weekly", stores: root.stores)
+        try MeetingSeries.setProject(calendar.id, " Northwind ", stores: root.stores)
+        try MeetingSeries.setProject(call.id, "Contoso", stores: root.stores)
+        #expect(MeetingSeries.projects(stores: root.stores) == ["Contoso", "Northwind"])
+        #expect(throws: MeetingSeriesError.self) { try MeetingSeries.rename(calendar.id, to: "", stores: root.stores) }
+        #expect(throws: MeetingSeriesError.self) { try MeetingSeries.merge(call.id, into: call.id, stores: root.stores) }
+        try MeetingSeries.merge(call.id, into: calendar.id, stores: root.stores)
+        let merged = try #require(MeetingSeries.all(stores: root.stores).first)
+        #expect(MeetingSeries.all(stores: root.stores).count == 1 && merged.id == calendar.id)
+        #expect(merged.name == "Northwind weekly" && merged.project == "Northwind")
+        #expect(merged.meetings == [a.id, b.id, c.id] && merged.calendarSeries == "northwind-series" && merged.callTitle == "nw sync")
+        // Recordings of either join it: the call title, and the calendar series' slot.
+        let byCall = try root.recording("2026-11-03T09-00-00", at(week - 360), call: "NW sync")
+        #expect(try MeetingSeries.attach(byCall, provider: nil, stores: root.stores)?.id == calendar.id)
+        let bySlot = try root.recording("2026-11-03T15-05-00", at(week + 5))
+        #expect(try MeetingSeries.attach(bySlot, provider: { _, _ in [self.northwind(self.week)] }, stores: root.stores)?.id == calendar.id)
+        // Its name is its meetings' title while they have no better one; the project goes with "".
+        #expect(Titles.resolve(a, stores: root.stores) == ("Northwind weekly", "series"))
+        try MeetingSeries.setProject(calendar.id, "", stores: root.stores)
+        #expect(MeetingSeries.find(calendar.id, stores: root.stores)?.project == nil)
+        // Deleted: its meetings are in none, and keep the events they have.
+        try MeetingSeries.forget(calendar.id, stores: root.stores)
+        #expect(MeetingSeries.all(stores: root.stores).isEmpty && CalendarEvents.load(bySlot) != nil)
+    }
+
+    @Test func twoCalendarSeriesMergedBothBringTheirRecordings() throws {
+        let root = Root(); defer { root.remove() }
+        let a = try root.recording("2026-10-20T15-00-00", at(-week))
+        try MeetingSeries.linkedByHand(a, event: northwind(-week), stores: root.stores)
+        var renewed = northwind(0)
+        renewed.uid = "northwind-renewed"
+        let b = try root.recording("2026-10-27T15-00-00", F.T0)
+        try MeetingSeries.linkedByHand(b, event: renewed, stores: root.stores)
+        let old = try #require(MeetingSeries.of(meeting: a.id, stores: root.stores))
+        let new = try #require(MeetingSeries.of(meeting: b.id, stores: root.stores))
+        try MeetingSeries.merge(old.id, into: new.id, stores: root.stores)
+        let merged = try #require(MeetingSeries.find(new.id, stores: root.stores))
+        #expect(merged.calendarSeries == "northwind-renewed" && merged.alsoCalendarSeries == ["northwind-series"])
+        // A recording linked to the old calendar series' event is the merged series'.
+        let c = try root.recording("2026-11-03T15-00-00", at(week))
+        try CalendarEvents.save(c, northwind(week))
+        #expect(try MeetingSeries.attach(c, provider: nil, stores: root.stores)?.id == new.id)
+        // Written and read back the same.
+        let file = try #require(PythonJSON.read(root.stores.meetingSeries))
+        #expect(file["series"]?[new.id]?["also_calendar_series"] == .strings(["northwind-series"]))
+    }
+
+    @Test func aSeriesOfTheUsersKeepsItsMeetingWhateverTheEventIs() throws {
+        let root = Root(); defer { root.remove() }
+        let a = try root.recording("2026-10-27T15-00-00", F.T0)
+        let mine = try MeetingSeries.put(a, intoNamed: "Contoso", stores: root.stores)
+        // "None of these", or a one-off event: still in the user's series.
+        try MeetingSeries.linkedByHand(a, event: nil, stores: root.stores)
+        var once = northwind(0)
+        once.series = false
+        try MeetingSeries.linkedByHand(a, event: once, stores: root.stores)
+        #expect(MeetingSeries.of(meeting: a.id, stores: root.stores)?.id == mine.id)
+        // A recurring event: the series learns its calendar series, rather than a new one being made.
+        try MeetingSeries.linkedByHand(a, event: northwind(0), stores: root.stores)
+        let all = MeetingSeries.all(stores: root.stores)
+        #expect(all.count == 1 && all[0].id == mine.id && all[0].calendarSeries == "northwind-series")
+    }
+
     @Test func theCallsPeopleAreHintsWithoutAnEvent() throws {
         let root = Root(); defer { root.remove() }
         let paths = try root.recording("2026-10-27T15-00-00", F.T0, people: ["Timo Strauß", "Anna Lindqvist", "Valerie"])

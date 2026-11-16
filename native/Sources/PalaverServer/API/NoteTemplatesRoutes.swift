@@ -28,12 +28,13 @@ public enum NoteTemplatesAPI {
     }
 
     /// The meeting page's "template": the one its notes are written with next, where that comes from, and whether its
-    /// calendar series can remember one (and which it remembers).
+    /// series (its calendar's, else its meeting series, #39) can remember one (and which it remembers).
     static func meetingTemplate(_ app: ServerApp, _ paths: RecordingPaths, event: CalendarEvent?, notes: JSONValue?) -> JSONValue {
         let (template, from) = NoteTemplates.pick(paths, event: .known(event), notes: .known(notes), stores: app.stores)
-        let series = NoteTemplates.seriesChoice(event, stores: app.stores)
+        let series = NoteTemplates.seriesChoice(paths, event: event, stores: app.stores)
+        let can = NoteTemplates.seriesKey(paths, event: event, stores: app.stores) != nil
         return .object([("id", .string(template.id)), ("name", .string(template.name)), ("from", .string(from)),
-                        ("series", .object([("can", .bool(NoteTemplates.seriesId(event) != nil)), ("template", .str(series))]))])
+                        ("series", .object([("can", .bool(can)), ("template", .str(series))]))])
     }
 
     /// What wrote the notes there are (#13): null for notes from before templates, or from elsewhere.
@@ -47,7 +48,7 @@ public enum NoteTemplatesAPI {
         let paths = try MeetingsAPI.meetingPaths(outputDir: app.outputDir, id: id)
         try refused {
             try NoteTemplates.choose(paths, template, stores: app.stores)
-            if series { try NoteTemplates.rememberSeries(CalendarEvents.load(paths), template, stores: app.stores) }
+            if series { try NoteTemplates.rememberSeries(paths, event: CalendarEvents.load(paths), template, stores: app.stores) }
         }
         return try MeetingsAPI.getMeeting(app: app, id: id)
     }

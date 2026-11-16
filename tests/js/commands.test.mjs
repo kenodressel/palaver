@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { meetingCommands, nextAfter } from "../../web/logic.js";
 
 const NAMES = ["trash", "joinPrevious", "joinNext", "changeEvent", "split", "reviewAgain", "writeNotes", "play",
-  "localOnly", "shared", "forgetSeries", "forgetLinkedSeries", "rename", "export", "markdown", "notionOpen", "notionUpload", "report", "transcribe", "deleteAudio"];
+  "localOnly", "shared", "forgetSeries", "forgetLinkedSeries", "addToSeries", "leaveSeries", "rename", "export", "markdown", "notionOpen", "notionUpload", "report", "transcribe", "deleteAudio"];
 
 function ready(extra = {}) {
   return {

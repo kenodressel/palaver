@@ -12,7 +12,7 @@ import { paletteMove } from "./logic.js";
 
 let open = null;  // {el, close}
 
-const KIND_MARK = { meeting: "M", person: "P", project: "#", page: "→", command: "⌘", search: "⌕" };
+const KIND_MARK = { meeting: "M", person: "P", project: "#", series: "S", page: "→", command: "⌘", search: "⌕" };
 
 export const paletteOpen = () => !!open;
 

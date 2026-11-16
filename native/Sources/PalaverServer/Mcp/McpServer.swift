@@ -3,8 +3,8 @@
 // and `tools/call` (plus empty `prompts/list` and `resources/list`), and the app links no extra package for them.
 //
 // The server is called "palaver" (McpSetup.NAME; "meetings" before 0.6.3) and gives Claude its instructions, seven
-// read-only tools with the Python server's names, parameters and defaults, and one that writes: `import_meeting` (#4),
-// which takes in a meeting note from before Palaver (a Notion AI meeting note Claude fetched). The instructions and descriptions say what
+// read-only tools with the Python server's names, parameters and defaults, two more for meeting series (#39:
+// list_series, get_series), and one that writes: `import_meeting` (#4), which takes in a meeting note from before Palaver (a Notion AI meeting note Claude fetched). The instructions and descriptions say what
 // it serves in the words a user asks with (meetings, calls, Teams, transcripts, next steps, customers …), so Claude
 // picks it for such a question. A tool's answer is its JSON (one text block per item of
 // a list, as the Python SDK sent it) and the same value as `structuredContent`. Every call that runs leaves one line
@@ -26,6 +26,8 @@ public final class McpServer {
         was said or decided, who said what, next steps or action items, a customer, project or person. Start with \
         search_meetings or list_meetings; read a meeting with get_meeting (notes first; ask for the transcript only when \
         the notes are not enough, preferably a time range). get_project and open_next_steps gather across meetings. \
+        A recurring meeting (a weekly, a 1:1, a customer's jour fixe) is a meeting series: list_series names them, \
+        get_series gives the last ones. \
         Meeting ids look like 2026-10-21T16-29-29 (the start, local time). Meetings the user keeps on this Mac are not \
         shared here. import_meeting is the only tool that changes anything: it adds a meeting from before Palaver (a \
         Notion AI meeting note), only when the user asks for that.
@@ -138,15 +140,16 @@ public final class McpServer {
         return [
             Tool(name: "list_meetings", description: """
                 The user's recorded meetings and calls (Teams, Slack huddles, in person),
-                newest first, with title, people, projects and summary. Filter by
-                project or customer (name or id), person (spoke or was invited; part
-                of a name is enough), and dates (YYYY-MM-DD).
+                newest first, with title, people, projects, series and summary. Filter
+                by project or customer (name or id; a meeting series' project counts),
+                person (spoke or was invited; part of a name is enough), dates
+                (YYYY-MM-DD), and meeting series (name or id, as list_series shows).
                 """,
                  params: [Self.optional("project"), Self.optional("person"), Self.optional("since"), Self.optional("until"),
-                          Param(name: "limit", kind: .integer, fallback: .int(30))],
+                          Param(name: "limit", kind: .integer, fallback: .int(30)), Self.optional("series")],
                  items: "meetings") { a in
                 try t.listMeetings(project: a.string("project"), person: a.string("person"), since: a.string("since"),
-                                   until: a.string("until"), limit: a.int("limit"))
+                                   until: a.string("until"), series: a.string("series"), limit: a.int("limit"))
             },
             Tool(name: "search_meetings", description: """
                 Search the user's recorded meetings and calls: transcripts (who said
@@ -156,7 +159,7 @@ public final class McpServer {
                 month", "since 2026-10-01", "oktober"), decisions or next steps ("what
                 did we decide about X"), or one person's lines ("where did Mara talk
                 about pricing"); quoted words stay words. Filters can be written out:
-                person: project: org: since: until: in:decisions|steps|notes|transcript
+                person: project: series: org: since: until: in:decisions|steps|notes|transcript
                 by:<name> is:reviewed has:steps. The other parameters add filters.
                 Returns what was understood, and meetings found by words (title,
                 notes, transcript lines), then ones found by meaning (similar
@@ -164,11 +167,11 @@ public final class McpServer {
                 """,
                  params: [Param(name: "query", kind: .string, fallback: nil), Self.optional("project"), Self.optional("person"),
                           Self.optional("organization"), Self.optional("since"), Self.optional("until"),
-                          Param(name: "limit", kind: .integer, fallback: .int(10))],
+                          Param(name: "limit", kind: .integer, fallback: .int(10)), Self.optional("series")],
                  items: "meetings") { a in
                 try t.searchMeetings(query: a.string("query") ?? "", project: a.string("project"), person: a.string("person"),
                                      organization: a.string("organization"), since: a.string("since"), until: a.string("until"),
-                                     limit: a.int("limit"))
+                                     series: a.string("series"), limit: a.int("limit"))
             },
             Tool(name: "get_meeting", description: """
                 One recorded meeting or call: who was invited and spoke, projects, its
@@ -195,6 +198,22 @@ public final class McpServer {
                 """,
                  params: [Param(name: "project", kind: .string, fallback: nil)], items: nil) { a in
                 try t.getProject(project: a.string("project") ?? "")
+            },
+            Tool(name: "list_series", description: """
+                Meeting series: recurring meetings and calls the user has (a weekly, a
+                1:1, a customer's jour fixe), learned from the calendar, the call's
+                title, or put together by the user. Each with its project (if the
+                user gave one), how many meetings and the latest.
+                """,
+                 params: [], items: "series") { _ in try t.listSeries() },
+            Tool(name: "get_series", description: """
+                The last meetings of a meeting series (name or id, as list_series
+                shows), newest first: ids, titles, dates, people and summaries. Read
+                one with get_meeting, e.g. to prepare the next meeting of the series.
+                """,
+                 params: [Param(name: "series", kind: .string, fallback: nil), Param(name: "limit", kind: .integer, fallback: .int(5))],
+                 items: nil) { a in
+                try t.getSeries(series: a.string("series") ?? "", limit: a.int("limit"))
             },
             Tool(name: "list_people", description: """
                 People in the user's meetings and calls (named speakers and invitees),
@@ -326,6 +345,10 @@ public final class McpServer {
         } else if tool.name == "import_meeting" {
             out.append(("meetings", .int(1)))
             ids = [result["meeting_id"]?.stringValue].compactMap { $0 }
+        } else if tool.name == "get_series" {
+            let meetings = result["meetings"]?.arrayValue ?? []
+            out += [("series", .int(1)), ("meetings", .int(meetings.count))]
+            ids = meetings.compactMap { $0["id"]?.stringValue }
         } else if tool.name == "get_project" {
             let meetings = result["meetings"]?.arrayValue ?? []
             out += [("projects", .int(1)), ("meetings", .int(meetings.count)),

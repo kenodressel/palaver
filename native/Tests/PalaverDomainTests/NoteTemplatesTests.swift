@@ -105,6 +105,29 @@ import Testing
         #expect(throws: NoteTemplateError.self) { try NoteTemplates.choose(s.paths, "nope", stores: s.stores) }
     }
 
+    @Test func aMeetingSeriesOfPalaversOwnRemembersItsTemplate() throws {
+        let s = try Setup(); defer { s.t.remove() }
+        #expect(NoteTemplates.seriesKey(s.paths, event: nil, stores: s.stores) == nil)
+        #expect(throws: NoteTemplateError.self) { try NoteTemplates.rememberSeries(s.paths, event: nil, "interview", stores: s.stores) }
+        // In a series of the user's (#39): remembered for it, under its name in Settings.
+        let own = try MeetingSeries.put(s.paths, intoNamed: "Valerie 1:1", stores: s.stores)
+        try NoteTemplates.rememberSeries(s.paths, event: nil, "one-on-one", stores: s.stores)
+        #expect(s.pick() == ["one-on-one", "series"])
+        #expect(NoteTemplates.rememberedSeries(stores: s.stores).map { [$0.series, $0.title, $0.template] }
+                == [["palaver:\(own.id)", "Valerie 1:1", "one-on-one"]])
+        // The next meeting of the series has it too.
+        let next = RecordingPaths(s.t.url.appendingPathComponent("2026-11-23T10-00-00", isDirectory: true))
+        try FileManager.default.createDirectory(at: next.folder, withIntermediateDirectories: true)
+        try MeetingSeries.put(next, into: own.id, stores: s.stores)
+        #expect(NoteTemplates.pick(next, stores: s.stores).template.id == "one-on-one")
+        // A recurring calendar event's own choice comes first.
+        try s.event("Valerie 1:1", uid: "V1", series: true)
+        #expect(NoteTemplates.seriesKey(s.paths, event: CalendarEvents.load(s.paths), stores: s.stores)?.key == "V1")
+        #expect(s.pick() == ["one-on-one", "series"])  // the calendar series remembers none: the meeting series'
+        try NoteTemplates.rememberSeries(s.paths, event: CalendarEvents.load(s.paths), "standup", stores: s.stores)
+        #expect(s.pick() == ["standup", "series"])
+    }
+
     @Test func aDeletedTemplateFallsBackToTheNextInLine() throws {
         let s = try Setup(); defer { s.t.remove() }
         try s.event("Stand-up", uid: "S2", series: true)

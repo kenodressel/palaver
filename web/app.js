@@ -38,6 +38,9 @@ import { followUpButton, followUpAddedText, recapTitle } from "./logic.js";
 import { recordingNow, recordingCommand, RECORD_TEXT } from "./logic.js";
 import { mutedIn, muteUnfollowed, mutedText, unfollowedText } from "./logic.js";
 import { eventPickerChoices, EVENT_FILTER_AFTER, seriesView, titleSourceText } from "./logic.js";
+// Meeting series of Palaver's own (#39).
+import { seriesChoice, seriesMovedText, seriesCommands, seriesEditText, seriesLede, seriesFilterGroups, seriesEntries }
+  from "./logic.js";
 import { openExport, pickImport, wireDrop, importFile, askVoices, decideVoices, dialog } from "./exchange.js";
 // Updates and uninstalling (#60).
 import { updateIndicator, updateView, SETTINGS_PANES, settingsPane, settingsEntries } from "./logic.js";
@@ -159,6 +162,8 @@ const state = {
   names: [],       // for the name fields' suggestions
   directory: null, // people across meetings
   projects: null,  // projects and the meetings in no project
+  series: null,    // the series page (#39): every series with its meetings, and the projects to offer
+  seriesFocus: null,  // the series it shows alone (null: all)
   settings: null,  // app settings (realtime, auto-record switches)
   lm: null,        // Settings → Language model (/api/language-model); never holds a key
   lmError: null,   // what the last language-model change said
@@ -253,8 +258,8 @@ async function loadNeeds() {
   showNeeds(before, true);
 }
 
-// Show only one project's meetings, or one person's (spoke or was invited),
-// most meetings first.
+// Show only one project's meetings, one series' (#39), or one person's (spoke
+// or was invited), most meetings first.
 function renderFilter() {
   const people = new Map();
   const projects = new Map();
@@ -265,14 +270,16 @@ function renderFilter() {
   const byCount = (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]);
   const names = [...people].sort(byCount);
   const groups = [...projects].map(([id, [name, n]]) => [name, n, id]).sort(byCount);
-  const key = JSON.stringify([state.filter, names, groups]);
+  const series = seriesFilterGroups(state.meetings);
+  const key = JSON.stringify([state.filter, names, groups, series]);
   if (key === renderFilter.key) return; // the list refreshes often; keep an open menu open
   renderFilter.key = key;
   const option = (value, label) => h("option", { value, selected: value === state.filter }, label);
   $("#filter").replaceChildren(option("", "All meetings"),
     groups.length ? h("optgroup", { label: "Projects" }, groups.map(([name, n, id]) => option(`p:${id}`, `${name} (${n})`))) : null,
+    series.length ? h("optgroup", { label: "Series" }, series.map(([name, n, id]) => option(`s:${id}`, `${name} (${n})`))) : null,
     names.length ? h("optgroup", { label: "People" }, names.map(([name, n]) => option(`n:${name}`, `${name} (${n})`))) : null);
-  if (state.filter && !$("#filter").value) state.filter = ""; // its project or person is gone
+  if (state.filter && !$("#filter").value) state.filter = ""; // its project, series or person is gone
 }
 
 function dropResult(id) {
@@ -283,6 +290,7 @@ function dropResult(id) {
 function shown(m) {
   const [kind, value] = [state.filter.slice(0, 1), state.filter.slice(2)];
   if (kind === "p") return m.projects.some((p) => p.id === value);
+  if (kind === "s") return m.series?.id === value;
   if (kind === "n") return m.people.includes(value) || m.invited.includes(value);
   return true;
 }
@@ -976,6 +984,8 @@ const ICONS = {
   localOnly: "M6 11h12v10H6zM9 11V7a3 3 0 0 1 6 0v4",
   forgetSeries: "M4 4l16 16M7 5h12a2 2 0 0 1 2 2v10M3 9v10a2 2 0 0 0 2 2h12M3 9h6",
   forgetLinkedSeries: "M4 4l16 16M6 5h12a3 3 0 0 1 3 3v10M3 10v8a3 3 0 0 0 3 3h12M3 10h7",
+  addToSeries: "M4 6h10M4 12h10M4 18h6M18 14v8M14 18h8",
+  leaveSeries: "M4 6h10M4 12h10M4 18h6M14 18h8",
   export: "M12 3v12M7 8l5-5 5 5M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5",
   markdown: "M6 3h9l4 4v14H6zM14 3v5h5M9 13h7M9 17h7",
   notionOpen: "M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5",
@@ -1012,6 +1022,8 @@ const ACTIONS = tracked("meeting", {
   shared: (m, from) => markShared(m, !m.shared?.meeting, from),
   forgetSeries: (m, from) => rememberSeries(m, false, from),
   forgetLinkedSeries: (m, from) => forgetLinkedSeries(m, from),
+  addToSeries: (m, from) => pickSeries(m, from),
+  leaveSeries: (m, from) => setMeetingSeries(m, { remove: true }, from),
   export: (m) => openExport(m, titleOf(m)),
   markdown: async (m) => {
     try {
@@ -1030,7 +1042,7 @@ const ACTIONS = tracked("meeting", {
 // The ⋯ menu, in the spec's order: Move to Trash last, red, after a separator.
 const MENU_ORDER = ["transcribe", "rename", "changeEvent", "joinPrevious", "joinNext", "split", "reviewAgain", "export", "markdown",
   "notionOpen", "notionUpload", "localOnly",
-  "shared", "forgetSeries", "forgetLinkedSeries", "report", null, "deleteAudio", "trash"];
+  "shared", "addToSeries", "leaveSeries", "forgetSeries", "forgetLinkedSeries", "report", null, "deleteAudio", "trash"];
 function itemsFor(m, from) {
   const c = meetingCommands(m);
   return MENU_ORDER.filter((name) => !name || !c[name].hidden).map((name) => name && {
@@ -1910,6 +1922,77 @@ async function forgetLinkedSeries(m, from) {
     if (onPage(m.id)) renderMeeting();
   }
   remember(`Recordings no longer join “${name}” by themselves`, () => eventBack(m.id, token));
+}
+
+// "Add to Series…" / "Move to Series…" (#39): an existing series, or a new one by typing its name.
+async function pickSeries(m, from) {
+  let d;
+  try {
+    d = await working(from, api("/api/series"));
+  } catch (err) {
+    errorToast(`The series could not be loaded: ${err.message}`);
+    return;
+  }
+  const all = d.series || [];
+  const input = h("input", { type: "text", list: "series-names", spellcheck: "false", autocomplete: "off",
+    "aria-label": "Series", placeholder: all.length ? "A series, or a new name" : "A name for the new series" });
+  const verb = m.series ? "Move" : "Add";
+  let answer = null;
+  const dlg = dialog({
+    title: m.series ? `Move “${titleOf(m)}” to another series` : `Add “${titleOf(m)}” to a series`,
+    label: `${verb} to Series`,
+    body: [
+      h("label", { class: "series-choice-field" },
+        h("span", { class: "meta" }, m.series ? `Now in “${m.series.name}”. Pick another series, or type a new name.`
+          : "Pick a series, or type a name for a new one. Its next recordings may join it by themselves."),
+        input),
+      h("datalist", { id: "series-names" }, all.map((s) => h("option", { value: s.name,
+        label: s.project ? s.project : null }))),
+    ],
+    buttons: [{ label: "Cancel" }, { label: verb, value: "done", run: async () => {
+      const choice = seriesChoice(input.value, all);
+      if (!choice) throw new Error("Type a series' name.");
+      answer = await api(`/api/meetings/${encodeURIComponent(m.id)}/series`,
+        choice.series ? { series: choice.series } : { name: choice.name });
+    } }],
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    dlg.el.querySelector(".dialog-buttons .primary")?.click();
+  });
+  input.focus();
+  if (await dlg.result !== "done" || !answer) return;
+  seriesChanged(m, answer);
+}
+
+// Taken out of its series: it doesn't join it again by itself. ``change``: the request's body.
+async function setMeetingSeries(m, change, from) {
+  let answer;
+  try {
+    answer = await working(from, api(`/api/meetings/${encodeURIComponent(m.id)}/series`, change));
+  } catch (err) {
+    errorToast(`The series was not changed: ${err.message}`,
+      { action: { label: "Try again", run: () => setMeetingSeries(m, change, from) } });
+    return;
+  }
+  seriesChanged(m, answer);
+}
+
+// The meeting's page with its new series (its title may be the series' name); Undo puts series.json back.
+function seriesChanged(m, answer) {
+  const { undo: token, ...page } = answer;
+  if (state.meeting?.id === m.id) {
+    state.meeting = page;
+    if (onPage(m.id)) renderMeeting();
+  }
+  loadList();
+  remember(seriesMovedText(m, page), async () => {
+    await api("/api/undo", { token });
+    if (state.view === "series") await openSeries(state.seriesFocus, "replace");
+    else if (state.meeting?.id === m.id && state.view === "meetings") await openMeeting(m.id, undefined, { how: "replace" });
+    loadList();
+  });
 }
 
 async function dismissSharedSuggestion(id, button) {
@@ -3034,7 +3117,7 @@ async function writeNotes(id) {
 const TEMPLATE_FROM = {
   meeting: "You chose it for this meeting",
   notes: "These notes were written with it",
-  series: "Remembered for this calendar series",
+  series: "Remembered for this series",
   title: "Picked by the calendar title",
   default: "No other template fits this meeting",
 };
@@ -3668,6 +3751,155 @@ function renderProjects() {
   }
   $("#main").replaceChildren(page);
   for (const t of document.querySelectorAll(".description-input")) autoGrow({ target: t });
+}
+
+// --- meeting series (#39) ----------------------------------------------------------
+
+// A series' page (``focus``: its id), or every series. Its name and project are fields; its ⋯ merges or deletes it;
+// its meetings newest first, each with × to take it out.
+async function openSeries(focus = null, how = "push") {
+  const here = leaveMeeting("series", hashOf({ view: "series", focus }), how);
+  try {
+    state.series = await api("/api/series");
+    state.error = null;
+  } catch (err) {
+    state.error = `The series could not be loaded: ${err.message}`;
+  }
+  state.seriesFocus = focus;
+  const named = focus && (state.series?.series || []).find((s) => s.id === focus);
+  if (named) keepRecent({ kind: "series", id: focus, label: named.name, detail: "Series" });
+  if (movedOn(here)) return;
+  renderSeries();
+}
+
+const seriesSection = (sid) => document.getElementById(`series-${sid}`);
+
+function showSeries(d) {
+  state.series = d;
+  if (state.view === "series") renderSeries();
+  loadList();
+}
+
+// A change on the series page: the page again, and its undo remembered as ``label``.
+async function changeSeries(path, body, failed, label, from, sid = null) {
+  let d;
+  try {
+    d = await working(from, api(path, body));
+  } catch (err) {
+    errorToast(`${failed}: ${err.message}`, { action: { label: "Try again", run: () => changeSeries(path, body, failed, label, from, sid) } });
+    if (state.view === "series") renderSeries();  // a rename that failed shows the old name again
+    return null;
+  }
+  showSeries(d);
+  remember(label, async () => {
+    await api("/api/undo", { token: d.undo });
+    showSeries(await api("/api/series"));
+    const el = sid && state.view === "series" ? seriesSection(sid) : null;
+    if (el) flash(el);
+  });
+  return d;
+}
+
+function seriesItems(d, s, from) {
+  const run = tracked("series", {
+    rename: () => {
+      const input = seriesSection(s.id)?.querySelector(".name-input");
+      input?.focus();
+      input?.select();
+    },
+    mergeInto: () => menu(d.series.filter((o) => o.id !== s.id).map((o) => ({
+      label: o.name, run: async () => {
+        const done = await changeSeries(`/api/series/${encodeURIComponent(s.id)}/merge`, { into: o.id },
+          `“${s.name}” was not merged`, `“${s.name}” merged into “${o.name}”`, from, s.id);
+        if (done && state.seriesFocus === s.id) openSeries(o.id, "replace");
+      },
+    })), from),
+    delete: async () => {
+      const done = await changeSeries(`/api/series/${encodeURIComponent(s.id)}/delete`, {}, `“${s.name}” was not deleted`,
+        `Series “${s.name}” deleted; its meetings stay`, from, s.id);
+      if (done && state.seriesFocus === s.id) openSeries(null, "replace");
+    },
+  });
+  return seriesCommands(d, s).map((c) => c && { label: c.label, danger: c.danger, disabled: !c.enabled, run: run[c.name] });
+}
+
+function seriesMeeting(s, x) {
+  const people = x.people || [];
+  return h("li", { class: "appearance project-meeting", "data-meeting": x.id },
+    h("span", { class: "meta project-meeting-day", title: x.start ? dayFmt.format(new Date(x.start)) : null },
+      x.start ? shortDayFmt.format(new Date(x.start)) : ""),
+    h("button", { class: "link appearance-title", title: meetingTitle(x), onclick: () => openMeeting(x.id) }, meetingTitle(x)),
+    h("span", { class: "faces", title: people.join(", ") || null },
+      people.slice(0, 4).map((n) => h("span", { style: `--c:${personColor(n)}` }, avatar(n))),
+      people.length > 4 ? h("span", { class: "meta" }, `+${people.length - 4}`) : null),
+    h("button", { class: "chip-btn row-tool", title: `Take it out of ${s.name}`, "aria-label": `Remove ${meetingTitle(x)}`,
+      onclick: (e) => changeSeriesMeeting(s, x, e.currentTarget) }, "×"));
+}
+
+async function changeSeriesMeeting(s, x, from) {
+  let r;
+  try {
+    r = await working(from, api(`/api/meetings/${encodeURIComponent(x.id)}/series`, { remove: true }));
+  } catch (err) {
+    errorToast(`The series was not changed: ${err.message}`);
+    return;
+  }
+  showSeries(await api("/api/series").catch(() => state.series));
+  remember(`“${meetingTitle(x)}” removed from “${s.name}”`, async () => {
+    await api("/api/undo", { token: r.undo });
+    showSeries(await api("/api/series"));
+  });
+}
+
+function seriesCard(d, s) {
+  let more;
+  const sid = encodeURIComponent(s.id);
+  return h("section", { class: "person project series", id: `series-${s.id}` },
+    h("div", { class: "person-head" },
+      h("input", { class: "name-input", value: s.name, spellcheck: "false", "aria-label": `Rename ${s.name}`,
+        size: Math.max(4, s.name.length), oninput: (e) => { e.target.size = Math.max(4, e.target.value.length); },
+        onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { e.target.value = s.name; e.target.blur(); } },
+        onchange: (e) => (e.target.value.trim()
+          ? changeSeries(`/api/series/${sid}`, { name: e.target.value }, `“${s.name}” was not renamed`,
+            seriesEditText(s, { name: e.target.value }), e.target, s.id)
+          : (e.target.value = s.name)) }),
+      h("input", { class: "name-input series-project-input", value: s.project || "", placeholder: "No project",
+        list: "series-projects", spellcheck: "false", "aria-label": `Project of ${s.name}`,
+        title: "The project or customer this series belongs to",
+        onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { e.target.value = s.project || ""; e.target.blur(); } },
+        onchange: (e) => changeSeries(`/api/series/${sid}`, { project: e.target.value.trim() || null },
+          "The project was not changed", seriesEditText(s, { project: e.target.value }), e.target, s.id) }),
+      h("span", { class: "meta" }, s.meetings.length === 1 ? "1 meeting" : `${s.meetings.length} meetings`),
+      h("span", { class: "spacer" }),
+      more = moreButton(() => seriesItems(state.series, s, more), `Actions for ${s.name}`)),
+    h("p", { class: "meta" }, seriesLede(s)),
+    s.meetings.length ? h("ul", { class: "appearances" }, s.meetings.map((x) => seriesMeeting(s, x)))
+      : h("p", { class: "notes-empty" }, "No meetings in it now."));
+}
+
+function renderSeries() {
+  const d = state.series;
+  const one = state.seriesFocus && d ? d.series.find((s) => s.id === state.seriesFocus) : null;
+  const page = h("article", { class: "meeting people" },
+    h("div", { class: "head" }, h("div", { class: "head-text" }, h("h1", {}, one ? one.name : "Series"),
+      h("p", { class: "lede" }, one ? "A meeting series: its meetings, newest first."
+        : "Recurring meetings Palaver keeps together: learned from your calendar or a call's title, or put together by you from a meeting's ⋯ menu."))));
+  if (state.error) page.append(h("p", { class: "error" }, state.error));
+  if (!d) {
+    $("#main").replaceChildren(page);
+    return;
+  }
+  page.append(h("datalist", { id: "series-projects" }, d.projects.map((p) => h("option", { value: p }))));
+  if (state.seriesFocus) {
+    page.append(h("p", { class: "series-all" }, h("a", { class: "link", href: "#/series" }, "All series")));
+    page.append(one ? seriesCard(d, one) : h("p", { class: "notes-empty" }, "This series is gone."));
+  } else {
+    for (const s of d.series) page.append(seriesCard(d, s));
+    if (!d.series.length) {
+      page.append(h("p", { class: "notes-empty" }, "No series yet. Add a meeting to one from its ⋯ menu: Add to Series…"));
+    }
+  }
+  $("#main").replaceChildren(page);
 }
 
 // --- coach ------------------------------------------------------------------------
@@ -4401,8 +4633,10 @@ function renderEventLink(m) {
   const line = eventLine(m);
   const series = seriesView(m);
   if (!series) return line;
-  const chip = h("span", { class: "link-chip quiet series-chip", title: series.title },
+  const chip = h("button", { type: "button", class: "link-chip quiet series-chip", title: series.title,
+    onclick: () => openSeries(series.id) },
     h("span", { class: "link-kind" }, "Series"), h("span", { class: "link-title" }, series.name),
+    series.project ? h("span", { class: "series-project" }, series.project) : null,
     h("span", { class: "link-why" }, series.why));
   if (!line) return h("div", { class: "event-link" }, chip);
   line.append(" ", chip);
@@ -7285,12 +7519,13 @@ commands.register("reportProblem", { enabled: () => true, run: APP_ACTIONS.repor
 // --- the ⌘K palette ---------------------------------------------------------------------
 
 const PAGES = [["today", "Today"], ["meetings", "Meetings"], ["people", "People"], ["projects", "Projects"],
-  ["glossary", "Glossary"], ["settings", "Settings"]];
+  ["series", "Series"], ["glossary", "Glossary"], ["settings", "Settings"]];
 
 function goTo(view) {
   if (view === "today") openToday();
   else if (view === "people") openPeople();
   else if (view === "projects") openProjects();
+  else if (view === "series") openSeries();
   else if (view === "glossary") openGlossary();
   else if (view === "settings") openSettings();
   else if (lastMeeting()) openMeeting(lastMeeting());
@@ -7330,7 +7565,8 @@ function paletteGroups(query) {
   if (!query.trim()) {
     const projects = [...state.meetings.flatMap((x) => x.projects).map((p) => p.id),
       ...(state.projects?.projects || []).map((p) => p.id)];
-    const recent = paletteRecentShown(state.recent, { meetings, people: state.names, projects });
+    const series = state.meetings.map((x) => x.series?.id).filter(Boolean);
+    const recent = paletteRecentShown(state.recent, { meetings, people: state.names, projects, series });
     return [{ title: "Recent", entries: recent }, { title: m ? titleOf(m) : null, entries: cmds },
       { title: "Go to", entries: pages }, { title: "Help", entries: HELP_COMMANDS }];
   }
@@ -7338,7 +7574,8 @@ function paletteGroups(query) {
   const projects = [...new Map(state.meetings.flatMap((x) => x.projects).map((p) => [p.id, p])).values()]
     .map((p) => ({ kind: "project", id: p.id, label: p.name, detail: "Project" }));
   return [{ title: null, entries: paletteMatch(query,
-    [...cmds, ...pages, ...settingsEntries(), ...HELP_COMMANDS, ...meetings, ...people, ...projects]) },
+    [...cmds, ...pages, ...settingsEntries(), ...HELP_COMMANDS, ...meetings, ...people, ...projects,
+      ...seriesEntries(state.meetings)]) },
     { title: null, entries: [{ kind: "search", id: query.trim(), label: `Search transcripts for “${query.trim()}”` }] }];
 }
 
@@ -7351,6 +7588,7 @@ async function pickFromPalette(e) {
   if (e.kind === "meeting") openMeeting(e.id);
   else if (e.kind === "person") openPeople(e.id);
   else if (e.kind === "project") openProjects(e.id);
+  else if (e.kind === "series") openSeries(e.id);
   else if (e.kind === "page") goTo(e.id);
   else if (e.kind === "setting") openSettings("push", e.id);
   else if (e.kind === "command") commands.run(e.id);
@@ -7511,6 +7749,7 @@ async function route(how = "none", entry = null) {
   if (place.view === "today") await openToday(how);
   else if (place.view === "people") await openPeople(place.focus, how);
   else if (place.view === "projects") await openProjects(place.focus, how);
+  else if (place.view === "series") await openSeries(place.focus, how);
   else if (place.view === "glossary") await openGlossary(how);
   else if (place.view === "settings") {
     await openSettings(how, place.section);
@@ -7612,10 +7851,10 @@ setInterval(() => {
 // The usage log's catalog (#59): every action, page and tab there is, so a report knows what was never used.
 usage.catalog("action", [...actionCatalog(), "meeting.reportFromError", "app.reportProblem",
   ...ASSISTANT_KINDS.map((k) => `assistant.${k}`)]);
-usage.catalog("view", ["today", "meetings", "people", "projects", "glossary", "settings", "review", "coach", "prep",
+usage.catalog("view", ["today", "meetings", "people", "projects", "series", "glossary", "settings", "review", "coach", "prep",
   "setup", "report"]);
 usage.catalog("tab", Object.keys(TAB_LABELS));
-usage.catalog("palette", ["open", "meeting", "person", "project", "page", "setting", "search", "command.reportProblem",
+usage.catalog("palette", ["open", "meeting", "person", "project", "series", "page", "setting", "search", "command.reportProblem",
   ...GLOBAL_COMMANDS.map((c) => `command.${c.id}`), "command.startRecording", "command.stopRecording",
   ...Object.keys(meetingCommands({})).map((name) => `command.${name}`)]);
 

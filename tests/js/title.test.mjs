@@ -59,9 +59,9 @@ test("without an event: the call window's title, then the series' name, before t
 
 test("the series line says why recordings join it (#24)", () => {
   assert.equal(seriesView({ series: null }), null);
-  assert.deepEqual(seriesView({ series: { name: "Northwind sync", learned: "event", when: "Tuesdays around 15:00" } }),
-    { name: "Northwind sync", why: "linked by hand, Tuesdays around 15:00",
-      title: "Recordings of “Northwind sync” are linked to it by themselves: linked by hand, Tuesdays around 15:00." });
+  assert.deepEqual(seriesView({ series: { id: "s1", name: "Northwind sync", learned: "event", when: "Tuesdays around 15:00" } }),
+    { id: "s1", name: "Northwind sync", project: null, why: "linked by hand, Tuesdays around 15:00",
+      title: "Recordings of “Northwind sync” are linked to it by themselves: linked by hand, Tuesdays around 15:00. Click to open it." });
   assert.equal(seriesView({ series: { name: "Northwind sync", learned: "call-window" } }).why, "the same title in the call");
 });
 

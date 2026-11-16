@@ -2,7 +2,8 @@
 // is two people who both took part and a date range; "what did we decide about the test phase" looks in decisions for
 // "test phase"; "where did Mara talk about pricing" looks in the lines Mara said. Known people, projects and
 // organizations become filters when their name is typed; a name in quotes stays a word. Filters can be written out
-// too: person: project: org: since: until: in: by: is:reviewed is:imported has:steps.
+// too: person: project: series: org: since: until: in: by: is:reviewed is:imported has:steps. A project is one of the
+// Projects page's or one the user gave a meeting series (#39); a series is one of Palaver's own, by its name.
 //
 // Rules, not a language model: every filter knows the part of the text it came from (a span of Unicode scalar offsets,
 // Python's string indices), so the page shows it as a chip the user can take out again. Words compare as Python does:
@@ -11,23 +12,29 @@ import Foundation
 import PalaverCore
 
 /// What a typed name can be: people (named speakers, invitees, the voice bank), projects (id → name, in the store's
-/// order) and organizations.
+/// order) and organizations; and what `series:` and `project:` may name besides (#39): meeting series (id → name) and
+/// the projects of series.
 public struct Vocabulary {
     public var people: [String]
     public var projects: PyDict<String>
     public var orgs: [String]
+    public var series: PyDict<String>
+    public var seriesProjects: [String]
 
-    public init(people: [String] = [], projects: PyDict<String> = PyDict(), orgs: [String] = []) {
+    public init(people: [String] = [], projects: PyDict<String> = PyDict(), orgs: [String] = [],
+                series: PyDict<String> = PyDict(), seriesProjects: [String] = []) {
         self.people = people
         self.projects = projects
         self.orgs = orgs
+        self.series = series
+        self.seriesProjects = seriesProjects
     }
 }
 
-/// One filter: `kind` is person, org, project, since, until, in, said, is or has.
+/// One filter: `kind` is person, org, project, series, since, until, in, said, is or has.
 public struct SearchFilter {
     public let kind: String
-    /// nil only for a project nobody has.
+    /// nil only for a project or series nobody has; "" for a project only meeting series have (its name is the label).
     public let value: String?
     public let label: String
     /// `(start, end)` in the text, as Unicode scalar offsets.
@@ -68,6 +75,10 @@ public struct SearchQuery {
     public var orgs: [String] { values("org").compactMap { $0 } }
     /// nil for a written-out project nobody has (it finds nothing).
     public var projects: [String?] { values("project") }
+    /// The project filters: a meeting is in the project (`value`), or in a series of the project called `label`.
+    public var projectFilters: [SearchFilter] { filters.filter { $0.kind == "project" } }
+    /// Meeting series by id; nil for one nobody has (it finds nothing).
+    public var series: [String?] { values("series") }
     /// The latest `since`.
     public var since: PyDate? { values("since").compactMap { $0.flatMap(PyDate.init(iso:)) }.max() }
     /// The earliest `until`.
@@ -120,7 +131,8 @@ public struct SearchQuery {
         switch f.kind {
         case "person": return anyPerson ? "Took part, any of them: named speaker or invited" : "Took part: named speaker or invited"
         case "said": return "Only lines \(value) said"
-        case "project": return f.value?.isEmpty == false ? "Project" : "No project has this name"
+        case "project": return f.value != nil ? "Project" : "No project has this name"
+        case "series": return f.value != nil ? "Meeting series" : "No meeting series has this name"
         case "org": return "Someone from \(value) took part"
         case "in": return SearchParser.scopeLabels[value]!.1
         case "is" where value == "imported": return "Imported from before Palaver"
@@ -224,7 +236,7 @@ public enum SearchParser {
         "transcript": ("In transcripts", "Only the transcript")]
     private static let keys: [ScalarKey: String] = [
         "person": "person", "with": "person", "org": "org", "organization": "org", "company": "org",
-        "project": "project", "proj": "project", "since": "since", "after": "after", "from": "since",
+        "project": "project", "proj": "project", "series": "series", "since": "since", "after": "after", "from": "since",
         "until": "until", "before": "before", "date": "date", "on": "date", "in": "in", "by": "said",
         "said": "said", "is": "is", "has": "has",
     ].reduce(into: [:]) { $0[ScalarKey($1.key)] = $1.value }
@@ -425,8 +437,14 @@ public enum SearchParser {
             let person = names.person(value)
             return [SearchFilter("person", person, person, span)] + (key == "said" ? [SearchFilter("said", person, "Said by \(person)", span)] : [])
         case "project":
-            let pid = vocab.projects.first { Py.same(Py.casefold($0.value), folded) }?.key
-            return [SearchFilter("project", pid, pid.flatMap { vocab.projects[$0] } ?? value, span)]
+            if let pid = vocab.projects.first(where: { Py.same(Py.casefold($0.value), folded) })?.key {
+                return [SearchFilter("project", pid, vocab.projects[pid] ?? value, span)]
+            }
+            let ofSeries = vocab.seriesProjects.first { Py.same(Py.casefold($0), folded) }
+            return [SearchFilter("project", ofSeries.map { _ in "" }, ofSeries ?? value, span)]
+        case "series":
+            let sid = vocab.series.first { Py.same(Py.casefold($0.value), folded) }?.key
+            return [SearchFilter("series", sid, sid.flatMap { vocab.series[$0] } ?? value, span)]
         case "org":
             let org = vocab.orgs.first { Py.same(Py.casefold($0), folded) } ?? value
             return [SearchFilter("org", org, org, span)]

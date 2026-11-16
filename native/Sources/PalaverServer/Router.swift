@@ -89,6 +89,7 @@ extension Router {
         r.get("/api/ping") { _, _ in .json(.object([("ok", .bool(true))])) }
         addMeetingRoutes(r, app: app)
         addChangeRoutes(r, app: app)
+        addSeriesRoutes(r, app: app)
         addPeopleRoutes(r, app: app)
         addModelRoutes(r, app: app)
         addNoteTemplateRoutes(r, app: app)

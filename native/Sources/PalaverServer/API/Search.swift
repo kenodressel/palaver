@@ -124,7 +124,17 @@ public enum SearchAPI {
         let index = app.searchCaches.orgIndex(app.outputDir)
         let orgs = index.isEmpty ? [] : Orgs.summary(index, Organizations(path: app.stores.organizations))
             .compactMap { $0["name"]?.stringValue }
-        return Vocabulary(people: Py.stableSorted(found.values.filter { !$0.isEmpty }, by: Py.less), projects: projects, orgs: orgs)
+        // Meeting series (#39), but not one of only meetings left out (kept on this Mac): its name came from them.
+        let shown = Set(meetings.map { ScalarKey($0["id"]?.stringValue ?? "") })
+        var series = PyDict<String>(), seriesProjects: [String] = []
+        for s in MeetingSeries.all(stores: app.stores) where s.meetings.isEmpty || s.meetings.contains(where: { shown.contains(ScalarKey($0)) }) {
+            series[s.id] = s.name
+            if let project = s.project, !seriesProjects.contains(where: { Py.same(Py.casefold($0), Py.casefold(project)) }) {
+                seriesProjects.append(project)
+            }
+        }
+        return Vocabulary(people: Py.stableSorted(found.values.filter { !$0.isEmpty }, by: Py.less), projects: projects, orgs: orgs,
+                          series: series, seriesProjects: seriesProjects)
     }
 
     static func paths(_ app: ServerApp, _ m: JSONValue) -> RecordingPaths {
@@ -238,10 +248,8 @@ public enum SearchAPI {
             let day = startDay(m)
             if let since = q.since, day.map({ $0 < since }) ?? true { continue }
             if let until = q.until, day.map({ $0 > until }) ?? true { continue }
-            let projects = m["projects"]?.arrayValue ?? []
-            if !q.projects.allSatisfy({ pid in projects.contains { p in pid.map { Py.same(p["id"]?.stringValue ?? "", $0) } ?? false } }) {
-                continue
-            }
+            if !inProjects(m, q) { continue }
+            if !q.series.allSatisfy({ sid in sid.map { Py.same(m["series"]?["id"]?.stringValue ?? "", $0) } ?? false }) { continue }
             let paths = paths(app, m)
             if let reviewed = q.reviewed, MeetingsAPI.exists(paths.review) != reviewed { continue }
             if q.imported && !(m["source"]?.truthy ?? false) { continue }
@@ -258,6 +266,17 @@ public enum SearchAPI {
             out.append(found)
         }
         return out
+    }
+
+    /// In every project the query names: put into it on the Projects page, or in a meeting series of that project (#39).
+    static func inProjects(_ m: JSONValue, _ q: SearchQuery) -> Bool {
+        let projects = m["projects"]?.arrayValue ?? []
+        let ofSeries = m["series"]?["project"]?.stringValue.map(Py.casefold)
+        return q.projectFilters.allSatisfy { f in
+            guard let pid = f.value else { return false }
+            return projects.contains { Py.same($0["id"]?.stringValue ?? "", pid) }
+                || ofSeries.map { Py.same($0, Py.casefold(f.label)) } ?? false
+        }
     }
 
     /// `_SCOPE_KINDS`: the notes pieces each scope searches.
