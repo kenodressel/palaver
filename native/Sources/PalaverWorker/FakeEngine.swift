@@ -24,7 +24,8 @@ public final class FakeEngine: EngineCalls {
     private let spec: JSONValue
     private let dictionary: TranscriberDictionary
     public private(set) var succeeded: Set<String> = []
-    /// The calls in order ("transcribe mic.wav", "diarize system.wav", "release"): what a test checks.
+    /// The calls in order ("transcribe mic.wav", "diarize system.wav", "diarize system.wav max_speakers=1", "release"):
+    /// what a test checks.
     public private(set) var calls: [String] = []
 
     public init(spec: JSONValue, dictionary: TranscriberDictionary = TranscriberDictionary()) {
@@ -98,8 +99,8 @@ public final class FakeEngine: EngineCalls {
         return PyDict(fields.compactMap { key, row in spans[key] == nil ? nil : (key, (row.arrayValue ?? []).compactMap(\.doubleValue)) })
     }
 
-    public func diarize(wav: URL) async throws -> (turns: [SpeakerTurn], embeddings: PyDict<[Double]>) {
-        calls.append("diarize \(wav.lastPathComponent)")
+    public func diarize(wav: URL, maxSpeakers: Int?) async throws -> (turns: [SpeakerTurn], embeddings: PyDict<[Double]>) {
+        calls.append("diarize \(wav.lastPathComponent)" + (maxSpeakers.map { " max_speakers=\($0)" } ?? ""))
         try failure("diarize")
         guard EngineAudio.holdsAudio(wav) else { return ([], PyDict()) }
         succeeded.insert("diarize")

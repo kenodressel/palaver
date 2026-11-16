@@ -16,7 +16,8 @@ public protocol EngineCalls: AnyObject {
     /// The words of 16 kHz mono samples (the live worker's windows), the dictionary applied.
     func transcribeWindow(_ samples: [Float]) async throws -> [Word]
     /// The speaker turns of `wav` (sorted by start) and a voice per label; nothing for a track that holds no audio.
-    func diarize(wav: URL) async throws -> (turns: [SpeakerTurn], embeddings: PyDict<[Double]>)
+    /// `maxSpeakers`: at most that many speakers (the calendar's hint, #21).
+    func diarize(wav: URL, maxSpeakers: Int?) async throws -> (turns: [SpeakerTurn], embeddings: PyDict<[Double]>)
     /// One voice per key for its spans (seconds) of `wav`: the mean of the spans' voices (#35).
     func embed(wav: URL, spans: PyDict<[Range<Double>]>) async throws -> PyDict<[Double]>
     /// Whether the speech models are on this Mac.
@@ -26,6 +27,13 @@ public protocol EngineCalls: AnyObject {
     var succeeded: Set<String> { get }
     /// Lets go of the loaded models (memory) until a call needs them again.
     func release() async
+}
+
+extension EngineCalls {
+    /// The speakers of `wav`, as many as the diarizer finds.
+    public func diarize(wav: URL) async throws -> (turns: [SpeakerTurn], embeddings: PyDict<[Double]>) {
+        try await diarize(wav: wav, maxSpeakers: nil)
+    }
 }
 
 public enum EngineAudio {

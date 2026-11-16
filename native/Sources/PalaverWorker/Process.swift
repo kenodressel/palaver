@@ -392,15 +392,34 @@ public enum Pipeline {
 
         // The voices feed recognition; a recording diarized before they were kept is diarized again (the engine's
         // diarization is deterministic: the same turns).
+        // At most as many voices as the calendar's small meeting has other invitees (#21): the diarizer is told so. The
+        // live worker's speakers (diarized without it) are diarized again when they are more, as long as nobody has said
+        // anything about them: no transcript yet, so no label is named, merged or removed.
+        let diarized = exists(paths.systemTurns) && exists(paths.speakerEmbeddings)
+        let untouched = ![paths.transcriptJson, paths.speakers, paths.speakersMerged, paths.speakersIgnored, paths.speakersUnknown]
+            .contains(where: exists)
+        var hint: Int?
+        if !systemEmpty && (!diarized || untouched) {
+            hint = CalendarEvents.remoteVoices(attachCalendar(paths, setup, log: log), userName: setup.userName)
+        }
+        var labels = 0
+        if diarized, untouched, hint != nil {
+            labels = Set(try readList(paths.systemTurns).map { ScalarKey(try SpeakerTurn(json: $0).speaker) }).count
+        }
         if systemEmpty {
             try Data("{}".utf8).write(to: paths.speakerEmbeddings)
             try Data("[]".utf8).write(to: paths.systemTurns)
-        } else if !exists(paths.systemTurns) || !exists(paths.speakerEmbeddings) {
-            say("Diarizing system track…")
+        } else if !diarized || (untouched && labels > (hint ?? .max)) {
+            if diarized {
+                say("Diarizing system track again: \(labels) speakers, but the calendar invited \(hint!) besides you…")
+            } else {
+                say("Diarizing system track" + (hint.map { " (at most \($0) speaker\($0 == 1 ? "" : "s"), as invited)" } ?? "") + "…")
+            }
             let (turns, voices) = try await Stage.with("diarize", log: log) { info in
-                let found = try await setup.engine.diarize(wav: paths.systemWav)
+                let found = try await setup.engine.diarize(wav: paths.systemWav, maxSpeakers: hint)
                 info["turns"] = .int(found.turns.count)
                 info["speakers"] = .int(Set(found.turns.map { ScalarKey($0.speaker) }).count)
+                if let hint { info["max_speakers"] = .int(hint) }
                 return found
             }
             try PythonJSON.write(.object(voices.map { ($0.key, .array($0.value.map(JSONValue.double))) }), to: paths.speakerEmbeddings,

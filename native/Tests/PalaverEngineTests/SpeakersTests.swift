@@ -30,8 +30,20 @@ private func writeSilence(_ url: URL, samples: Int) throws {
 private struct FakeDiarizer: Diarizing {
     var output: DiarizerOutput
     var spanVectors: [[Float]] = []
-    func diarize(_ url: URL) async throws -> DiarizerOutput { output }
+    func diarize(_ url: URL, maxSpeakers: Int?) async throws -> DiarizerOutput { output }
     func embed(_ url: URL, spans: [Range<Double>]) async throws -> [[Float]] { spanVectors }
+}
+
+/// Remembers the speaker count each diarization was asked for.
+private final class CountingDiarizer: Diarizing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _asked: [Int?] = []
+    var asked: [Int?] { lock.withLock { _asked } }
+    func diarize(_ url: URL, maxSpeakers: Int?) async throws -> DiarizerOutput {
+        lock.withLock { _asked.append(maxSpeakers) }
+        return DiarizerOutput(segments: [("S1", 0, 4)], embeddings: ["S1": [1, 0]])
+    }
+    func embed(_ url: URL, spans: [Range<Double>]) async throws -> [[Float]] { [] }
 }
 
 private func call(_ lines: [String], diarizer: (() async throws -> Diarizing)?) async throws -> [[String: Any]] {
@@ -69,7 +81,7 @@ private func call(_ lines: [String], diarizer: (() async throws -> Diarizing)?) 
 
 /// The diarizer finds no speech (the other side silent so far): no turns, not a failure.
 private struct SilentDiarizer: Diarizing {
-    func diarize(_ url: URL) async throws -> DiarizerOutput { throw OfflineDiarizationError.noSpeechDetected }
+    func diarize(_ url: URL, maxSpeakers: Int?) async throws -> DiarizerOutput { throw OfflineDiarizationError.noSpeechDetected }
     func embed(_ url: URL, spans: [Range<Double>]) async throws -> [[Float]] { [] }
 }
 
@@ -89,7 +101,7 @@ private struct SilentDiarizer: Diarizing {
     try writeSilence(wav, samples: 16000 * 20)
     let fake = FakeDiarizer(output: DiarizerOutput(
         segments: [("S2", 6, 12), ("S1", 0, 7), ("S2", 11, 11.5), ("S1", 12, 19)],
-        embeddings: ["S1": [1, 2], "S2": [3, 4], "S9": [5, 6], "S3": []]))
+        embeddings: ["S1": [1, 2], "S2": [2, -1], "S9": [5, 6], "S3": []]))  // two different voices
     let r = try await call([#"{"id":1,"cmd":"diarize","wav":"\#(wav.path)"}"#], diarizer: { fake })
     #expect(r[0]["ok"] as? Bool == true)
     let turns = r[0]["turns"] as! [[String: Any]]
@@ -111,12 +123,12 @@ private struct SilentDiarizer: Diarizing {
     // S2's only turn has no length: it must not take a label or keep an embedding.
     let fake = FakeDiarizer(output: DiarizerOutput(
         segments: [("S1", 0, 4), ("S2", 4, 4), ("S3", 4, 9)],
-        embeddings: ["S1": [1], "S2": [2], "S3": [3]]))
+        embeddings: ["S1": [1, 0], "S2": [1, 1], "S3": [0, 3]]))
     let r = try await call([#"{"id":1,"cmd":"diarize","wav":"\#(wav.path)"}"#], diarizer: { fake })
     let turns = r[0]["turns"] as! [[String: Any]]
     #expect(turns.map { $0["speaker"] as! String } == ["SPEAKER_00", "SPEAKER_01"])
     let emb = r[0]["embeddings"] as! [String: [Double]]
-    #expect(emb == ["SPEAKER_00": [1], "SPEAKER_01": [3]])
+    #expect(emb == ["SPEAKER_00": [1, 0], "SPEAKER_01": [0, 3]])
 }
 
 @Test func failedLoadLeavesTheModelsFolderIntact() async throws {
@@ -143,6 +155,99 @@ private struct SilentDiarizer: Diarizing {
 
 @Test func engineConfigIsExclusive() {
     #expect(diarizerConfig().postProcessing.exclusiveSegments == true)
+    #expect(diarizerConfig().clustering.maxSpeakers == nil)
+}
+
+// MARK: - #21: fewer spurious speakers
+
+/// A unit vector `similarity` alike to the voice along axis 0, turned toward axis `toward`, times `scale` (the
+/// diarizer's vectors are means, not unit length).
+private func voice(_ similarity: Double, toward: Int, scale: Float = 1) -> [Float] {
+    var v = [Float](repeating: 0, count: 8)
+    v[0] = Float(similarity) * scale
+    if toward != 0 { v[toward] = Float((1 - similarity * similarity).squareRoot()) * scale }
+    return v
+}
+
+private func cosine(_ a: [Double], _ b: [Double]) -> Double {
+    let dot = zip(a, b).map(*).reduce(0, +)
+    return dot / ((a.map { $0 * $0 }.reduce(0, +)).squareRoot() * (b.map { $0 * $0 }.reduce(0, +)).squareRoot())
+}
+
+@Test func theSameVoiceSplitByPausesIsOneSpeaker() async throws {
+    let dir = try tempDir()
+    let wav = dir.appendingPathComponent("a.wav")
+    try writeSilence(wav, samples: 16000 * 30)
+    // Valerie (S0, most of the talk) came back as four speakers: S2-S4 are her too, a little off (noise, a pause, the
+    // codec); Kim (S1) is someone else.
+    let fake = FakeDiarizer(output: DiarizerOutput(
+        segments: [("S0", 0, 5), ("S1", 5, 8), ("S2", 8, 9), ("S0", 9, 14), ("S3", 14, 15.5), ("S1", 15.5, 18),
+                   ("S4", 18, 19), ("S0", 19, 30)],
+        embeddings: ["S0": voice(1, toward: 0, scale: 3), "S1": voice(0.5, toward: 5, scale: 2),
+                     "S2": voice(0.9, toward: 1, scale: 2), "S3": voice(0.88, toward: 2), "S4": voice(0.86, toward: 3)]))
+    let r = try await call([#"{"id":1,"cmd":"diarize","wav":"\#(wav.path)"}"#], diarizer: { fake })
+    #expect(r[0]["ok"] as? Bool == true)
+    let turns = r[0]["turns"] as! [[String: Any]]
+    #expect(turns.map { $0["speaker"] as! String } == ["SPEAKER_00", "SPEAKER_01", "SPEAKER_00", "SPEAKER_00", "SPEAKER_00",
+                                                        "SPEAKER_01", "SPEAKER_00", "SPEAKER_00"])
+    #expect(turns.map { $0["start"] as! Double } == [0, 5, 8, 9, 14, 15.5, 18, 19])
+    #expect(r[0]["merged_voices"] as? Int == 3)
+    let emb = r[0]["embeddings"] as! [String: [Double]]
+    #expect(emb.keys.sorted() == ["SPEAKER_00", "SPEAKER_01"])
+    // Kim's voice as it was; Valerie's the mean of her parts by talk time (21 s, 1 s, 1.5 s, 1 s).
+    #expect(emb["SPEAKER_01"] == voice(0.5, toward: 5, scale: 2).map(Double.init))
+    let parts: [([Float], Double)] = [(voice(1, toward: 0, scale: 3), 21), (voice(0.9, toward: 1, scale: 2), 1),
+                                      (voice(0.88, toward: 2), 1.5), (voice(0.86, toward: 3), 1)]
+    let expected = (0..<8).map { i in parts.map { Double($0.0[i]) * $0.1 }.reduce(0, +) / 24.5 }
+    let merged = emb["SPEAKER_00"]!
+    #expect(zip(merged, expected).allSatisfy { abs($0 - $1) < 1e-5 }, "\(merged) vs \(expected)")
+}
+
+@Test func differentPeopleAreNeverMerged() {
+    // As alike as two different people get (0.76: Voices.REJECT_SIMILAR's note): two speakers. A shade above the
+    // threshold: one.
+    for (similarity, labels) in [(0.76, 2), (SAME_VOICE_SIMILARITY - 0.01, 2), (SAME_VOICE_SIMILARITY + 0.01, 1)] {
+        let turns = [Turn(speaker: "A", start: 0, end: 10), Turn(speaker: "B", start: 10, end: 20)]
+        let r = mergeCloseVoices(turns, ["A": voice(1, toward: 0), "B": voice(similarity, toward: 1)])
+        #expect(Set(r.turns.map(\.speaker)).count == labels, "similarity \(similarity)")
+        #expect(r.merged == 2 - labels)
+        #expect(r.embeddings.count == labels)
+    }
+}
+
+@Test func voicesWithoutAUsableVectorStayAsTheyAre() {
+    // A speaker without a vector, or with a broken one, is never merged (nor merged into).
+    let turns = [Turn(speaker: "A", start: 0, end: 10), Turn(speaker: "B", start: 10, end: 12), Turn(speaker: "C", start: 12, end: 14),
+                 Turn(speaker: "D", start: 14, end: 16)]
+    let r = mergeCloseVoices(turns, ["A": voice(1, toward: 0), "C": [Float.nan, 0, 0, 0, 0, 0, 0, 0], "D": [1, 0]])
+    #expect(r.turns.map(\.speaker) == ["A", "B", "C", "D"])
+    #expect(r.merged == 0)
+}
+
+@Test func theMergedVoiceTakesTheLabelOfTheOneWhoTalkedMost() {
+    // B talked most: A's turns become B's, and B keeps its own (first) place among the labels.
+    let turns = [Turn(speaker: "A", start: 0, end: 2), Turn(speaker: "B", start: 2, end: 20), Turn(speaker: "C", start: 20, end: 25)]
+    let r = mergeCloseVoices(turns, ["A": voice(0.95, toward: 1), "B": voice(1, toward: 0), "C": voice(0.2, toward: 2)])
+    #expect(r.turns.map(\.speaker) == ["B", "B", "C"])
+    #expect(cosine(r.embeddings["B"]!.map(Double.init), voice(1, toward: 0).map(Double.init)) > 0.99)
+}
+
+@Test func theCalendarsSpeakerCountReachesTheDiarizer() async throws {
+    let dir = try tempDir()
+    let wav = dir.appendingPathComponent("a.wav")
+    try writeSilence(wav, samples: 16000 * 5)
+    let fake = CountingDiarizer()
+    let r = try await call([#"{"id":1,"cmd":"diarize","wav":"\#(wav.path)","max_speakers":1}"#,
+                            #"{"id":2,"cmd":"diarize","wav":"\#(wav.path)"}"#,
+                            #"{"id":3,"cmd":"diarize","wav":"\#(wav.path)","max_speakers":0}"#,
+                            #"{"id":4,"cmd":"diarize","wav":"\#(wav.path)","max_speakers":1.5}"#,
+                            #"{"id":5,"cmd":"diarize","wav":"\#(wav.path)","max_speakers":true}"#,
+                            #"{"id":6,"cmd":"diarize","wav":"\#(wav.path)","max_speakers":null}"#], diarizer: { fake })
+    #expect(r.map { $0["ok"] as? Bool } == [true, true, false, false, false, true])
+    #expect(fake.asked == [1, nil, nil])
+    #expect(diarizerConfig(maxSpeakers: 2).clustering.maxSpeakers == 2)
+    #expect(diarizerConfig(maxSpeakers: 2).clustering.numSpeakers == nil)  // at most, never exactly
+    #expect(diarizerConfig(maxSpeakers: 2).postProcessing.exclusiveSegments == true)
 }
 
 @Test func embedAveragesSpansPerKey() async throws {

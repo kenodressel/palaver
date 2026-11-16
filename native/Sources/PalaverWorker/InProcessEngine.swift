@@ -81,9 +81,11 @@ public final class InProcessEngine: EngineCalls, @unchecked Sendable {
         return words(reply["words"])
     }
 
-    public func diarize(wav: URL) async throws -> (turns: [SpeakerTurn], embeddings: PyDict<[Double]>) {
+    public func diarize(wav: URL, maxSpeakers: Int?) async throws -> (turns: [SpeakerTurn], embeddings: PyDict<[Double]>) {
         guard EngineAudio.holdsAudio(wav) else { return ([], PyDict()) }
-        let reply = try await call("diarize", ["wav": wav.path])
+        var args: [String: Any] = ["wav": wav.path]
+        if let maxSpeakers { args["max_speakers"] = maxSpeakers }
+        let reply = try await call("diarize", args)
         let turns = (reply["turns"] as? [[String: Any]] ?? []).map {
             SpeakerTurn(speaker: "\($0["speaker"] ?? "")", start: number($0["start"]), end: number($0["end"]))
         }

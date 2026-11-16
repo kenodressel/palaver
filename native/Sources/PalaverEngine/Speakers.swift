@@ -43,11 +43,78 @@ func exclusive(_ turns: [Turn]) -> [Turn] {
     return out
 }
 
-/// The diarizer config the engine uses: one speaker at a time.
-func diarizerConfig() -> OfflineDiarizerConfig {
+/// The diarizer config the engine uses: one speaker at a time; with `maxSpeakers` (what the calendar says the track
+/// can hold, #21), at most that many: FluidAudio clusters its voices again into that many when it finds more.
+func diarizerConfig(maxSpeakers: Int? = nil) -> OfflineDiarizerConfig {
     var config = OfflineDiarizerConfig()
     config.postProcessing.exclusiveSegments = true
+    if let maxSpeakers { config = config.withSpeakers(max: maxSpeakers) }
     return config
+}
+
+// MARK: - One person split in several (#21)
+
+/// Two of the diarizer's speakers whose voices (the mean embedding of each) are at least this alike are one person
+/// it split, by pauses, noise or a change of codec. Palaver's own numbers (`Voices.REJECT_SIMILAR`, from the
+/// owner's meetings): the same person in two meetings scores 0.80-0.96, different people up to 0.76. 0.82 is
+/// FluidAudio's own cut between "one speaker" and "two" (its clustering threshold, 0.6 Euclidean between unit
+/// vectors: 1 - 0.6² / 2): clear of the different people, and within one meeting (one codec, one room) the same
+/// person's parts score higher than across meetings.
+public let SAME_VOICE_SIMILARITY = 0.82
+
+/// Folds the diarizer's speakers whose voices are SAME_VOICE_SIMILARITY alike into one, before they get labels:
+/// average-voice (centroid) linkage, closest pair first, the voices weighted by talk time. The merged speaker keeps
+/// the id of its part that talked most and the talk-weighted mean of the parts' vectors. A speaker without a usable
+/// vector (none, not finite, of another length) is left as it is. `merged`: how many speakers were folded in.
+func mergeCloseVoices(_ turns: [Turn], _ embeddings: [String: [Float]], threshold: Double = SAME_VOICE_SIMILARITY)
+    -> (turns: [Turn], embeddings: [String: [Float]], merged: Int)
+{
+    var order: [String] = [], talk: [String: Double] = [:]
+    for t in turns {
+        if talk[t.speaker] == nil { order.append(t.speaker) }
+        talk[t.speaker, default: 0] += t.end - t.start
+    }
+    var unit: [String: [Double]] = [:], dim: Int?
+    for id in order {
+        guard let v = embeddings[id], !v.isEmpty, v.allSatisfy(\.isFinite), (talk[id] ?? 0) > 0, dim == nil || dim == v.count
+        else { continue }
+        let norm = v.reduce(0.0) { $0 + Double($1) * Double($1) }.squareRoot()
+        guard norm > 0 else { continue }
+        dim = v.count
+        unit[id] = v.map { Double($0) / norm }
+    }
+    func centroid(_ group: [String]) -> [Double] {
+        var sum = [Double](repeating: 0, count: dim ?? 0)
+        for id in group { for (i, x) in unit[id]!.enumerated() { sum[i] += x * talk[id]! } }
+        let norm = sum.reduce(0) { $0 + $1 * $1 }.squareRoot()
+        return sum.map { $0 / norm }
+    }
+    var groups = order.filter { unit[$0] != nil }.map { [$0] }
+    while groups.count > 1 {
+        let centroids = groups.map(centroid)
+        var best: (Int, Int, Double)?
+        for i in 0..<groups.count {
+            for j in (i + 1)..<groups.count {
+                let sim = zip(centroids[i], centroids[j]).reduce(0) { $0 + $1.0 * $1.1 }
+                if sim >= threshold, sim > best?.2 ?? -2 { best = (i, j, sim) }
+            }
+        }
+        guard let (i, j, _) = best else { break }
+        let folded = groups.remove(at: j)  // i < j: still in place
+        groups[i] += folded
+    }
+    var into: [String: String] = [:], out = embeddings, merged = 0
+    for group in groups where group.count > 1 {
+        let keep = group.max { (talk[$0]!, -order.firstIndex(of: $0)!) < (talk[$1]!, -order.firstIndex(of: $1)!) }!
+        let total = group.reduce(0) { $0 + talk[$1]! }
+        var mean = [Double](repeating: 0, count: dim!)
+        for id in group {
+            for (i, x) in embeddings[id]!.enumerated() { mean[i] += Double(x) * talk[id]! / total }
+            if id != keep { into[id] = keep; out[id] = nil; merged += 1 }
+        }
+        out[keep] = mean.map(Float.init)
+    }
+    return (turns.map { Turn(speaker: into[$0.speaker] ?? $0.speaker, start: $0.start, end: $0.end) }, out, merged)
 }
 
 // MARK: - Diarizer
@@ -61,19 +128,43 @@ public struct DiarizerOutput: Sendable {
 }
 
 public protocol Diarizing: Sendable {
-    /// Turns and one embedding per FluidAudio speaker id.
-    func diarize(_ url: URL) async throws -> DiarizerOutput
+    /// Turns and one embedding per FluidAudio speaker id; `maxSpeakers`: at most that many speakers.
+    func diarize(_ url: URL, maxSpeakers: Int?) async throws -> DiarizerOutput
     /// One embedding per span (seconds), in order.
     func embed(_ url: URL, spans: [Range<Double>]) async throws -> [[Float]]
 }
 
-/// FluidAudio's offline diarizer.
+/// FluidAudio's offline diarizer: one manager per speaker count asked for (a manager's config is fixed), all on the
+/// same loaded models.
 public final class FluidDiarizer: Diarizing, @unchecked Sendable {
+    private let models: OfflineDiarizerModels
     private let manager: OfflineDiarizerManager
-    init(manager: OfflineDiarizerManager) { self.manager = manager }
+    private var bounded: [Int: OfflineDiarizerManager] = [:]
+    private let lock = NSLock()
 
-    public func diarize(_ url: URL) async throws -> DiarizerOutput {
-        let result = try await manager.process(url)  // disk-backed, resamples itself
+    init(models: OfflineDiarizerModels) {
+        self.models = models
+        manager = Self.manager(models, maxSpeakers: nil)
+    }
+
+    private static func manager(_ models: OfflineDiarizerModels, maxSpeakers: Int?) -> OfflineDiarizerManager {
+        let manager = OfflineDiarizerManager(config: diarizerConfig(maxSpeakers: maxSpeakers))
+        manager.initialize(models: models)
+        return manager
+    }
+
+    private func manager(maxSpeakers: Int?) -> OfflineDiarizerManager {
+        guard let maxSpeakers else { return manager }
+        return lock.withLock {
+            if let m = bounded[maxSpeakers] { return m }
+            let m = Self.manager(models, maxSpeakers: maxSpeakers)
+            bounded[maxSpeakers] = m
+            return m
+        }
+    }
+
+    public func diarize(_ url: URL, maxSpeakers: Int?) async throws -> DiarizerOutput {
+        let result = try await manager(maxSpeakers: maxSpeakers).process(url)  // disk-backed, resamples itself
         return DiarizerOutput(
             segments: result.segments.map { ($0.speakerId, Double($0.startTimeSeconds), Double($0.endTimeSeconds)) },
             embeddings: result.speakerDatabase ?? [:])
@@ -86,26 +177,29 @@ public final class FluidDiarizer: Diarizing, @unchecked Sendable {
     }
 }
 
-/// Turns and embeddings of a WAV under the engine's labels. A track shorter than
-/// 50 ms gives nothing, without loading the model.
-func diarizeFile(_ url: URL, with load: () async throws -> Diarizing) async throws -> (turns: [Turn], embeddings: [String: [Float]]) {
+/// Turns and embeddings of a WAV under the engine's labels, speakers with the same voice folded into one
+/// (`mergeCloseVoices`; `merged`: how many). A track shorter than 50 ms gives nothing, without loading the model.
+func diarizeFile(_ url: URL, maxSpeakers: Int? = nil, with load: () async throws -> Diarizing) async throws
+    -> (turns: [Turn], embeddings: [String: [Float]], merged: Int)
+{
     let file = try AVAudioFile(forReading: url)
-    if Double(file.length) / file.processingFormat.sampleRate < Double(minSamples) / engineSampleRate { return ([], [:]) }
+    if Double(file.length) / file.processingFormat.sampleRate < Double(minSamples) / engineSampleRate { return ([], [:], 0) }
     let output: DiarizerOutput
     do {
-        output = try await load().diarize(url)
+        output = try await load().diarize(url, maxSpeakers: maxSpeakers)
     } catch OfflineDiarizationError.noSpeechDetected {
-        return ([], [:])  // nobody spoke on this track (yet): no turns, not a failure
+        return ([], [:], 0)  // nobody spoke on this track (yet): no turns, not a failure
     }
-    // Clip overlaps first, so a speaker left with no turn takes no label.
+    // Clip overlaps first, so a speaker left with no turn takes no label; then one person split in several is one.
     let clipped = exclusive(output.segments.map { Turn(speaker: $0.0, start: $0.1, end: $0.2) })
-    let (turns, map) = relabel(clipped.map { ($0.speaker, $0.start, $0.end) })
+    let folded = mergeCloseVoices(clipped, output.embeddings)
+    let (turns, map) = relabel(folded.turns.map { ($0.speaker, $0.start, $0.end) })
     var embeddings: [String: [Float]] = [:]
-    for (id, vector) in output.embeddings {
+    for (id, vector) in folded.embeddings {
         // A label that has turns, and a clean vector; anything else is left out.
         if let label = map[id], !vector.isEmpty, vector.allSatisfy(\.isFinite) { embeddings[label] = vector }
     }
-    return (turns, embeddings)
+    return (turns, embeddings, folded.merged)
 }
 
 /// Element-wise mean of equally long vectors.
@@ -141,10 +235,7 @@ final class SpeakerEngine: @unchecked Sendable {
             defer { ModelHub.offlineMode = was }
             // Not `prepareModels`: on a failed load it deletes the models folder
             // and downloads again. A lazy load only reads; errors surface as is.
-            let models = try await OfflineDiarizerModels.load(from: store.directory)
-            let manager = OfflineDiarizerManager(config: diarizerConfig())
-            manager.initialize(models: models)
-            d = FluidDiarizer(manager: manager)
+            d = FluidDiarizer(models: try await OfflineDiarizerModels.load(from: store.directory))
         }
         diarizer = d
         return d
@@ -159,10 +250,18 @@ final class SpeakerEngine: @unchecked Sendable {
 
     func diarize(_ args: [String: Any]) async throws -> [String: Any] {
         let url = try existingURL(args, cmd: "diarize")
+        var maxSpeakers: Int?
+        if let raw = args["max_speakers"], !(raw is NSNull) {
+            guard let n = number(raw), n >= 1, n == n.rounded(), n <= 1000 else {
+                throw EngineError("max_speakers must be a whole number of at least 1")
+            }
+            maxSpeakers = Int(n)
+        }
         let t0 = Date()
-        let r = try await diarizeFile(url) { try await self.loadedDiarizer() }
+        let r = try await diarizeFile(url, maxSpeakers: maxSpeakers) { try await self.loadedDiarizer() }
         return ["turns": r.turns.map(\.json),
                 "embeddings": r.embeddings.mapValues { $0.map(Double.init) },
+                "merged_voices": r.merged,
                 "seconds": Date().timeIntervalSince(t0)]
     }
 

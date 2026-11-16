@@ -74,7 +74,7 @@ private func corrected(_ out: URL) throws -> RecordingPaths {
         let t = Temp("line-voices-engine")
         defer { t.remove() }
         struct Spans: Diarizing {
-            func diarize(_ url: URL) async throws -> DiarizerOutput { DiarizerOutput(segments: [], embeddings: [:]) }
+            func diarize(_ url: URL, maxSpeakers: Int?) async throws -> DiarizerOutput { DiarizerOutput(segments: [], embeddings: [:]) }
             func embed(_ url: URL, spans: [Range<Double>]) async throws -> [[Float]] {
                 spans.map { [Float($0.lowerBound), 1] }  // the span's start, to see which spans went where
             }

@@ -70,7 +70,7 @@ func testEnv(_ t: Temp) -> [String: String] {
 }
 
 private struct Voices: Diarizing {
-    func diarize(_ url: URL) async throws -> DiarizerOutput {
+    func diarize(_ url: URL, maxSpeakers: Int?) async throws -> DiarizerOutput {
         DiarizerOutput(segments: [("b", 3, 5), ("a", 0, 2)], embeddings: ["a": [0.5, 0.25], "b": [1, 0]])
     }
     func embed(_ url: URL, spans: [Range<Double>]) async throws -> [[Float]] { [] }

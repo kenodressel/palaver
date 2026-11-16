@@ -53,6 +53,32 @@ import Testing
         #expect(C.candidates(event, userName: "Timo").map(\.name) == ["Anna Huber", "Carl Berg"])
     }
 
+    /// #21: how many voices the system track can hold, by the invitees; nil whenever the list might not be all of them.
+    @Test func remoteVoicesCountTheOtherInviteesOfASmallCompleteList() {
+        func event(_ attendees: [Attendee], allDay: Bool = false) -> CalendarEvent {
+            CalendarEvent(title: "Contoso", start: F.at(0), end: F.at(30), attendees: attendees, allDay: allDay)
+        }
+        let me = Attendee(name: "Timo Strauß", email: "timo@contoso.com", isSelf: true)
+        let valerie = Attendee(name: "Valerie", email: "valerie@northwind.com", organizer: true)
+        let kim = Attendee(name: "Kim", email: "kim@northwind.com", response: "tentative")
+        let anna = Attendee(name: "Anna", email: "anna@northwind.com")
+        let carla = Attendee(name: "Carla", email: "carla@northwind.com")
+        // A 1:1: one voice on the other side; a small meeting: one per other invitee.
+        #expect(C.remoteVoices(event([me, valerie]), userName: "Timo") == 1)
+        #expect(C.remoteVoices(event([me, valerie, kim, anna]), userName: "Timo") == 3)
+        // Someone who declined does not count; the user is found by name too.
+        #expect(C.remoteVoices(event([me, valerie, Attendee(name: "Kim", response: "declined")]), userName: "Timo") == 1)
+        #expect(C.remoteVoices(event([Attendee(name: "Timo Strauß"), valerie]), userName: "Timo") == 1)
+        // No hint: no event, nobody else invited, many invited, a room (several people behind one device), an all-day
+        // event, or a list without the user (not the user's own invitation: it may not name everyone).
+        #expect(C.remoteVoices(nil, userName: "Timo") == nil)
+        #expect(C.remoteVoices(event([me]), userName: "Timo") == nil)
+        #expect(C.remoteVoices(event([me, valerie, kim, anna, carla]), userName: "Timo") == nil)
+        #expect(C.remoteVoices(event([me, valerie, Attendee(name: "Northwind Lab", isRoom: true)]), userName: "Timo") == nil)
+        #expect(C.remoteVoices(event([me, valerie], allDay: true), userName: "Timo") == nil)
+        #expect(C.remoteVoices(event([valerie]), userName: "Timo") == nil)
+    }
+
     @Test func test_invitees_resolve_to_names_already_in_use() {
         let known = ["Freddy", "Anna Huber", "Martin", "Martina Klein"]
         #expect(C.resolve("Anna Huber", known) == "Anna Huber")

@@ -161,16 +161,35 @@ public enum CalendarEvents {
 
     /// Invitees who may have spoken on the other side: not the user, not a room, not someone who declined.
     public static func candidates(_ event: CalendarEvent, userName: String) -> [Attendee] {
-        let user = Py.casefold(userName)
         var out: [Attendee] = [], seen = Set<ScalarKey>()
         for a in event.attendees {
             let key = Py.casefold(a.name)
-            let first = Py.split(a.name).first.map(Py.casefold)
-            if a.isSelf || a.isRoom || a.response == "declined" || seen.contains(ScalarKey(key)) || Py.same(key, user) || first.map { Py.same($0, user) } == true { continue }
+            if isUser(a, userName) || a.isRoom || a.response == "declined" || seen.contains(ScalarKey(key)) { continue }
             seen.insert(ScalarKey(key))
             out.append(a)
         }
         return out
+    }
+
+    /// The attendee is the user: marked so by the calendar, or named as the user (in full or by first name).
+    static func isUser(_ a: Attendee, _ userName: String) -> Bool {
+        let user = Py.casefold(userName)
+        return a.isSelf || Py.same(Py.casefold(a.name), user) || Py.split(a.name).first.map { Py.same(Py.casefold($0), user) } == true
+    }
+
+    /// Meetings with more invitees than this besides the user give no hint of how many voices the system track holds:
+    /// in bigger ones people join on forwarded links, and the list stops saying who can speak.
+    public static let MAX_HINTED_VOICES = 3
+
+    /// At most how many voices the system track holds (#21): the other invitees of a small meeting, the user being on
+    /// the microphone. nil when the list might not name everyone who could speak there: no event, nobody else
+    /// invited, more than MAX_HINTED_VOICES, a room (several people behind one device), an all-day event, or a list
+    /// without the user (someone else's view of the meeting).
+    public static func remoteVoices(_ event: CalendarEvent?, userName: String) -> Int? {
+        guard let event, !event.allDay, !event.attendees.contains(where: \.isRoom),
+              event.attendees.contains(where: { isUser($0, userName) }) else { return nil }
+        let others = candidates(event, userName: userName).count
+        return (1...MAX_HINTED_VOICES).contains(others) ? others : nil
     }
 
     /// The name already used for `invitee` ("Freddy" for "Freddy Schmidt"), or nil. First names count only when
