@@ -150,9 +150,9 @@ private func settingsFile(_ json: String?) throws -> URL {
     #expect(s.realtime && s.recordTeams && s.recordSlack && s.liveProcessing && s.searchMeaning && s.checkUpdates)
     #expect(s.nudgeTalkShare && s.nudgeMonologue && s.nudgeQuietInvitee && s.nudgeNotify)
     #expect(!s.nudgePace && !s.nudgeFillers)
-    #expect(!s.shareUsage)  // the usage numbers (#6): off unless chosen
-    #expect(Settings(url: try settingsFile(#"{"share_usage": true}"#)).shareUsage)
-    #expect(!Settings(url: try settingsFile(#"{"share_usage": 1}"#)).shareUsage)
+    #expect(s.shareUsage)  // the usage numbers (#6): on unless turned off
+    #expect(!Settings(url: try settingsFile(#"{"share_usage": false}"#)).shareUsage)
+    #expect(Settings(url: try settingsFile(#"{"share_usage": 0}"#)).shareUsage)  // only a real boolean turns it off
     #expect(!Settings(url: try settingsFile(#"{"nudge_notify": false}"#)).nudgeNotify)
     #expect(s.audioDays == 0 && s.userName == nil)
 }

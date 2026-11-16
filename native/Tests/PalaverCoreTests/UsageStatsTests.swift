@@ -61,7 +61,8 @@ import Testing
         #expect(UsageStats.endpoint(environment: ["PALAVER_STATS_URL": ""]) == UsageStats.defaultEndpoint)
         #expect(UsageStats.endpoint(environment: ["PALAVER_STATS_URL": "http://127.0.0.1:9/ping"]) == "http://127.0.0.1:9/ping")
         #expect(UsageStats.page(endpoint: "https://palaver-stats.contoso.workers.dev/ping") == "https://palaver-stats.contoso.workers.dev/")
-        #expect(UsageStats.sendable(UsageStats.defaultEndpoint) == nil)  // the placeholder sends nothing
+        #expect(UsageStats.sendable(UsageStats.defaultEndpoint) != nil)  // the deployed Worker
+        #expect(UsageStats.sendable("https://palaver-stats.<placeholder>.workers.dev/ping") == nil)  // a placeholder sends nothing
         #expect(UsageStats.sendable("https://palaver-stats.contoso.workers.dev/ping") != nil)
         #expect(UsageStats.sendable("http://127.0.0.1:8123/ping") != nil)
         #expect(UsageStats.sendable("http://palaver-stats.contoso.workers.dev/ping") == nil)  // plain http only to this Mac

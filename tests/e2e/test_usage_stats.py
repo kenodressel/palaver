@@ -1,5 +1,5 @@
-"""The opt-in usage numbers (#6) in the window: Settings → Updates shows the switch (off), the ping byte for byte with
-this Mac's values, "New ID" and the public page; the setup assistant asks once and leaves it off. The window's server
+"""The anonymous usage numbers (#6) in the window: Settings → Updates shows the switch (on unless turned off), the
+ping byte for byte with this Mac's values, "New ID" and the public page; the setup assistant shows it once, on. The window's server
 never sends a ping (the menu bar app does): nothing goes over the network here."""
 
 from __future__ import annotations
@@ -49,21 +49,26 @@ def fresh(tmp_path):
     served.close()
 
 
-def test_settings_show_exactly_what_is_sent_and_share_only_once_turned_on(page, served):
+def test_settings_show_exactly_what_is_sent_and_it_can_be_turned_off(page, served):
     write_update_status({"state": "up_to_date", "current": VERSION, "available": None}, served.home)
     goto(page, served, "#/settings/update")
     card = page.locator("#usage-stats")
     share = card.get_by_role("switch", name="Share anonymous usage numbers")
-    expect(share).not_to_be_checked()  # off by default
+    expect(share).to_be_checked()  # on by default
     install = _install_id(served)
     assert re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", install)
     expect(card.locator(".usage-stats-body")).to_have_text(_body(install))
     expect(card).to_contain_text("Your name, your meetings, their audio and anything from them are never sent.")
     assert "share_usage" not in read_settings()
 
+    expect(card).to_contain_text("Not sent yet.")
+
     share.click(force=True)  # the drawn track lies over the checkbox
-    expect(page.locator("#usage-stats")).to_contain_text("Not sent yet.")  # saved: the page is drawn again
-    expect(page.locator("#usage-stats").get_by_role("switch", name="Share anonymous usage numbers")).to_be_checked()
+    expect(page.locator("#usage-stats").get_by_role("switch", name="Share anonymous usage numbers")).not_to_be_checked()
+    expect(page.locator("#usage-stats")).not_to_contain_text("Not sent yet.")  # saved: the page is drawn again
+    assert read_settings()["share_usage"] is False
+    page.locator("#usage-stats").get_by_role("switch", name="Share anonymous usage numbers").click(force=True)
+    expect(page.locator("#usage-stats")).to_contain_text("Not sent yet.")
     assert read_settings()["share_usage"] is True
 
     # Without automatic update checks nothing is sent: said where the switch is.
@@ -84,22 +89,22 @@ def test_settings_show_exactly_what_is_sent_and_share_only_once_turned_on(page, 
     assert served.opened == [PAGE]  # in the browser, by the server
 
 
-def test_the_setup_assistant_asks_once_and_leaves_it_off(page, fresh):
+def test_the_setup_assistant_shows_it_once_and_leaves_it_on(page, fresh):
     page.goto(fresh.url + "#/setup/recommended")
     card = page.locator("#main .setup-usage")
     share = card.get_by_role("switch", name="Share anonymous usage numbers")
-    expect(share).not_to_be_checked(timeout=20_000)  # the first look at this Mac takes a few seconds
+    expect(share).to_be_checked(timeout=20_000)  # the first look at this Mac takes a few seconds
     expect(card.locator(".usage-stats-body")).to_have_text(_body(_install_id(fresh)))
     page.locator("#main .setup-actions .btn.primary").click()
     expect(page.locator("#main h1")).to_have_text("Test recording")
-    assert "share_usage" not in read_settings()  # left as it was: off
+    assert "share_usage" not in read_settings()  # left as it was: on
 
 
-def test_the_setup_assistant_turns_it_on_when_asked(page, fresh):
+def test_the_setup_assistant_turns_it_off_when_asked(page, fresh):
     page.goto(fresh.url + "#/setup/recommended")
     share = page.locator("#main .setup-usage").get_by_role("switch", name="Share anonymous usage numbers")
-    expect(share).not_to_be_checked(timeout=20_000)
+    expect(share).to_be_checked(timeout=20_000)
     share.click(force=True)
     page.locator("#main .setup-actions .btn.primary").click()
     expect(page.locator("#main h1")).to_have_text("Test recording")
-    assert read_settings()["share_usage"] is True
+    assert read_settings()["share_usage"] is False

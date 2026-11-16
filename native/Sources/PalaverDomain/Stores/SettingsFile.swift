@@ -17,8 +17,8 @@ public struct SettingsValues: Equatable, Sendable {
     /// Each nudge also as a notification, without sound (#19).
     public var nudgeNotify = true
     public var checkUpdates = true
-    /// The opt-in usage numbers (#6): once a day the version, macOS and a random install id. Off unless chosen.
-    public var shareUsage = false
+    /// The anonymous usage numbers (#6): once a day the version, macOS and a random install id. On unless turned off.
+    public var shareUsage = true
     /// The microphone is not kept while muted in the recorded call.
     public var respectCallMute = true
 

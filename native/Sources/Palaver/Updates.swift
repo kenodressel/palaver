@@ -8,7 +8,7 @@ import PalaverDaemon
 /// What the app needs of the update machinery, built from the app's own pieces.
 struct AppExtras {
     let updates: Updates
-    /// The opt-in usage numbers (#6), sent from the same tick as the update check.
+    /// The anonymous usage numbers (#6), sent from the same tick as the update check.
     let stats: StatsPing
     let housekeeping: Housekeeping
     let calendarAttach: CalendarAttach

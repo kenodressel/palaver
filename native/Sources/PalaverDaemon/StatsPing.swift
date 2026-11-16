@@ -1,5 +1,5 @@
-// The opt-in usage numbers (#6): at most one ping a day, from the app's tick, beside the update check. Only while
-// the user shares them (`share_usage`) and lets Palaver look for updates (`check_updates`: the switch that allows
+// The anonymous usage numbers (#6): at most one ping a day, from the app's tick, beside the update check. Only while
+// the user shares them (`share_usage`, on unless turned off) and lets Palaver look for updates (`check_updates`: the switch that allows
 // automatic network calls at all), and only from a release: a development build never sends. The ping is the one
 // UsageStats builds; Settings shows the same bytes.
 import Foundation

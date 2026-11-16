@@ -1,9 +1,10 @@
 # palaver-stats
 
-Palaver's opt-in usage numbers (issue #6): a Cloudflare Worker with a D1
-database. Palaver sends a ping only when its user turned on "Share anonymous
-usage numbers" (Settings → Updates or the setup assistant; off by default), at
-most once a day, and only while "Look for updates automatically" is on.
+Palaver's anonymous usage numbers (issue #6): a Cloudflare Worker with a D1
+database, deployed at https://palaver-stats.ardobras.workers.dev/. Palaver
+sends a ping at most once a day, only while "Share anonymous usage numbers"
+(Settings → Updates or the setup assistant; on by default) and "Look for
+updates automatically" are both on.
 
 ## What it does
 
@@ -61,15 +62,11 @@ Until the salt is set, `/ping` answers 503 and stores nothing. The salt only
 has to stay the same: a new one counts every install as new. Keep it secret,
 so nobody can check whether an id they know was counted.
 
-`deploy` prints the Worker's URL, `https://palaver-stats.<your-subdomain>.workers.dev`.
-Put it into the app, in place of the placeholder:
-
-- `native/Sources/PalaverCore/UsageStats.swift`: `defaultEndpoint =
-  "https://palaver-stats.<your-subdomain>.workers.dev/ping"`.
-
-Until then the app sends nothing (a placeholder endpoint is never called) and
-Settings can't open the page. `PALAVER_STATS_URL` points a Palaver at another
-endpoint (the tests' stub).
+`deploy` prints the Worker's URL; the app's endpoint is
+`UsageStats.defaultEndpoint` in `native/Sources/PalaverCore/UsageStats.swift`
+(now `https://palaver-stats.ardobras.workers.dev/ping`). An endpoint with
+`<placeholder>` in it is never called. `PALAVER_STATS_URL` points a Palaver at
+another endpoint (the tests' stub).
 
 Later changes to the Worker: `npx wrangler deploy` again. Cloudflare itself
 sees the IP address of every request at its edge, as any host does; this

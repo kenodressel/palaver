@@ -74,7 +74,7 @@ private final class PingRig: @unchecked Sendable {
         #expect(dev.sent.isEmpty)
 
         let unset = PingRig()
-        unset.endpoint = UsageStats.defaultEndpoint
+        unset.endpoint = "https://palaver-stats.<placeholder>.workers.dev/ping"
         unset.ping.tick()
         unset.later(hours: 30)
         unset.ping.tick()

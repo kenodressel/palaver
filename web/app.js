@@ -6452,7 +6452,7 @@ const setup = {
   customizing: new Set(), // recommendation ids whose alternatives are open
   seed: null,             // glossary terms from the calendar that are ticked
   autostart: null,        // step 2's "Start Palaver at login" (null: on, as recommended)
-  shareUsage: null,       // step 2's "Share anonymous usage numbers" (null: as it is, off unless chosen)
+  shareUsage: null,       // step 2's "Share anonymous usage numbers" (null: as it is, on unless turned off)
   customizeAll: false,    // step 2 shows every choice with its alternatives
   error: null,
   timer: null,            // polling the downloads or the test recording

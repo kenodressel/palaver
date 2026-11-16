@@ -1,14 +1,14 @@
-# Palaver's opt-in usage numbers (#6). Deploy steps: README.md in this folder.
+# Palaver's anonymous usage numbers (#6). Deploy steps: README.md in this folder.
 name = "palaver-stats"
 main = "src/index.js"
 compatibility_date = "2026-10-01"
 workers_dev = true
+preview_urls = false
 
 [[d1_databases]]
 binding = "DB"
 database_name = "palaver-stats"
-# The id `npx wrangler d1 create palaver-stats` prints.
-database_id = "REPLACE-WITH-THE-DATABASE-ID"
+database_id = "ffe4b4b5-6016-4035-9854-8671f8e52109"
 
 # Once a day: the daily rows older than 90 days are deleted.
 [triggers]

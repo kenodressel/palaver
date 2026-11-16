@@ -1,19 +1,19 @@
-// The opt-in usage numbers (#6): what a ping holds, where it goes, and the two small files it keeps in the support
+// The anonymous usage numbers (#6): what a ping holds, where it goes, and the two small files it keeps in the support
 // folder. The app sends it (PalaverDaemon's StatsPing), the window shows it (palaver-server's UsageStatsAPI): both
-// build it here, so Settings shows exactly what is sent. Off by default (settings.json `share_usage`).
+// build it here, so Settings shows exactly what is sent. On unless turned off (settings.json `share_usage`).
 import Foundation
 
 public enum UsageStats {
     /// Where pings go: the Worker in stats/ (its README says how it is deployed). `PALAVER_STATS_URL` names another
-    /// endpoint (the tests' stub). While the placeholder is in, nothing is sent.
-    public static let defaultEndpoint = "https://palaver-stats.<placeholder>.workers.dev/ping"
+    /// endpoint (the tests' stub).
+    public static let defaultEndpoint = "https://palaver-stats.ardobras.workers.dev/ping"
 
     public static func endpoint(environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
         if let given = environment["PALAVER_STATS_URL"], !given.isEmpty { return given }
         return defaultEndpoint
     }
 
-    /// The endpoint is a real one: https, or plain http to this Mac (a test's stub); never the placeholder.
+    /// The endpoint is a real one: https, or plain http to this Mac (a test's stub); never a placeholder.
     public static func sendable(_ endpoint: String) -> URL? {
         guard !endpoint.contains("<placeholder>"), let url = URL(string: endpoint), let host = url.host else { return nil }
         if url.scheme == "https" { return url }
