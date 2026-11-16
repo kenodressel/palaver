@@ -23,8 +23,14 @@ public enum Run {
     /// `_cmd_sync`: the transcript to Notion as config.toml says (page or database), the token from the environment,
     /// config.toml or the Keychain; then notion.json, `notion_upload_start/_done` in session.log and the "Uploaded to
     /// Notion" notification.
+    /// A meeting kept on this Mac (#53) is never uploaded: it succeeds without a page (the meeting stays unsynced).
     public static func sync(_ paths: RecordingPaths, _ setup: Pipeline.Setup) async throws -> Int32 {
         let log = SessionLog(url: paths.sessionLog, logger: "palaver")
+        if LocalOnly.isLocalOnly(paths.folder) {
+            setup.say("Not uploaded to Notion: this meeting is kept on this Mac.")
+            log.message("not uploaded to Notion: kept on this Mac")
+            return 0
+        }
         do {
             let plan = try NotionSync.plan(paths, glossary: Glossary.current(stores: setup.stores))
             guard let token = Tokens.value(Tokens.NOTION, configToml: setup.cloud.configToml, env: setup.cloud.env,

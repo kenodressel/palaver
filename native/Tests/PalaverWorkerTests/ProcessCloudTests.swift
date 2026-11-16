@@ -293,6 +293,19 @@ private func texts(_ paths: RecordingPaths) -> [String?]? { readJSON(paths.trans
         #expect(c.calls.isEmpty)  // no Python
     }
 
+    /// Keep on This Mac (#53) holds for Notion too: the transcript is written, nothing is uploaded, and the run
+    /// succeeds (no notion.json, so the meeting simply stays unsynced).
+    @Test func aMeetingKeptOnThisMacIsNeverUploadedToNotion() async throws {
+        let t = Temp(); defer { t.remove() }
+        var c = try Cloud(t, service: nil)
+        c.h.config.notionParentPageId = "parent-1"
+        c.env["NOTION_TOKEN"] = NOTION_TOKEN
+        try Data("{}".utf8).write(to: c.paths.folder.appendingPathComponent("local_only.json"))
+        #expect(try await Run.run(c.paths.folder, c.setup(fake(ENGINE))) == 0)
+        #expect(c.services.requests.isEmpty && !FileManager.default.fileExists(atPath: c.paths.notionInfo.path))
+        #expect(c.h.said.contains { $0.contains("kept on this Mac") })
+    }
+
     @Test func runInDatabaseModeWithTheTokenFromTheKeychain() async throws {
         let t = Temp(); defer { t.remove() }
         var c = try Cloud(t, service: nil)
