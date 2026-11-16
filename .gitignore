@@ -15,3 +15,7 @@ build/
 
 # Implementation plans stay local (old ones: ~/.config/palaver-dev/plans)
 docs/superpowers/plans/
+
+# Local tools: Claude Code (settings, agent worktrees) and the spike tools' builds
+/.claude/
+/.build/
