@@ -99,6 +99,60 @@ public enum GlossarySuggest {
     /// `_similar`: rapidfuzz's ratio of the casefolded spellings.
     private static func similar(_ a: String, _ b: String) -> Double { Fuzz.ratio(Py.casefold(a), Py.casefold(b)) }
 
+    // MARK: - forms of one word (#36)
+
+    /// German and English inflection endings: a word and another of its forms ("Touchpoint", "Touchpoints";
+    /// "Kundengespräch", "Kundengesprächen"; "halluziniert", "halluzinieren") differ only in these.
+    static let endings = ["ern", "ens", "ten", "en", "er", "es", "te", "st", "s", "e", "n", "t"]
+    /// A stem shorter than this is too little to tell a word from another ("Sam", "Same"); before a plural "s" one
+    /// letter less does ("APIs").
+    static let minStem = 4
+
+    /// The word as forms are compared: casefolded, umlauts as their vowels ("Anträge" as "antrage"), without hyphens
+    /// and spaces ("Contoso-Projekt" as "contosoprojekt").
+    private static func formKey(_ word: String) -> [Unicode.Scalar] {
+        let plain: [Unicode.Scalar: Unicode.Scalar] = ["ä": "a", "ö": "o", "ü": "u"]
+        return Py.casefold(word).unicodeScalars.compactMap { $0 == "-" || $0 == " " ? nil : plain[$0] ?? $0 }
+    }
+
+    /// Each (stem, ending) the word can be split into: the whole word with no ending, and the word less each ending
+    /// that leaves a stem of at least `minStem`.
+    private static func splits(_ key: [Unicode.Scalar]) -> [(stem: ArraySlice<Unicode.Scalar>, ending: String)] {
+        var out: [(stem: ArraySlice<Unicode.Scalar>, ending: String)] = [(key[...], "")]
+        for e in endings {
+            let tail = Array(e.unicodeScalars)
+            guard key.count - tail.count >= (e == "s" ? minStem - 1 : minStem), key.suffix(tail.count).elementsEqual(tail)
+            else { continue }
+            out.append((key.dropLast(tail.count), e))
+        }
+        return out
+    }
+
+    /// Whether `a` and `b` are two forms of one word: the same stem with different endings. Two spellings of the same
+    /// form ("Grunwald", "Grünwald"; "Data Bricks", "Databricks") are not: one of them may be misheard.
+    static func inflected(_ a: String, _ b: String) -> Bool {
+        let x = formKey(a), y = formKey(b)
+        guard x != y else { return false }
+        let ys = splits(y)
+        return splits(x).contains { s in ys.contains { $0.stem.elementsEqual(s.stem) && $0.ending != s.ending } }
+    }
+
+    /// Whether two forms of one word ("Klasses", "Klasser") are forms of an ordinary German or English word
+    /// ("Klasse"): their shared stem, bare or with -e, -en or -n, is not rare. No new term then.
+    static func formsOfOrdinary(_ a: String, _ b: String) -> Bool {
+        let ys = splits(formKey(b))
+        for s in splits(formKey(a)) where ys.contains(where: { $0.stem.elementsEqual(s.stem) && $0.ending != s.ending }) {
+            let stem = String(String.UnicodeScalarView(s.stem))
+            if ["", "e", "en", "n"].contains(where: { !Zipf.isRare(stem + $0) }) { return true }
+        }
+        return false
+    }
+
+    /// The first `minStem - 1` scalars of the form key: two forms of one word always share them.
+    private static func formPrefix(_ word: String) -> String {
+        String(String.UnicodeScalarView(formKey(word).prefix(minStem - 1)))
+    }
+
     // MARK: - occurrences
 
     /// Rare words, and ordinary ones the transcriber was unsure of (`unsure`: casefolded word → how often; nil: none):
@@ -263,6 +317,10 @@ public enum GlossarySuggest {
             return c
         }
         func isKnown(_ folded: String) -> Bool { knownWords[folded] != nil }
+        // Another form of a known word or term ("Touchpoints" of "Touchpoint") is it, spelled right (#36).
+        var knownByPrefix: [String: [String]] = [:]
+        for spelling in knownWords.values { knownByPrefix[formPrefix(spelling), default: []].append(spelling) }
+        func isFormOfKnown(_ word: String) -> Bool { knownByPrefix[formPrefix(word)]?.contains { inflected(word, $0) } ?? false }
 
         func merge(_ words: [String]) -> (count: Int, meetings: [String], examples: [JSONValue]) {
             let all = words.compactMap { found[$0] }
@@ -277,7 +335,9 @@ public enum GlossarySuggest {
         var byTerm = PyDict<[String]>()
         for word in found.words {
             let key = Py.casefold(word)
-            if isKnown(key) || mapped.contains(ScalarKey(key)) || inGlossary.contains(ScalarKey(key)) { continue }
+            if isKnown(key) || mapped.contains(ScalarKey(key)) || inGlossary.contains(ScalarKey(key)) || isFormOfKnown(word) {
+                continue
+            }
             let folded = Py.casefold(key), keyLength = length(key)
             var best: String?, score = 0.0
             let needed = capitalized(word) ? variantSimilarity : lowercaseVariantSimilarity
@@ -318,15 +378,18 @@ public enum GlossarySuggest {
         let candidates = zip(found.words, found.items).compactMap { w, o -> String? in
             let folded = Py.casefold(w)
             guard !placed.contains(ScalarKey(w)), o.rare, capitalized(w), !mapped.contains(ScalarKey(folded)),
-                  !inGlossary.contains(ScalarKey(folded)), !isKnown(folded) else { return nil }
+                  !inGlossary.contains(ScalarKey(folded)), !isKnown(folded), !isFormOfKnown(w) else { return nil }
             return w
         }
         var groups = PyDict<[String]>()
         for w in candidates { groups[code(w)] = (groups[code(w)] ?? []) + [w] }
         for (code, group) in groups {
-            let spellings = Set(group.map { ScalarKey(Py.casefold($0)) })
+            // Two forms of one word are no two spellings: the more frequent one stands for both (they are a term).
+            var words: [String] = []
+            for w in Py.stableSorted(group, by: { (found[$0]?.count ?? 0) > (found[$1]?.count ?? 0) })
+            where !words.contains(where: { inflected(w, $0) }) { words.append(w) }
+            let spellings = Set(words.map { ScalarKey(Py.casefold($0)) })
             if spellings.count < 2 || length(code) < 2 { continue }
-            var words = Py.stableSorted(group) { (found[$0]?.count ?? 0) > (found[$1]?.count ?? 0) }
             let head = words[0]
             if words.dropFirst().contains(where: { similar(head, $0) < clusterSimilarity }) {
                 words = [head] + words.dropFirst().filter { similar(head, $0) >= clusterSimilarity }
@@ -340,20 +403,23 @@ public enum GlossarySuggest {
                                   meetings: m.meetings, examples: m.examples, unsure: nil))
         }
 
-        // 3. New terms: rare capitalized words that recur across meetings. A plural ("Sidequests") counts as its
-        // singular.
-        for w in candidates {
-            if placed.contains(ScalarKey(w)) { continue }
-            let scalars = w.unicodeScalars
-            if scalars.last == "s", found[String(String.UnicodeScalarView(scalars.dropLast()))] != nil { continue }
-            guard let o = found[w] else { continue }
-            let plural = found[w + "s"]
-            var meetings = Set(o.meetings.map(ScalarKey.init))
-            for m in plural?.meetings ?? [] { meetings.insert(ScalarKey(m)) }
-            if meetings.count < 2 && o.count < 5 { continue }
+        // 3. New terms: rare capitalized words that recur across meetings. A word's forms ("Sidequest",
+        // "Sidequests"; "Kundengespräch", "Kundengespräche", "Kundengesprächen") are one term: its shortest form.
+        let left = candidates.filter { !placed.contains(ScalarKey($0)) }
+        var forms: [ScalarKey: [String]] = [:], heads: [String: [String]] = [:]
+        for w in Py.stableSorted(left, by: { formKey($0).count < formKey($1).count }) {
+            let p = formPrefix(w)
+            if let head = heads[p]?.first(where: { inflected(w, $0) }) { forms[ScalarKey(head)]?.append(w); continue }
+            heads[p, default: []].append(w)
+            forms[ScalarKey(w)] = [w]
+        }
+        for w in left {
+            guard let all = forms[ScalarKey(w)] else { continue }  // another word's form
+            if all.dropFirst().contains(where: { formsOfOrdinary(w, $0) }) { continue }
+            let m = merge(all)
+            if m.meetings.count < 2 && m.count < 5 { continue }
             let key = "term:\(Py.casefold(w))"
-            if rejected.contains(ScalarKey(key)) { continue }
-            let m = merge(plural != nil ? [w, w + "s"] : [w])
+            if all.contains(where: { rejected.contains(ScalarKey("term:\(Py.casefold($0))")) }) { continue }  // any form
             out.append(Suggestion(kind: "term", key: key, term: w, variants: [], count: m.count, meetings: m.meetings,
                                   examples: m.examples, unsure: nil))
         }

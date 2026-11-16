@@ -93,6 +93,59 @@ import Testing
         #expect(variants.count == 1 && strings(variants.first?["variants"]) == ["Teil"])
     }
 
+    /// Another grammatical form of a known word (#36) is that word, spelled right: no variant of it.
+    @Test func anInflectedFormOfAKnownWordIsNoVariant() throws {
+        let t = TempFolder("glossary-suggest"); defer { t.remove() }
+        let g = glossary(t)
+        try g.add(term: "Touchpoint")
+        try g.add(term: "Bestellstrecke")
+        try g.add(term: "Contoso-Projekt")
+        let tr = transcripts([
+            ("m1", ["Drei Touchpoints und zwei Bestellstrecken.", "Das sind Contosoprojekte.", "Mit Touchpoind."]),
+            ("m2", ["Die Touchpoints bleiben.", "Bestellstrecken auch.", "Contosoprojekte laufen."]),
+        ])
+        let found = GlossarySuggest.suggest(tr, known: ["Kündigung", "Rollout"], glossary: g)
+        let offered = found.flatMap { strings($0["variants"]) + [term($0)] }
+        #expect(offered.allSatisfy { !["Touchpoints", "Bestellstrecken", "Contosoprojekte"].contains($0) })
+        // A misheard spelling of the same word still is one.
+        #expect(found.contains { kind($0) == "variant" && term($0) == "Touchpoint" && strings($0["variants"]) == ["Touchpoind"] })
+    }
+
+    /// Two forms of one word are no cluster of spellings, nor a new term each: "Kundengespräch", "Kundengespräche"
+    /// and "Kundengesprächen" are one, "Effizienzgewinn" and "Effizienzgewinne" another (#36).
+    @Test func formsOfOneWordAreNoClusterAndOneTerm() throws {
+        let t = TempFolder("glossary-suggest"); defer { t.remove() }
+        let tr = transcripts([
+            ("m1", ["Ein Kundengespräch.", "Ein Effizienzgewinn.", "Wasti ist da."]),
+            ("m2", ["Zwei Kundengespräche.", "Viele Effizienzgewinne.", "Vasti auch."]),
+            ("m3", ["Aus Kundengesprächen.", "Effizienzgewinne."]),
+        ])
+        let found = GlossarySuggest.suggest(tr, known: [], glossary: glossary(t))
+        #expect(found.filter { kind($0) == "cluster" }.map(term) == ["Wasti"])
+        let terms = found.filter { kind($0) == "term" }
+        #expect(terms.map(term).sorted() == ["Effizienzgewinn", "Kundengespräch"])
+        let talks = try #require(terms.first { term($0) == "Kundengespräch" })
+        #expect(talks["count"] == .int(3) && strings(talks["meetings"]) == ["m1", "m2", "m3"])
+        // Turning down one form turns down the word.
+        let g = glossary(t)
+        g.reject("term:kundengesprächen")
+        #expect(!GlossarySuggest.suggest(tr, known: [], glossary: g).contains { term($0) == "Kundengespräch" })
+    }
+
+    @Test func whatCountsAsAnotherFormOfAWord() {
+        func same(_ a: String, _ b: String) -> Bool { GlossarySuggest.inflected(a, b) }
+        #expect(same("Touchpoints", "Touchpoint") && same("touchpoint", "Touchpoints"))
+        #expect(same("Kundengesprächen", "Kundengespräch") && same("Batterie", "Batterien"))
+        #expect(same("Contosoprojekte", "Contoso-Projekt") && same("Anträge", "Antrag"))
+        #expect(same("halluziniert", "halluzinieren"))  // two forms of one stem
+        #expect(!same("Touchpunkt", "Touchpoint") && !same("Timo", "Tomo") && !same("Carla", "Clara"))
+        #expect(same("Intern", "Interne") && same("APIs", "API") && !same("Ams", "Am"))
+        #expect(!same("Grunwald", "Grünwald") && !same("Data Bricks", "Databricks"))  // spelled apart, same form
+        #expect(!same("Tobi", "Tobias") && !same("Sam", "Samuel"))  // a name's short form is no ending
+        #expect(GlossarySuggest.formsOfOrdinary("Klasses", "Klasser"))  // of "Klasse"
+        #expect(!GlossarySuggest.formsOfOrdinary("Kundengespräche", "Kundengesprächen"))
+    }
+
     @Test func test_unsure_words_of_the_recordings() throws {
         let t = TempFolder("glossary-unsure"); defer { t.remove() }
         let folder = t.url.appendingPathComponent("2026-10-27T16-03-07")
