@@ -55,8 +55,8 @@ func diarizerConfig(maxSpeakers: Int? = nil) -> OfflineDiarizerConfig {
 // MARK: - One person split in several (#21)
 
 /// Two of the diarizer's speakers whose voices (the mean embedding of each) are at least this alike are one person
-/// it split, by pauses, noise or a change of codec. Palaver's own numbers (`Voices.REJECT_SIMILAR`, from the
-/// owner's meetings): the same person in two meetings scores 0.80-0.96, different people up to 0.76. 0.82 is
+/// it split, by pauses, noise or a change of codec. Palaver's own numbers (`make eval-voices`, the owner's meetings):
+/// two people stay below 0.52 in 99 of 100 pairs, one person in two meetings mostly scores 0.6-0.9. 0.82 is
 /// FluidAudio's own cut between "one speaker" and "two" (its clustering threshold, 0.6 Euclidean between unit
 /// vectors: 1 - 0.6² / 2): clear of the different people, and within one meeting (one codec, one room) the same
 /// person's parts score higher than across meetings.

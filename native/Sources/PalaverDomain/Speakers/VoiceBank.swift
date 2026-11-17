@@ -79,8 +79,9 @@ public enum Voices {
     /// Below MATCH_THRESHOLD but this close: offered as a suggestion, not applied.
     public static let SUGGEST_THRESHOLD = 0.65
     /// A voice the user said is not someone counts against that person for voices at least this alike (and more
-    /// alike than the person's own samples): the same person in two meetings scores 0.80-0.96, different people up
-    /// to 0.76.
+    /// alike than the person's own samples). The owner's meetings (`make eval-voices`, 2026-11): someone on the call
+    /// in two meetings scores 0.28-0.86 (median 0.65), the owner's own microphone median 0.88, two different people
+    /// below 0.52 in 99 of 100 pairs.
     public static let REJECT_SIMILAR = 0.75
     /// Embeddings of speakers with less talk time than this are too noisy to enrol or to recognize.
     public static let MIN_TALK_SECONDS = 10.0

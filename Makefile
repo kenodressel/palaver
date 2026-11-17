@@ -3,7 +3,7 @@
 DIST = dist
 VERSION = $(shell cat VERSION)
 
-.PHONY: engine app-swift server worker lm cli engine-test swift-test debug-programs e2e-server test-build test-build-args eval-engine eval-engine-worker test test-all test-long test-changed icons compat-runtime models app manifest release smoke-install publish clean help
+.PHONY: engine app-swift server worker lm cli engine-test swift-test debug-programs e2e-server test-build test-build-args eval-engine eval-engine-worker eval-voices test test-all test-long test-changed icons compat-runtime models app manifest release smoke-install publish clean help
 
 # The Swift engine (FluidAudio, CoreML). SwiftPM hangs fetching FluidAudio's
 # NemoTextProcessing binary here, so it is fetched by tools/fetch_nemo.sh and
@@ -148,6 +148,9 @@ eval-engine-worker: ## The same gate through palaver-worker's in-process engine 
 	@$(MAKE) --no-print-directory $(VENDOR)/.patched
 	swift build -c release --package-path $(ENGINE_DIR) --product palaver-worker
 	$(PYTHON) tools/eval_engine.py --worker $(ENGINE_DIR)/.build/release/palaver-worker
+
+eval-voices: ## How the voice bank does on your named meetings, numbers only (the installed app's engine; tools/eval_voices.py)
+	tools/memcap.sh 4 $(PYTHON) tools/eval_voices.py
 
 test-changed: ## Run only the Python tests for what changed since master (tools/changed_tests.py)
 	@TESTS="$$(python3 tools/changed_tests.py)"; \

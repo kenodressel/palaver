@@ -180,6 +180,7 @@ and every pull request; a release waits for it to pass on the tagged commit.
 | `eval-engine-worker` | `eval-engine` through `palaver-worker engine-serve` (the in-process engine), writes `engine-gate-worker.md` |
 | `test-changed` | Run only the Python tests for what changed since master |
 | `eval-engine` | Maintainer-only gate: the Swift engine against the old stack's numbers on your own recordings. Needs `PALAVER_EVAL_DIR` (a folder with a local `eval.json`); writes numbers only to `engine-gate.md`. The exit code contract is `tools/eval_engine.py`'s: 0 pass, 1 a check FAILED, 2 misconfigured. Through make both failures show as make's exit 2, so read the printed table |
+| `eval-voices` | Maintainer-only: the voice bank on your own named meetings (the installed app's engine re-embeds every turn): a person in two meetings vs two people, enrolment from N meetings, newest vs most different samples, the bank's rules replayed, likely mislabels. Prints numbers, meeting ids and labels only |
 | `icons` | Draw the app and menu bar icons into `native/Bundle` |
 | `models` | Pack the models Palaver hosts (none now; the engine downloads its own) |
 | `app` | Build Palaver.app from the Swift programs (no Python), zipped; refuses a bundle with anything of Python or a path of this Mac in it |
