@@ -172,14 +172,19 @@ func build(autoSync: Bool = false, notes: Bool = true, answer: AutoSyncAnswer? =
     @Test func anAnswerIsAskedInTheBackgroundOnceAndKept() async throws {
         let asked = Asked()
         let clock = Clock(0)
+        let answering = DispatchSemaphore(value: 0)  // the first answer waits until the test has looked twice
         let facts = PythonFacts(query: { what in
             asked.add(what)
-            if what[0] == "notes-memory" { return ["gb": 14.0] }
+            if what[0] == "notes-memory" {
+                if asked.count == 1 { answering.wait() }
+                return ["gb": 14.0]
+            }
             if what[0] == "missing-models" { return ["missing": what[1] == "/m/a" ? ["Speech models"] : []] }
             return ["stale": ["/m/a"], "model_ready": false]
         }, clock: { clock.now })
         #expect(facts.notesMemoryGB(URL(fileURLWithPath: "/m/a")) == nil)  // being asked
         #expect(facts.notesMemoryGB(URL(fileURLWithPath: "/m/a")) == nil)
+        answering.signal()
         #expect(waitFor { facts.notesMemoryGB(URL(fileURLWithPath: "/m/a")) == 14 })
         #expect(asked.count == 1)  // one question at a time, then kept
         clock.now = 61
