@@ -1159,6 +1159,15 @@ export function memoryPolling(view, hidden) {
   return view === "settings" && !hidden;
 }
 
+// The date line's pill while a meeting has live text: "Live · transcribed up to 12:34" while it records; once
+// stopped (finishing, or transcribing the rest) it is no longer live, though the live text stays until the transcript
+// is done. Null without live text.
+export function liveStatus(m) {
+  if (!m?.live) return null;
+  if (m.status === "recording" && !m.finishing) return { live: true, text: `Live · transcribed up to ${clock(m.live.until)}` };
+  return { live: false, text: "Stopped · transcribing the rest" };
+}
+
 // --- the live coach (#41, #42) ---------------------------------------------------------
 
 // The running recording's coach (who talks, the nudge), only on its own page while it records.

@@ -68,3 +68,13 @@ test("answerNote names the model, or that nothing called for an answer", () => {
   assert.equal(answerNote({ engine: "Anthropic API", answer: { answer: "" } }),
     "Anthropic API found no open question to answer in the last minutes.");
 });
+
+import { liveStatus } from "../../web/logic.js";
+
+test("liveStatus: live only while it records, not once stopped", () => {
+  assert.deepEqual(liveStatus({ status: "recording", live: { until: 754 } }), { live: true, text: "Live · transcribed up to 12:34" });
+  const stopped = { live: false, text: "Stopped · transcribing the rest" };
+  assert.deepEqual(liveStatus({ status: "recording", finishing: true, live: { until: 754 } }), stopped);
+  assert.deepEqual(liveStatus({ status: "processing", live: { until: 754 } }), stopped);
+  assert.equal(liveStatus({ status: "ready" }), null);
+});

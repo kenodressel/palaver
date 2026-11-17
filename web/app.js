@@ -18,7 +18,8 @@ import { meetingCommands, nextAfter, laneCommands, laneLines, linesText, namingT
   sizeText, storageTotalText, audioDaysLabel, audioDaysConfirm,
   SETUP_STEPS, setupStepAfter, setupStepBefore, stepButtons, gbText, downloadsText,
   downloadProgress, permissionText, recommendedHint, setupOfferText, testRecordingText, seedChecked,
-  optionLabel, liveCoachFor, speakingText, questionsNote, questionButton, answerButton, answerHeading, answerNote,
+  optionLabel, liveCoachFor, liveStatus, speakingText, questionsNote, questionButton,
+  answerButton, answerHeading, answerNote,
   heartbeat, notesFromJobs,
   titleChange, updateCard, withTitle, retitledText, TITLE_MAX } from "./logic.js";
 import { notepad, flushNotepads, leaveNotepads, notepadFocus, restoreNotepadFocus } from "./mynotes.js";
@@ -593,10 +594,11 @@ async function openMeeting(id, at, { how = "push", tab = null } = {}) {
 
 // The date line's one status: live, still being transcribed, or reviewed.
 function statusPill(m) {
-  if (m.live) {
-    return h("span", { class: "pill live-badge", title: "Updates every few seconds; speakers may still change" },
-      `Live · transcribed up to ${clock(m.live.until)}`);
+  const live = liveStatus(m);
+  if (live?.live) {
+    return h("span", { class: "pill live-badge", title: "Updates every few seconds; speakers may still change" }, live.text);
   }
+  if (live) return h("span", { class: "pill state", title: "Recording stopped; the full transcript replaces the live text" }, live.text);
   if (STATE_TEXT[m.status]) return h("span", { class: "pill state" }, STATE_TEXT[m.status]);
   if (m.reviewed) {
     const at = new Date(m.reviewed);
