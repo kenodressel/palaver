@@ -1174,10 +1174,32 @@ export function speakingText(talk) {
 
 // The button: which model answers and where ("Best next question (Gemma, on this Mac)"), off with the reason
 // when none can (no model chosen, notes off), "Thinking…" while it answers. ``info``: GET …/next-question.
+// ``q``: what was asked last (``kind`` "answer" for Best answer); while it runs both buttons wait.
 export function questionButton(info, q) {
-  if (q?.loading) return { label: "Thinking…", disabled: true, reason: null };
+  if (q?.loading) {
+    return { label: q.kind === "answer" ? info?.label || "Best next question" : "Thinking…", disabled: true, reason: null };
+  }
   if (!info) return { label: "Best next question", disabled: true, reason: null };
   return { label: info.label, disabled: !info.ready, reason: info.ready ? null : info.reason };
+}
+
+// "Best answer": what you could say now to the latest question put to you, from the same model.
+export function answerButton(info, q) {
+  if (q?.loading) return { label: q.kind === "answer" ? "Thinking…" : "Best answer", disabled: true };
+  return { label: "Best answer", disabled: !info?.ready };
+}
+
+// Over the best answer: what it answers, who asked and when ("To Carla at 12:34: When can you start?").
+export function answerHeading(a) {
+  if (!a?.to) return "";
+  const who = [a.asked_by ? `To ${a.asked_by}` : "", a.time ? `at ${a.time}` : ""].filter(Boolean).join(" ");
+  return who ? `${who}: ${a.to}` : a.to;
+}
+
+// Under the best answer: which model, and what it rests on; or that nothing called for an answer.
+export function answerNote(answer) {
+  if (!answer.answer?.answer) return `${answer.engine} found no open question to answer in the last minutes.`;
+  return `${answer.engine} · may use general knowledge, never made-up facts · check before you say it`;
 }
 
 // Under the suggested questions: which model, and that it keeps to what was said.

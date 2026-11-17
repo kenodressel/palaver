@@ -18,7 +18,8 @@ import { meetingCommands, nextAfter, laneCommands, laneLines, linesText, namingT
   sizeText, storageTotalText, audioDaysLabel, audioDaysConfirm,
   SETUP_STEPS, setupStepAfter, setupStepBefore, stepButtons, gbText, downloadsText,
   downloadProgress, permissionText, recommendedHint, setupOfferText, testRecordingText, seedChecked,
-  optionLabel, liveCoachFor, speakingText, questionsNote, questionButton, heartbeat, notesFromJobs,
+  optionLabel, liveCoachFor, speakingText, questionsNote, questionButton, answerButton, answerHeading, answerNote,
+  heartbeat, notesFromJobs,
   titleChange, updateCard, withTitle, retitledText, TITLE_MAX } from "./logic.js";
 import { notepad, flushNotepads, leaveNotepads, notepadFocus, restoreNotepadFocus } from "./mynotes.js";
 import { meetingTime, parseNote } from "./mynotes-logic.js";
@@ -2342,11 +2343,13 @@ function fillCoachLive(el, m) {
       h("div", { class: "coach-line" },
         h("span", { class: "coach-status" }),
         h("button", { type: "button", class: "btn small coach-ask", onclick: () => askNextQuestion(m.id) }),
+        h("button", { type: "button", class: "btn small coach-ask-answer",
+          onclick: () => askNextQuestion(m.id, false, "answer") }),
         h("span", { class: "coach-reason" })),
       h("div", { class: "coach-answer" }));
   }
   const [line, answer] = el.children;
-  const [status, button, reason] = line.children;
+  const [status, button, answerBtn, reason] = line.children;
   const c = liveCoachFor(state.liveCoach, m);
   status.replaceChildren(...(c ? [
     h("span", { class: `coach-now ${c.talk?.speaking || "quiet"}` }, speakingText(c.talk)),
@@ -2358,6 +2361,10 @@ function fillCoachLive(el, m) {
   button.textContent = b.label;
   button.disabled = b.disabled;
   button.title = "1–3 questions to ask next, from the last minutes and your prep";
+  const a = answerButton(state.questionInfo?.id === m.id ? state.questionInfo : null, q);
+  answerBtn.textContent = a.label;
+  answerBtn.disabled = a.disabled;
+  answerBtn.title = "What you could say now to the latest question put to you, from the last minutes and your prep";
   reason.textContent = b.reason || "";
   const key = JSON.stringify(q && !q.loading ? q : null);
   if (answer.dataset.key === key) return;
@@ -2372,10 +2379,24 @@ function renderQuestions(q) {
   } }, q.confirm ? "Cancel" : "Hide");
   if (q.confirm) {  // the local model during a call: said first, run on a second click
     return [h("p", { class: "coach-warning", role: "status" }, q.confirm, " ",
-      h("button", { type: "button", class: "btn small", onclick: () => askNextQuestion(q.id, true) }, "Run anyway"),
+      h("button", { type: "button", class: "btn small", onclick: () => askNextQuestion(q.id, true, q.kind) },
+        "Run anyway"),
       " ", hide)];
   }
   if (q.error) return [h("p", { class: "coach-error", role: "status" }, q.error), hide];
+  if (q.kind === "answer") {
+    const a = q.answer || {};
+    const heading = answerHeading(a);
+    return [
+      a.answer ? h("div", { class: "best-answer" },
+        heading ? h("p", { class: "to" }, heading) : null,
+        h("p", { class: "say" }, a.answer),
+        a.points?.length ? h("ul", { class: "points" }, a.points.map((p) => h("li", {}, p))) : null,
+        a.check ? h("p", { class: "check" }, "Check: ", a.check) : null,
+        a.basis ? h("p", { class: "why" }, a.basis) : null) : null,
+      h("p", { class: "next-questions-note" }, answerNote(q), " ", hide),
+    ];
+  }
   return [
     q.questions.length ? h("ol", { class: "next-questions" }, q.questions.map((x) => h("li", {},
       h("span", { class: "q" }, x.question), x.why ? h("span", { class: "why" }, x.why) : null))) : null,
@@ -2388,20 +2409,22 @@ function refreshCoachLive() {
   if (el && state.meeting) fillCoachLive(el, state.meeting);
 }
 
-async function askNextQuestion(id, confirmed = false) {
+// ``kind``: "questions" (Best next question) or "answer" (Best answer); the same model and the same second click.
+async function askNextQuestion(id, confirmed = false, kind = "questions") {
   const info = state.questionInfo?.id === id ? state.questionInfo : null;
   if (info?.warning && !confirmed) {
-    state.nextQuestion = { id, confirm: info.warning };
+    state.nextQuestion = { id, kind, confirm: info.warning };
     refreshCoachLive();
     return;
   }
-  state.nextQuestion = { id, loading: true };
+  state.nextQuestion = { id, kind, loading: true };
   refreshCoachLive();
   let answer;
+  const body = { ...(confirmed ? { confirmed: true } : {}), ...(kind === "answer" ? { kind } : {}) };
   try {
-    answer = { id, ...await api(`/api/meetings/${encodeURIComponent(id)}/next-question`, confirmed ? { confirmed: true } : {}) };
+    answer = { id, kind, ...await api(`/api/meetings/${encodeURIComponent(id)}/next-question`, body) };
   } catch (err) {
-    answer = { id, error: err.message };
+    answer = { id, kind, error: err.message };
   }
   if (state.nextQuestion?.id === id) state.nextQuestion = answer;
   refreshCoachLive();

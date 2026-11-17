@@ -1,5 +1,6 @@
 // The best next question: the last minutes (or at least two lines, at most 120), the prep, the user's notes cut at
 // 4000 characters, at most three questions; earlier meetings kept on this Mac never reach a cloud model; nothing written.
+// The best answer: the same inputs with `kind: "answer"`, its own rules and schema, at most three points.
 import Foundation
 import Testing
 import PalaverCloud
@@ -64,6 +65,51 @@ private func line(_ speaker: String, _ start: Double, _ text: String) -> JSONVal
         ctx.readInput = { Data("not json".utf8) }
         #expect(try await run(["next-question", paths.folder.path], ctx) == 1)
         #expect(home.said.last == #"{"error": "the inputs are not a JSON object"}"#)
+    }
+
+    @Test func theBestAnswerHasItsOwnRulesOnTheSameContext() throws {
+        let inputs = JSONValue.object([
+            ("kind", .string("answer")), ("user", .string("Timo")), ("now", .int(60)), ("title", .string("Contoso Angebot")),
+            ("lines", .array([line("Valerie", 30, "Timo, ab wann könnt ihr starten?")])),
+            ("my_notes", .strings(["Start frühestens im März"])),
+        ])
+        let prompt = try NextQuestion.buildPrompt(inputs)
+        #expect(prompt.hasPrefix("You help Timo during a meeting that is going on right now. Suggest the best answer Timo could give now."))
+        for part in ["the latest question in the transcript that was put to Timo", "You may use your general knowledge",
+                     "Never invent facts about Timo", "Meeting: Contoso Angebot", "Start frühestens im März",
+                     "[00:30] Valerie: Timo, ab wann könnt ihr starten?"] {
+            #expect(prompt.contains(part), "\(part)")
+        }
+        #expect(!prompt.contains("Suggest one to three questions"))
+        #expect(NextQuestion.kind(inputs) == NextQuestion.ANSWER && NextQuestion.kind(.object([])) == NextQuestion.QUESTIONS)
+        #expect(NextQuestion.kind(.object([("kind", .string("poem"))])) == NextQuestion.QUESTIONS)
+    }
+
+    @Test func theBestAnswerIsKeptToItsSchema() throws {
+        let a = try NextQuestion.checkedAnswer(.object([
+            ("to", .string(" Ab wann könnt ihr starten? ")), ("asked_by", .string("Valerie")), ("time", .string("about noon")),
+            ("answer", .string("Wir können im März starten.")), ("points", .strings(["a", " ", "b", "c", "d"])),
+            ("basis", .string("Timos Notizen.")),
+        ]))
+        #expect(a == .object([("to", .string("Ab wann könnt ihr starten?")), ("asked_by", .string("Valerie")),
+                              ("time", .string("")), ("answer", .string("Wir können im März starten.")),
+                              ("points", .strings(["a", "b", "c"])), ("check", .string("")), ("basis", .string("Timos Notizen."))]))
+        #expect(try NextQuestion.checkedAnswer(.object([("answer", .string("x")), ("time", .string("12:34"))]))["time"] == .string("12:34"))
+        #expect(thrown { try NextQuestion.checkedAnswer(.object([("questions", .array([]))])) } is BrokenAnswer)
+    }
+
+    @Test func theCommandAnswersWithTheBestAnswer() async throws {
+        let home = Home()
+        let paths = home.meeting()
+        let fake = FakeModel(json: .object([("to", .string("Start?")), ("asked_by", .string("Valerie")), ("time", .string("00:01")),
+                                            ("answer", .string("Im März.")), ("points", .array([])), ("check", .string("")),
+                                            ("basis", .string("Notizen."))]))
+        var ctx = home.context(fake)
+        ctx.readInput = { Data(PythonJSON.dumps(.object([("kind", .string("answer")),
+                                                         ("lines", .array([line("Valerie", 1, "Ab wann?")]))])).utf8) }
+        #expect(try await run(["next-question", paths.folder.path], ctx) == 0)
+        #expect(home.said == [#"{"answer": {"to": "Start?", "asked_by": "Valerie", "time": "00:01", "answer": "Im März.", "points": [], "check": "", "basis": "Notizen."}, "engine": "Gemma 4 12B on this Mac"}"#])
+        #expect(fake.asked.first?.schema == NextQuestion.ANSWER_SCHEMA)
     }
 
     @Test func aCloudModelGetsNoEarlierMeetingKeptOnThisMac() async throws {

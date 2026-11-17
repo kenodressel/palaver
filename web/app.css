@@ -382,6 +382,12 @@ h1 {
 .next-questions .q { display: block; color: var(--ink); font-weight: 600; }
 .next-questions .why { display: block; color: var(--ink-2); font-size: 13px; }
 .next-questions-note { margin: 4px 0 0; color: var(--ink-3); font-size: 12px; }
+.best-answer p { margin: 0 0 8px; }
+.best-answer .to { color: var(--ink-2); font-size: 13px; }
+.best-answer .say { color: var(--ink); font-weight: 600; }
+.best-answer .points { margin: 0 0 8px; padding-left: 20px; color: var(--ink); }
+.best-answer .check { color: var(--ink-2); font-size: 13px; }
+.best-answer .why { color: var(--ink-3); font-size: 13px; }
 .coach-reason:empty { display: none; }
 .coach-reason { color: var(--ink-3); font-size: 13px; }
 .coach-warning { margin: 0; color: var(--ink); font-size: 13px; }

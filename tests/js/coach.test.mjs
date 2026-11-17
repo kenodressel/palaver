@@ -42,3 +42,29 @@ test("questionButton names the model, waits for it, and says why it is off", () 
   assert.deepEqual(questionButton(off, null), { label: "Best next question", disabled: true, reason: off.reason });
   assert.deepEqual(questionButton(null, null), { label: "Best next question", disabled: true, reason: null });
 });
+
+import { answerButton, answerHeading, answerNote } from "../../web/logic.js";
+
+test("Best answer waits with Best next question and is off without a model", () => {
+  const info = { ready: true, label: "Best next question (Gemma, on this Mac)" };
+  assert.deepEqual(answerButton(info, null), { label: "Best answer", disabled: false });
+  assert.deepEqual(answerButton(info, { kind: "answer", loading: true }), { label: "Thinking…", disabled: true });
+  assert.deepEqual(answerButton(info, { kind: "questions", loading: true }), { label: "Best answer", disabled: true });
+  assert.deepEqual(answerButton({ ready: false }, null), { label: "Best answer", disabled: true });
+  assert.deepEqual(answerButton(null, null), { label: "Best answer", disabled: true });
+  assert.deepEqual(questionButton(info, { kind: "answer", loading: true }),
+    { label: "Best next question (Gemma, on this Mac)", disabled: true, reason: null });
+});
+
+test("answerHeading says what is answered, who asked and when", () => {
+  assert.equal(answerHeading({ to: "When can you start?", asked_by: "Carla", time: "12:34" }), "To Carla at 12:34: When can you start?");
+  assert.equal(answerHeading({ to: "Pricing", asked_by: "", time: "" }), "Pricing");
+  assert.equal(answerHeading({ to: "", asked_by: "Carla" }), "");
+});
+
+test("answerNote names the model, or that nothing called for an answer", () => {
+  assert.equal(answerNote({ engine: "Gemma 4 12B on this Mac", answer: { answer: "In March." } }),
+    "Gemma 4 12B on this Mac · may use general knowledge, never made-up facts · check before you say it");
+  assert.equal(answerNote({ engine: "Anthropic API", answer: { answer: "" } }),
+    "Anthropic API found no open question to answer in the last minutes.");
+});

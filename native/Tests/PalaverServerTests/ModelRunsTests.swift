@@ -501,6 +501,20 @@ private final class Folder {
         #expect(r.status == 200 && r.json?["label"] == .string("Best next question (Gemma, on this Mac)"))
     }
 
+    /// Best answer: the same route and inputs with `kind: "answer"`; any other kind is a bad request.
+    @Test func test_http_best_answer() throws {
+        let model = FakeModel()
+        let s = try coachServer(model)
+        defer { s.stop() }
+        #expect(post(s, "/api/meetings/\(MEETING)/next-question", .object([("kind", .string("answer"))])).0 == 200)
+        let (_, inputs) = try #require(model.inputs.first)
+        #expect(inputs["kind"] == .string("answer") && inputs["user"] == .string("Timo"))
+        #expect(post(s, "/api/meetings/\(MEETING)/next-question").0 == 200 && model.inputs.last?.1["kind"] == nil)
+        let (status, answer) = post(s, "/api/meetings/\(MEETING)/next-question", .object([("kind", .string("poem"))]))
+        #expect(status == 400 && (answer["error"]?.stringValue ?? "").contains("kind must be"))
+        #expect(model.inputs.count == 2)
+    }
+
     /// The local model does not start without its memory during a call; a cloud model needs no free memory.
     @Test func test_the_local_model_does_not_start_without_its_memory_during_a_call() throws {
         let model = FakeModel()

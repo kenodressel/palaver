@@ -282,7 +282,9 @@ public final class LMNextQuestion: NextQuestionAsker, @unchecked Sendable {
         if done.code < 0 { throw BadGateway(Self.STOPPED) }
         let lines = ModelJobs.splitlines(Py.strip(String(decoding: done.stdout, as: UTF8.self)))
         guard let answer = try? PythonJSON.parse(Data((lines.last ?? "{}").utf8)) else { throw BadGateway(Self.NO_ANSWER) }
-        guard case .object = answer, answer["error"] == nil, answer[answerKey] != nil else {
+        // The best answer (#41's "answer" kind) comes back under its own key.
+        let key = answerKey == "questions" && inputs["kind"]?.stringValue == "answer" ? "answer" : answerKey
+        guard case .object = answer, answer["error"] == nil, answer[key] != nil else {
             // `str((out or {}).get("error") or NO_ANSWER)`
             if answer.truthy, !answer.isObject {
                 throw PyBody.TypeError(description: "'\(PyBody.typeName(answer))' object has no attribute 'get'")

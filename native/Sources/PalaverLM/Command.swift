@@ -407,8 +407,8 @@ public enum ProjectsRun {
 // MARK: - next question
 
 public enum NextQuestionRun {
-    /// `palaver next-question <folder>`: `{"questions", "engine"}` on stdout, or `{"error"}` with exit 1 (75 while a
-    /// local model is in use).
+    /// `palaver next-question <folder>`: `{"questions", "engine"}` on stdout (`{"answer", "engine"}` for inputs of
+    /// `kind: "answer"`, the best answer), or `{"error"}` with exit 1 (75 while a local model is in use).
     public static func command(_ o: LMMain.Options, _ ctx: LMMain.Context) async -> Int32 {
         let folder = URL(fileURLWithPath: (o.folder! as NSString).expandingTildeInPath, isDirectory: true)
         func answer(_ fields: [(String, JSONValue)], _ code: Int32) -> Int32 {
@@ -433,16 +433,21 @@ public enum NextQuestionRun {
                     m["id"]?.stringValue.map { kept.contains(ScalarKey($0)) } ?? false
                 })
             }
+            let kind = NextQuestion.kind(inputs.json)
             let engine = try ctx.engine(feature: NextQuestion.FEATURE, kind: "model", meetings: [folder] + others,
-                                        details: [("meeting", .string(folder.lastPathComponent))],
-                                        fallback: .object([("questions", .array([]))]))
+                                        details: [("meeting", .string(folder.lastPathComponent))]
+                                            + (kind == NextQuestion.ANSWER ? [("ask", .string(kind))] : []),
+                                        fallback: NextQuestion.fallback(kind))
             // A memory stop of the local model ends palaver-lm: its answer (the last line, which the window reads) says why.
             let lastWords = FootprintWatchdog.addLastWords { why in
                 ctx.say(PythonJSON.dumps(.object([("error", .string(why))]), ensureAscii: false))
             }
             defer { FootprintWatchdog.removeLastWords(lastWords) }
-            let ask = { try await NextQuestion.ask(inputs.json) { try await engine.run($0, schema: $1, parse: NextQuestion.parse) } }
+            let ask = {
+                try await NextQuestion.ask(inputs.json) { try await engine.run($0, schema: $1, parse: NextQuestion.parser(kind)) }
+            }
             let out = engine.cloud ? try await ask() : try await ModelLock.with(stores: ctx.stores, wait: false, say: { _ in }, ask)
+            if kind == NextQuestion.ANSWER { return answer([("answer", out), ("engine", .string(engine.label))], 0) }
             return answer((out["questions"].map { [("questions", $0)] } ?? []) + [("engine", .string(engine.label))], 0)
         } catch is ModelBusyError {
             return answer([("error", .string(NextQuestion.BUSY))], ModelLock.EXIT_MODEL_BUSY)

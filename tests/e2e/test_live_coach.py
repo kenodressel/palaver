@@ -68,6 +68,27 @@ def test_best_next_question(page, app_server):
     expect(page.get_by_role("button", name="Best next question (Gemma, on this Mac)")).to_be_enabled()
 
 
+def test_best_answer(page, app_server):
+    app_server.model.answer = {
+        "to": "Wann könnt ihr starten?", "asked_by": "Carla", "time": "00:12",
+        "answer": "Wir können Anfang März starten.", "points": ["Zwei Wochen Vorlauf"], "check": "Den Starttermin im Team",
+        "basis": "Aus deinen Notizen."}
+    goto(page, app_server, f"#/{LIVE}")
+    page.get_by_role("button", name="Best answer").click()
+    answer = page.locator("#main .coach-answer")
+    answer.get_by_role("button", name="Run anyway").click()  # the local model during the call, as for the questions
+    box = answer.locator(".best-answer")
+    expect(box.locator(".to")).to_have_text("To Carla at 00:12: Wann könnt ihr starten?")
+    expect(box.locator(".say")).to_have_text("Wir können Anfang März starten.")
+    expect(box.locator(".points li")).to_have_text(["Zwei Wochen Vorlauf"])
+    expect(box.locator(".check")).to_have_text("Check: Den Starttermin im Team")
+    expect(answer.locator(".next-questions-note")).to_contain_text("Gemma 4 12B on this Mac · may use general knowledge")
+    _, prompt = app_server.model.asked[0]
+    assert "Suggest the best answer" in prompt and "Ja, das passt für uns." in prompt
+    answer.get_by_role("button", name="Hide").click()
+    expect(box).to_have_count(0)
+
+
 def test_not_enough_memory_for_the_local_model_is_said_plainly(page, app_server):
     page.guard.allow(r"status of 400")
     app_server.free_gb = 4.0

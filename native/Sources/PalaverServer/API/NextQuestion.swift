@@ -3,6 +3,9 @@
 // `_event_of`, `_my_notes`; server.py `_next_question` and the GET branch; next_question.py `FEATURE`, `model_name`,
 // `memory_problem` and `build_prompt`'s "nothing said yet").
 //
+// "Best answer" (`kind: "answer"` in the POST's body) asks the same helper, from the same inputs, for what the user
+// could say now to the latest question put to them (`NextQuestion.ANSWER`).
+//
 // The question itself comes from a helper process (`app.nextQuestion`, LMNextQuestion: palaver-lm builds the prompt and
 // runs the model). The local model runs only on a click, only with the free memory the notes need, and during a call
 // only after a second click; a meeting kept on this Mac never goes to a cloud model.
@@ -221,9 +224,9 @@ public enum NextQuestionAPI {
         }
     }
 
-    /// `_next_question`: one to three questions to ask next, on the user's click. The local model during a call needs a
-    /// second click (`confirmed`).
-    public static func ask(_ app: ServerApp, id: String, confirmed: Bool) throws -> JSONValue {
+    /// `_next_question`: one to three questions to ask next, on the user's click; with `kind` "answer", the best answer
+    /// to give now. The local model during a call needs a second click (`confirmed`).
+    public static func ask(_ app: ServerApp, id: String, confirmed: Bool, kind: String = "questions") throws -> JSONValue {
         let info = try info(app, id: id)
         let reason = info["reason"].map(Py.str) ?? ""
         guard app.notesEnabled else { throw Unavailable(reason) }
@@ -231,7 +234,11 @@ public enum NextQuestionAPI {
         if let problem = try problem(app, id: id, freeGB: app.freeMemoryGB()) { throw Refused(problem) }
         if let warning = info["warning"], warning.truthy, !confirmed { throw Conflict(Py.str(warning)) }
         let coach = app.recording?.coach()
-        let inputs = try inputs(app, id: id, coach: coach)
+        var inputs = try inputs(app, id: id, coach: coach)
+        if kind == "answer", case .object(var fields) = inputs {
+            fields.append(("kind", .string(kind)))
+            inputs = .object(fields)
+        }
         if nothingSaid(inputs) { throw Refused(NOTHING_YET) }  // nothing said yet: say so before a model starts
         guard app.notesLock.try() else { throw ModelBusy() }
         defer { app.notesLock.unlock() }
@@ -247,7 +254,14 @@ extension Router {
             // `body.get("confirmed") is not True`
             var confirmed = false
             if case .bool(true)? = try PyBody.get(req.json, "confirmed") { confirmed = true }
-            return .json(try NextQuestionAPI.ask(app, id: m.group(1)!, confirmed: confirmed))
+            var kind = "questions"
+            if let asked = try PyBody.get(req.json, "kind"), asked != .null {
+                guard case .string(let k) = asked, k == "questions" || k == "answer" else {
+                    throw BadRequest("kind must be \"questions\" or \"answer\"")
+                }
+                kind = k
+            }
+            return .json(try NextQuestionAPI.ask(app, id: m.group(1)!, confirmed: confirmed, kind: kind))
         }
     }
 }
