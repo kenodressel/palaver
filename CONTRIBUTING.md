@@ -493,6 +493,19 @@ Among a meeting's calendar invitees 0.65 is enough. Names you give manually
 always win. Voice samples are stored in `~/.config/palaver/voices/`, one
 file per person.
 
+**Voices on the microphone.** When nobody spoke on the system track (a call
+over a phone's or the Mac's speaker, people around the table), `process`
+diarizes the microphone too. Voices at least 0.65 alike to the user's own
+(one sample per call from the microphone lines of the ten latest calls,
+`~/.config/palaver/own-voice.json`) stay the user's lines; the others become
+the meeting's speakers in `system_turns.json` and `speaker_embeddings.json`,
+to name and recognize like anyone on a call. `mic_turns.json` keeps the
+user's turns (label `me`) for the merge, which splits the microphone's
+segments word by word; the others' words there only get the system track's
+silence gate (-50 dBFS), as a speakerphone is far quieter than the user.
+Nothing is split before the user's voice is known, or once a speaker of the
+meeting was named.
+
 **Inferred names.** With the calendar and enough meetings, voices name
 themselves. Four rules:
 - calendar: a 1:1 with one voice that talks;

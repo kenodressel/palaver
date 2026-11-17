@@ -67,7 +67,7 @@ public enum Index {
                     let taught = try await LineVoices.learn(paths, bank: bank) { spans in
                         let e = engine ?? makeEngine()
                         engine = e
-                        return try await e.embed(wav: paths.systemWav, spans: spans)
+                        return try await e.embed(wav: MicVoices.othersWav(paths), spans: spans)
                     }
                     say("Voices of corrected lines in \(id): " + (taught.isEmpty ? "none to learn" : taught.joined(separator: ", ")) + ".")
                 }

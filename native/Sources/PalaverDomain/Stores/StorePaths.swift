@@ -40,6 +40,9 @@ public struct StorePaths: Sendable {
     public var voices: URL { cfg("voices", dir: true) }
     /// The meetings whose corrected lines still have to teach the voice bank (#35).
     public var voicesPending: URL { cfg("voices-pending.json") }
+    /// The user's own voice, from their microphone in recent calls (OwnVoice): who the microphone's voice is when it
+    /// is told apart.
+    public var ownVoice: URL { cfg("own-voice.json") }
     public var projects: URL { cfg("projects.json") }
     public var glossary: URL { cfg("glossary.json") }
     /// The user's own note templates and the template remembered for each calendar series (#13).

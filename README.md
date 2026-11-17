@@ -294,7 +294,11 @@ Claude) may come later.
   cloud model or service, and Claude cannot read it through MCP.
 - **Voices.** Voice samples are biometric data. They are stored only on this
   Mac, in `~/.config/palaver/voices/`, one file per person, and never
-  uploaded. `palaver voices forget "Name"` deletes someone's voice.
+  uploaded. `palaver voices forget "Name"` deletes someone's voice. Your
+  own voice, from your microphone in your ten latest calls, is kept in
+  `~/.config/palaver/own-voice.json`: it tells you apart from the others
+  when a call over a speaker or a meeting around the table is all on the
+  microphone. Deleting the file removes it.
 - **API keys** for cloud services live in the macOS login Keychain, never in
   a file.
 - **Problem reports** are a zip on your Desktop that you send yourself;

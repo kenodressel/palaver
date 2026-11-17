@@ -76,6 +76,9 @@ public struct RecordingPaths: Hashable, Sendable {
     /// Voices that can't be told apart: the whole meeting, or lanes that are a room of several people (#56).
     public var speakersShared: URL { file("speakers_shared.json") }
     public var systemTurns: URL { file("system_turns.json") }
+    /// The user's own turns on the microphone, when it was told apart by voice (MicVoices): then system_turns.json holds
+    /// the others heard on the microphone. `[]`: told apart, but nothing to split.
+    public var micTurns: URL { file("mic_turns.json") }
     public var transcriptJson: URL { file("transcript.json") }
     public var transcriptMd: URL { file("transcript.md") }
     /// Summary, topics, next steps and decisions (notes.py).

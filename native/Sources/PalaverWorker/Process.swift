@@ -428,6 +428,11 @@ public enum Pipeline {
         } else {
             say("Skipping diarization (already done)")
         }
+        // Nobody on the call's track: a call over a speaker, or people around the table, all on the microphone. Its
+        // voices are told apart once, before anyone named a voice of this meeting.
+        if !exists(paths.micTurns) && untouched && !SharedMic.systemSpeech(paths) && EngineAudio.holdsAudio(paths.micWav) {
+            try await micVoices(paths, setup, log: log)
+        }
 
         await setup.engine.release()  // nothing else needs the engine: the notes' model gets the memory
 
@@ -437,13 +442,24 @@ public enum Pipeline {
         let turns = try readList(paths.systemTurns).map { try SpeakerTurn(json: $0) }
         micSegs = micSegs.filter { !Py.strip($0.text).isEmpty }
         sysSegs = sysSegs.filter { !Py.strip($0.text).isEmpty }
-        let (nMic, nSys) = (micSegs.count, sysSegs.count)
+        // The microphone told apart by voice: the others' words on it go to their voices (system_turns.json).
+        var theirs: [Segment] = []
+        if exists(paths.micTurns) {
+            let mine = try readList(paths.micTurns).map { try SpeakerTurn(json: $0) }
+            (micSegs, theirs) = MicVoices.split(micSegs, owner: mine, others: turns)
+        }
+        let (nMic, nSys, nTheirs) = (micSegs.count, sysSegs.count, theirs.count)
         micSegs = try Cleanup.dropSilentSegments(micSegs, wav: paths.micWav, minPeakDbfs: Cleanup.MIC_MIN_PEAK_DBFS)
         sysSegs = try Cleanup.dropSilentSegments(sysSegs, wav: paths.systemWav, minPeakDbfs: Cleanup.SYSTEM_MIN_PEAK_DBFS)
+        // The others on the microphone come through a speaker or from across the room, far quieter than the user (the
+        // speakerphone call that asked for this: median -47 dBFS, all under the microphone's gate); the diarizer heard
+        // speech there, so they only get the others' track's near-silence gate.
+        theirs = try Cleanup.dropSilentSegments(theirs, wav: paths.micWav, minPeakDbfs: Cleanup.SYSTEM_MIN_PEAK_DBFS)
         let nSilentMic = nMic - micSegs.count
         micSegs = Cleanup.dropBleedDuplicates(micSegs, sysSegs)
         micSegs = try Cleanup.dropEcho(micSegs, sysSegs, micWav: paths.micWav, micRawWav: paths.micRawWav)
-        let droppedSilent = nSilentMic + nSys - sysSegs.count
+        let droppedSilent = nSilentMic + nSys - sysSegs.count + nTheirs - theirs.count
+        sysSegs += theirs
         let droppedBleed = nMic - nSilentMic - micSegs.count
         say("Dropped \(droppedSilent) segments over silence (likely hallucinations) and \(droppedBleed) mic segments that "
             + "were remote speech heard through the speakers.")
@@ -512,6 +528,54 @@ public enum Pipeline {
         say("Wrote \(paths.transcriptMd.path)")
         if notes && setup.config.notesEnabled { writeNotes(paths, utterances, setup, log: log) }
         return 0
+    }
+
+    // MARK: - the microphone's voices
+
+    /// The microphone told apart by voice (MicVoices): diarized, its voices that sound like the user's own (OwnVoice)
+    /// kept as the user's turns (mic_turns.json, labelled "me"), the others as the meeting's speakers (system_turns.json
+    /// and speaker_embeddings.json, in place of the empty call's). Without a voice of the user's own yet nothing is
+    /// told apart, and nothing written: a later run may know it. mic_turns.json comes last; `[]` when there was nothing to
+    /// split (one voice, or none of them the user's).
+    static func micVoices(_ paths: RecordingPaths, _ setup: Setup, log: SessionLog) async throws {
+        let profile = try await Stage.with("own_voice", log: log) { info in
+            let found = try await OwnVoice.profile(outputDir: paths.folder.deletingLastPathComponent(), stores: setup.stores,
+                                                   excluding: paths.id) { wav, spans in
+                try await setup.engine.embed(wav: wav, spans: PyDict([("me", spans)]))["me"]
+            }
+            info["samples"] = .int(found.count)
+            return found
+        }
+        guard !profile.isEmpty else {
+            setup.say("Nobody spoke on the system track, but your voice isn't known yet: the microphone's lines stay yours")
+            return
+        }
+        let invited = CalendarEvents.remoteVoices(attachCalendar(paths, setup, log: log), userName: setup.userName)
+        let most = invited.map { $0 + 1 }  // the user is on the microphone too
+        setup.say("Nobody spoke on the system track; diarizing mic track" + (most.map { " (at most \($0) speakers, as invited)" } ?? "") + "…")
+        let (turns, voices) = try await Stage.with("diarize", log: log, fields: [("track", .string("mic"))]) { info in
+            let found = try await setup.engine.diarize(wav: paths.micWav, maxSpeakers: most)
+            info["turns"] = .int(found.turns.count)
+            info["speakers"] = .int(Set(found.turns.map { ScalarKey($0.speaker) }).count)
+            if let most { info["max_speakers"] = .int(most) }
+            return found
+        }
+        let owner = try MicVoices.ownerLabels(voices, profile: profile)
+        let mine = turns.filter { owner.contains($0.speaker) }.map { SpeakerTurn(speaker: MicVoices.OWNER, start: $0.start, end: $0.end) }
+        let others = turns.filter { !owner.contains($0.speaker) }
+        let otherLabels = Set(others.map { ScalarKey($0.speaker) })
+        Stage.event("mic_voices", log: log, [("speakers", .int(Set(turns.map { ScalarKey($0.speaker) }).count)), ("yours", .int(owner.count)),
+                                             ("others", .int(otherLabels.count))])
+        let split = !mine.isEmpty && !others.isEmpty
+        if split {
+            try PythonJSON.write(.object(voices.filter { otherLabels.contains(ScalarKey($0.key)) }.map { ($0.key, .array($0.value.map(JSONValue.double))) }),
+                                 to: paths.speakerEmbeddings, indent: nil, ensureAscii: true)
+            try PythonJSON.write(.array(others.map(\.json)), to: paths.systemTurns, indent: 2, ensureAscii: true)
+            setup.say("Told \(otherLabels.count) other voice\(otherLabels.count == 1 ? "" : "s") apart from yours on the microphone")
+        } else if mine.isEmpty && !others.isEmpty {
+            setup.say("None of the microphone's voices sounds like yours: its lines stay yours")
+        }
+        try PythonJSON.write(.array(split ? mine.map(\.json) : []), to: paths.micTurns, indent: 2, ensureAscii: true)
     }
 
     // MARK: - the system track

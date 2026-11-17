@@ -46,7 +46,7 @@ public enum Cutting {
     /// ... with less than this before it.
     public static let OLD_VOICE_TALK = 5.0
 
-    static let _DATA: [KeyPath<RecordingPaths, URL>] = [\.micSegments, \.systemSegments, \.systemTurns, \.transcriptJson]
+    static let _DATA: [KeyPath<RecordingPaths, URL>] = [\.micSegments, \.systemSegments, \.systemTurns, \.transcriptJson, \.micTurns]
     // `_LABEL`, built once.
     static let _LABEL = try! PyRegex(#"^SPEAKER_(\d+)$"#)
     /// What a recording consists of, as opposed to what makes it a meeting (calendar event, the user's title, notes,
@@ -287,6 +287,8 @@ public enum Cutting {
             try StoreLock.both(speakersLock(first), speakersLock(second)) {
                 let relabel = relabeling(try labels(other), try labels(keep))
                 for name in _DATA {
+                    // The microphone's own turns only where a part had its voices told apart.
+                    if name == \.micTurns && !exists(first.micTurns) && !exists(second.micTurns) { continue }
                     var aItems = try slice(PythonJSON.read(first[keyPath: name]) ?? .array([]), .float(0), .float(aKeep), .float(0))
                     var bItems = try slice(PythonJSON.read(second[keyPath: name]) ?? .array([]), .float(0), .float(.infinity), .float(offset))
                     if same(other.folder, first.folder) { aItems = aItems.map { renamed($0, relabel) } } else { bItems = bItems.map { renamed($0, relabel) } }
