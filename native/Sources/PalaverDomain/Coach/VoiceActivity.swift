@@ -4,11 +4,13 @@
 // it is clearly above its track's noise floor (the quietest frame of the last half minute) and above an absolute
 // level. The mic track is the user; the system track is everyone else.
 //
-// Without headphones the others come back on the mic through the speakers. Mic activity while the others talk counts
-// as the user only when the mic is clearly louder than the echo would be: the echo's level is learned as the median
-// of (mic − system) over frames where only the others talk, and starts out as loud as the system track itself (0 dB)
-// until there is enough to learn from. So with speakers the user talking over someone is seen only when clearly
-// louder than the echo: it errs towards "not me", never towards counting the others' voices as the user's.
+// Without headphones the others come back on the mic through the speakers, with loud speakers and a sensitive mic
+// even louder than the system track itself. Mic activity while the others talk counts as the user only when the mic
+// is clearly louder than the echo would be: the echo's level is learned as the median of (mic − system) over the
+// frames where the others talk, and until 3 s of that are learned the mic over them is not the user (around short
+// sounds the echo is taken as loud as the system track, 0 dB). So with speakers the user talking over someone is seen
+// only when clearly louder than the echo: it errs towards "not me", never towards counting the others' voices as the
+// user's.
 //
 // From the frames it keeps, for the last ten minutes: who talks now, the talk share, the current monologue (stretches
 // of the user's speech across pauses up to 3 s, ended by someone else talking for 1.5 s or more), the interruptions
@@ -176,12 +178,18 @@ public final class VoiceActivity {
         let echoWindow = recentSystem.max
         let mine: Bool
         if echoWindow > Self.AUDIBLE_DBFS {
-            // The call played within the echo's delay: the mic is mine only when clearly louder than its echo would be.
-            mine = micSpeech && micDb > echoWindow + echoDb + Self.ECHO_MARGIN_DB
-            if !mine && recentSystem.min > Self.SPEECH_DBFS {
+            // The others talk: what the mic hears now is mostly their echo (the user talking over them is the
+            // exception, which the median outvotes). Learned from every such frame: learning only from frames not taken
+            // for the user never learned an echo louder than the default, and took it for the user all call long.
+            let othersTalking = recentSystem.min > Self.SPEECH_DBFS
+            if othersTalking {
                 echo.append(micDb - echoWindow)
                 if echo.count >= Self.ECHO_LEARN_FRAMES { echoDb = PyStatistics.median(echo.values) ?? echoDb }
             }
+            // The call played within the echo's delay: the mic is mine only when clearly louder than its echo would be,
+            // and never over the others before their echo is known.
+            let unknown = othersTalking && echo.count < Self.ECHO_LEARN_FRAMES
+            mine = !unknown && micSpeech && micDb > echoWindow + echoDb + Self.ECHO_MARGIN_DB
         } else {
             mine = micSpeech
         }

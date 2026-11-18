@@ -148,6 +148,20 @@ private final class Clock: @unchecked Sendable {
         #expect(s["share"] == .double(0))
     }
 
+    /// Loud speakers and a sensitive mic: the others come back on the mic louder than the system track itself. Their
+    /// echo was taken for the user from the start, so its level was never learned, and the live coach said "you
+    /// interrupt" over and over while the transcript was right.
+    @Test(arguments: [3.0, 8.0, 14.0])
+    func test_an_echo_louder_than_the_call_is_learned_too(_ echoDb: Double) {
+        let g = Gen()
+        let (mic, system) = g.tracks([quiet(90), g.speech(20)], [g.speech(30), quiet(2), g.speech(58), quiet(20)], echoDb: echoDb)
+        let va = VoiceActivity()
+        feed(va, mic, system)
+        let s = va.snapshot()
+        #expect(number(s["me"]) > 17 && number(s["me"]) < 21)  // the user afterwards, alone: still the user
+        #expect(s["interruptions"]?["by_me"] == .int(0))
+    }
+
     @Test(arguments: [nil, -12.0] as [Double?])
     func test_turns_give_the_talk_share(_ echoDb: Double?) {
         let g = Gen()
