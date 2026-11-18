@@ -66,7 +66,8 @@ def test_split_here_into_its_own_meeting_and_undo(page, app_server):
     expect(page.locator("#list .item[data-id]")).to_have_count(5)
     expect(line(page, 27)).to_have_count(0)
     expect(page.locator("#duration")).to_have_text("0:27")
-    expect(page.locator("#main .inline-notice")).to_contain_text("The rest is now a meeting of its own.")
+    expect(page.locator("#main .inline-notice")).to_have_count(0)  # said once, in the toast (#27)
+    expect(toast(page).get_by_role("button", name="Open it")).to_be_visible()
     assert len(app_server.meeting_ids()) == 5
     undo_in_toast(page)
     expect(page.locator("#list .item[data-id]")).to_have_count(4)
@@ -96,6 +97,7 @@ def test_split_here_discarding_a_part_and_undo(page, app_server, side, row):
     text = {"after": "Everything from there on is in Trash (Recordings/.trash).",
             "before": "Everything before that is in Trash (Recordings/.trash)."}[side]
     expect_toast(page, text)
+    expect(page.locator("#main .inline-notice")).to_have_count(0)  # said once, in the toast (#27)
     expect(page.locator("#main .turn")).to_have_count(2 if side == "after" else 3)
     expect(page.locator("#main .transcript")).not_to_contain_text(
         "over to you Bob" if side == "before" else "after lunch")

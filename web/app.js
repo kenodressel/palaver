@@ -213,7 +213,6 @@ const state = {
   showBrief: false, // unnamed voices under 10 s, folded away by default
   cutAt: null,     // the moment the open meeting would be cut at
   titleEdit: null, // the open meeting's title being typed: {id, draft}
-  cutNotice: null, // what the last cut or join did
   sharedAsk: null, // the meeting just unmarked whose series is still remembered (#56)
   noteTemplates: null,  // every note template and the series remembered (/api/note-templates, #13)
   templateAsk: null,    // the meeting whose template was just chosen: the same for its calendar series too?
@@ -567,7 +566,6 @@ async function openMeeting(id, at, { how = "push", tab = null } = {}) {
     state.error = null;
     if (switching) {
       flushNotepads();
-      state.cutNotice = null;
       state.eventPicker?.close?.();  // another meeting: its pop-up goes
       state.eventPicker = null;
       state.stream = null;
@@ -791,14 +789,10 @@ function renderMeeting() {
   const body = state.tab === "notes" ? renderNotes(m, color) : state.tab === "mine" ? myNotes(m)
     : state.tab === "coach" ? renderCoach(m) : renderTranscript(m, color);
 
-  const cutNotice = state.cutNotice ? h("p", { class: "inline-notice" }, state.cutNotice.text, " ",
-    state.cutNotice.id ? h("button", { class: "link", onclick: () => { const id = state.cutNotice.id; state.cutNotice = null; openMeeting(id); } },
-      "Open it") : null) : null;
   const page = h("article", { class: "meeting" }, head,
     liveAssistant(m),
     renderNeedsStrip(m),
     renderStopQuestion(m),
-    cutNotice,
     renderCutSuggestion(m),
     renderSilenceSuggestion(m),
     renderSharedSuggestion(m),
@@ -3026,7 +3020,6 @@ async function cutMeeting(id, at, how, button) {
     pending.delete(id);
   }
   const kind = cutKind(r);
-  state.cutNotice = { text: CUT_DONE[kind], id: r.rest };
   const part = r.discarded && onPage(id) ? document.querySelector(`#main .cut-part.cut-${r.discarded}`) : null;
   if (part) await Promise.all([leave(part), bar?.isConnected ? leave(bar) : null]);
   state.cutAt = null;
@@ -3038,8 +3031,10 @@ async function cutMeeting(id, at, how, button) {
     await openMeeting(id);
     reloadAudio();  // the audio is shorter now
   }
-  // Said once the page shows the cut: a click right after the toast is not undone by the page being built again.
-  remember(CUT_DONE[kind], () => cutBack(id, r.undo, r.rest));
+  // Said once, in the toast (#27), once the page shows the cut: a click right after the toast is not undone by the page
+  // being built again. A rest of its own can be opened from there.
+  remember(CUT_DONE[kind], () => cutBack(id, r.undo, r.rest),
+    kind === "own" && r.rest ? { action: { label: "Open it", run: () => openMeeting(r.rest) } } : undefined);
   const rest = r.rest && listItem(r.rest);
   if (rest) {
     rest.scrollIntoView({ block: "nearest" });
@@ -3051,7 +3046,6 @@ async function cutMeeting(id, at, how, button) {
 // as it was), audio too.
 async function cutBack(id, token, rest) {
   await api("/api/undo", { token });
-  state.cutNotice = null;
   await loadList();
   const open = state.meeting?.id;
   if (state.view === "review" && open === id) {
@@ -4553,7 +4547,6 @@ async function finishReview(done) {
   // A second click while saving would mark the next meeting reviewed too.
   if (!item || state.reviewSaving) return;
   state.notice = null;
-  state.cutNotice = null;
   if (!done) return openReview(state.reviewAt + 1 < state.review.length ? state.reviewAt + 1 : 0);
   state.reviewSaving = true;
   renderReview();
@@ -4897,7 +4890,6 @@ function renderReview() {
   const m = state.meeting;
   if (!item || !m || m.id !== item.id) return;
   const start = m.start ? new Date(m.start) : null;
-  const cutNotice = state.cutNotice ? h("p", { class: "inline-notice" }, state.cutNotice.text) : null;
   const glossary = (item.open.glossary || []);
   const after = () => { if (state.view === "review") openReview(state.reviewAt); };
   const step = (title, done, ...body) => h("section", { class: `review-step${done ? " done" : ""}` },
@@ -4913,7 +4905,6 @@ function renderReview() {
       h("button", { type: "button", class: "btn btn-quiet", disabled: state.reviewSaving, onclick: () => finishReview(false) }, "Skip"),
       h("button", { class: "btn primary", disabled: state.reviewSaving, onclick: () => finishReview(true) },
         state.reviewSaving ? "Saving…" : "Done, next →")),
-    cutNotice,
     renderCutSuggestion(m),
     renderSilenceSuggestion(m),
     h("header", { class: "head" }, h("div", { class: "head-text" },
