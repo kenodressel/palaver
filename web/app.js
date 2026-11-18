@@ -193,7 +193,6 @@ const state = {
   assistantMinutes: 5,  // how far Catch me up looks back
   assistantDraft: "",   // the question being typed
   reviewAt: 0,     // which of them is open in the review
-  notice: null,    // what the last glossary change did
   upcoming: [],    // calendar events still to come
   prepping: null,  // the upcoming meeting open for prep
   stream: null,    // the recording's newest lines and drafts (null until the first answer; {stream: false}: none)
@@ -4101,9 +4100,19 @@ async function changeGlossary(path, body, failed, after, { retry, from } = {}) {
     return null;
   }
   state.glossary = { terms: d.terms, suggestions: d.suggestions };
-  state.notice = changedText(d.changed);
   after();
   return d;
+}
+
+// What a glossary change did, said once, in the toast (#27): ``label`` and what it respelled in the meetings, if anything; with
+// Undo when ``undo`` is given. The toast's history entry.
+function sayGlossary(label, d, undo) {
+  const c = d.changed;
+  const changed = c && (c.replacements || c.in_notes) ? changedText(c) : null;  // "nothing changes" goes unsaid
+  const text = changed ? `${label}. ${changed}` : label;
+  if (undo) return remember(label, undo, { text });
+  toast(text);
+  return null;
 }
 
 const glossaryPage = () => { if (state.view === "glossary") renderGlossary(); };
@@ -4117,7 +4126,7 @@ async function deleteTerm(t, from) {
   const d = await changeGlossary(`/api/glossary/${t.id}`, { delete: true }, `“${t.term}” was not deleted`, () => {},
     { from, retry: () => deleteTerm(t, from) });
   if (!d) return;
-  const entry = remember(`“${t.term}” deleted from the glossary`, () => termBack(d.undo, t.id));
+  const entry = sayGlossary(`“${t.term}” deleted from the glossary`, d, () => termBack(d.undo, t.id));
   if (row?.isConnected && state.view === "glossary") await leave(row);
   if (!undoHistory.has(entry)) return;  // undone while it left: the undo shows the glossary as it is
   glossaryPage();
@@ -4131,7 +4140,7 @@ async function deleteTerm(t, from) {
 async function changeTerm(t, body, failed) {
   const d = await changeGlossary(`/api/glossary/${t.id}`, body, failed, glossaryPage,
     { retry: () => changeTerm(t, body, failed) });
-  if (d?.undo) remember(termChangeText(t, body), () => termBack(d.undo, t.id));
+  if (d) sayGlossary(termChangeText(t, body), d, d.undo ? () => termBack(d.undo, t.id) : null);
 }
 
 // A term's ⋯: Rename and Edit Note go to its fields; Delete in red, last.
@@ -4166,7 +4175,6 @@ async function dismissVariant(s, v, after, from) {
 async function termBack(token, tid) {
   await api("/api/undo", { token });
   state.glossary = await api("/api/glossary");
-  state.notice = null;
   if (state.view !== "glossary") return;
   renderGlossary();
   const row = termRow(tid);
@@ -4215,7 +4223,10 @@ function suggestionCard(s, after) {
         const heard = heardSpellings(s, kept, chosen);
         const d = await changeGlossary("/api/glossary/accept", { term: chosen, variants: heard }, `“${chosen}” was not added`,
           after, { from: e.currentTarget });
-        if (d && heard.length) toast(`${heard.map((v) => `“${v}”`).join(", ")} → “${chosen}”. ${changedText(d.changed)}`);
+        if (d) {
+          sayGlossary(heard.length ? `${heard.map((v) => `“${v}”`).join(", ")} → “${chosen}”` : `“${chosen}” added to the glossary`, d,
+            d.undo ? () => termBack(d.undo, null) : null);
+        }
       } }, "Add to glossary"),
       h("button", { type: "button", class: "btn btn-quiet small", onclick: (e) => dismissSuggestion(s, after, e.currentTarget) },
         "Not this")));
@@ -4226,7 +4237,6 @@ function renderGlossary() {
   const page = h("article", { class: "meeting people glossary" }, h("h1", {}, "Glossary"),
     h("p", { class: "lede" }, "How names and terms are really spelled. Meetings are shown, searched and summarized with these spellings; the original transcript is kept, so nothing is lost."));
   if (state.error) page.append(h("p", { class: "error" }, state.error));
-  if (state.notice) page.append(h("p", { class: "inline-notice" }, state.notice));
   if (!d) {
     $("#main").replaceChildren(page);
     return;
@@ -4235,9 +4245,12 @@ function renderGlossary() {
       e.preventDefault();
       const f = e.target.elements;
       const term = f.term.value.trim();
-      if (term) changeGlossary("/api/glossary/accept",
-        { term, variants: f.variants.value.split(",").map((v) => v.trim()).filter(Boolean) }, `“${term}” was not added`,
-        glossaryPage, { from: e.submitter });
+      if (term) {
+        changeGlossary("/api/glossary/accept",
+          { term, variants: f.variants.value.split(",").map((v) => v.trim()).filter(Boolean) }, `“${term}” was not added`,
+          glossaryPage, { from: e.submitter })
+          .then((d) => d && sayGlossary(`“${term}” added to the glossary`, d, d.undo ? () => termBack(d.undo, null) : null));
+      }
     } },
     h("input", { name: "term", class: "name-input", placeholder: "Term, e.g. Databricks", spellcheck: "false", "aria-label": "New term" }),
     h("input", { name: "variants", class: "name-input", placeholder: "Heard as… (comma separated)", spellcheck: "false", "aria-label": "Misheard spellings" }),
@@ -4546,7 +4559,6 @@ async function finishReview(done) {
   const item = state.review[state.reviewAt];
   // A second click while saving would mark the next meeting reviewed too.
   if (!item || state.reviewSaving) return;
-  state.notice = null;
   if (!done) return openReview(state.reviewAt + 1 < state.review.length ? state.reviewAt + 1 : 0);
   state.reviewSaving = true;
   renderReview();
@@ -4914,7 +4926,6 @@ function renderReview() {
         m.duration ? h("span", {}, minutes(m.duration)) : null),
       renderEventLink(m))));
   if (state.error) page.append(h("p", { class: "error" }, state.error));
-  if (state.notice) page.append(h("p", { class: "inline-notice" }, state.notice));
 
   const sure = m.projects.length && m.projects.every((p) => p.by === "you");
   page.append(step("Project", sure,

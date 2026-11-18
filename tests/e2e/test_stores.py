@@ -168,10 +168,11 @@ def test_glossary_add_delete_and_undo(page, app_server):
     goto(page, app_server, "#/glossary")
     _add_term(page, "Attakring", "Atterkring")
     expect(page.get_by_label("Rename Attakring")).to_have_value("Attakring")
-    expect(page.locator("#main .inline-notice")).to_have_text("Respelled 1 word in 1 meeting.")
+    expect_toast(page, "“Attakring” added to the glossary. Respelled 1 word in 1 meeting.")
+    expect(page.locator("#main .inline-notice")).to_have_count(0)  # said once, in the toast (#27)
     run_from_menu(page, "Actions for Attakring", "Delete")
     expect(page.locator("#main .term-row")).to_have_count(0)
-    expect_toast(page, "“Attakring” deleted from the glossary")
+    expect_toast(page, "“Attakring” deleted from the glossary. Respelled 1 word in 1 meeting.")  # back as heard
     undo_in_toast(page)
     expect(page.get_by_label("Rename Attakring")).to_have_value("Attakring")
     assert [t["term"] for t in app_server.api("/api/glossary")["terms"]] == ["Attakring"]
@@ -190,7 +191,7 @@ def test_glossary_term_menu_and_its_fields(page, app_server):
     expect(row.get_by_role("button", name="Remove Atterkring")).to_be_hidden()  # heard as text until pointed at
     row.hover()
     row.get_by_role("button", name="Remove Atterkring").click()
-    expect_toast(page, "“Atterkring” is no longer respelled as “Attakring”")
+    expect_toast(page, "“Atterkring” is no longer respelled as “Attakring”. Respelled 1 word in 1 meeting.")
     undo_in_toast(page)
     row.hover()
     expect(row.get_by_role("button", name="Remove Atterkring")).to_be_visible()

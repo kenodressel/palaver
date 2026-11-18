@@ -301,6 +301,12 @@ Since 0.6 everything Palaver.app runs is Swift (phases 1 to 4 of the migration):
   (`record`, `rename`, `daemon` without `status`, `menubar`, `live`, …) say
   in one line what replaces them and exit 2.
 
+**The window's messages.** What an action did is said once, in the toast
+(with Undo where it can be undone, and a button like "Open it" when there is
+somewhere to go): never also as a grey line on the page, which stays long
+after the toast is gone (#27; `tests/js/messages.test.mjs` checks it). A grey
+line on the page is only a question with its buttons.
+
 The files on disk (meetings, stores, settings, undo snapshots, exchange files)
 are the same as before, so 0.5 and 0.6 read each other's. What the migration
 decided, skipped and measured is in
