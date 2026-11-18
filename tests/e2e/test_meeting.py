@@ -115,7 +115,7 @@ def test_a_voice_without_a_sure_name_can_be_played_in_place(page, shared_server)
     expect(lane(page, "SPEAKER_01").locator(".voice-play")).to_be_visible()  # no name yet
     expect(lane(page, "SPEAKER_02").locator(".voice-play")).to_be_visible()  # an inferred name
     expect(lane(page, "SPEAKER_00").locator(".voice-play")).to_have_count(0)  # named by hand
-    with page.expect_request(re.compile(r"/audio\?track=system")):
+    with page.expect_request(re.compile(r"/audio\?track=others")):
         lane(page, "SPEAKER_01").get_by_role("button", name="Play voice of Speaker 2").click()
 
 

@@ -4995,7 +4995,8 @@ function playVoice(s) {
 // Starting a sample ends the one playing (one element plays them all).
 function playClip(meetingId, clip, key = clipKey(meetingId, clip)) {
   audio.pause();
-  const src = `/api/meetings/${encodeURIComponent(meetingId)}/audio?track=system`;
+  // The others' track: the call's, or the microphone where a speakerphone call was told apart by voice.
+  const src = `/api/meetings/${encodeURIComponent(meetingId)}/audio?track=others`;
   if (!voice.src.endsWith(src)) voice.src = src;
   voiceKey = key;
   voice.currentTime = clip.start;

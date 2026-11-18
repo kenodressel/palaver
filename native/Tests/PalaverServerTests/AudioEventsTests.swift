@@ -122,6 +122,24 @@ private func samples(_ n: Int, _ f: (Int) -> Int16) -> [Int16] { (0..<n).map(f) 
         #expect(throws: NotFound.self) { try AudioSource(paths: f.paths, track: "mix") }
     }
 
+    /// A voice's clip plays the others' track: the call's, or the microphone once a speakerphone call was told apart by
+    /// voice (the call's track is silent then).
+    @Test func theOthersTrackIsWhereTheOthersWereHeard() throws {
+        let f = try Fixture()
+        let mic = samples(800) { Int16($0 % 300) }, system = samples(800) { Int16(-($0 % 200)) }
+        try Wav16.write(mic, rate: SR, to: f.paths.micWav)
+        try Wav16.write(system, rate: SR, to: f.paths.systemWav)
+        func others() throws -> [UInt8] {
+            let src = try AudioSource(paths: f.paths, track: "others")
+            return Array(try src.read(range: 0..<src.size)[44...])
+        }
+        #expect(try others() == mixed(system, []))
+        try PythonJSON.write(.array([]), to: f.paths.micTurns, indent: nil, ensureAscii: true)  // nothing split
+        #expect(try others() == mixed(system, []))
+        try PythonJSON.write(.array([SpeakerTurn(speaker: "me", start: 0, end: 0.02).json]), to: f.paths.micTurns, indent: nil, ensureAscii: true)
+        #expect(try others() == mixed(mic, []))
+    }
+
     /// A track still recorded: the size is the one seen at the start; bytes it grew by are read, bytes gone read as
     /// silence; nothing fails.
     @Test func aTrackThatGrowsOrShrinksIsReadAsItIsNow() throws {

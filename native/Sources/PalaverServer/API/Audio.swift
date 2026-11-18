@@ -7,7 +7,8 @@ import Foundation
 import PalaverCore
 import PalaverDomain
 
-/// The audio of `paths` as `track` ("system", or "mix": the microphone, cleaned or raw, and the system track).
+/// The audio of `paths` as `track` ("system"; "others": the track the others' voices are on, for their clips; or
+/// "mix": the microphone, cleaned or raw, and the system track).
 public final class AudioSource {
     public static let HEADER = 44
     /// The most one answer holds unless the page asks for the last N bytes (server.py:43).
@@ -34,6 +35,9 @@ public final class AudioSource {
         let named: [URL]
         if track == "system" {
             named = [paths.systemWav]
+        } else if track == "others" {
+            // Where the others' voices are: the system track, or the microphone when it was told apart by voice.
+            named = [MicVoices.othersWav(paths)]
         } else if track == "mix" {
             named = [MeetingsAPI.exists(paths.micWav) ? paths.micWav : paths.micRawWav, paths.systemWav]
         } else {
