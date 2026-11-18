@@ -1918,3 +1918,7 @@ body.dropping-file .main { outline: 2px dashed var(--focus); outline-offset: -8p
 @media (prefers-reduced-motion: reduce) {
   .dialog, .dialog-backdrop { animation: fade-in 150ms ease; }
 }
+
+/* Settings → Calendar: the calendars Palaver reads, by account. */
+.calendar-list .calendar-account { margin: 12px 0 2px; font-weight: 600; }
+.calendar-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; vertical-align: 1px; }

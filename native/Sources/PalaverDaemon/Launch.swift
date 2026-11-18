@@ -119,7 +119,7 @@ public final class PythonFacts: @unchecked Sendable {
     /// The calendar `event-key` reads: this Mac's (EventKit) when [calendar].enabled and access is given.
     @Sendable public static func eventKitCalendar(_ config: Config) -> CalendarProvider? {
         guard config.calendarEnabled else { return nil }
-        let kit = EventKitCalendar()
+        let kit = EventKitCalendar(excluded: SettingsFile.calendarsOff())
         guard kit.hasAccess() else { return nil }
         return { try kit.eventsBetween($0, $1) }
     }

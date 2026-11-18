@@ -96,6 +96,9 @@ to the new folders at the first start.
 - **Calendar.** Palaver matches a recording to the event in the macOS
   Calendar app (any account added there, such as Microsoft 365 or Google):
   the meeting gets the event's title and invitees. Read-only, on this Mac.
+  Turn off a calendar that holds no meetings, like a personal one, in
+  Settings → Calendar: Palaver then never suggests, prepares or links its
+  events.
   A Teams call that no event matches (an invite from outside the company)
   takes its title from the call window, and the people shown there as hints
   for the voices (with the Accessibility permission the mute already uses;

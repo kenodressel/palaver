@@ -93,6 +93,27 @@ extension Router {
             ProvidersAPI.countSetting(app, path: req.target, body: req.json)
             return .json(answer)
         }
+        // The calendars Palaver reads (a personal one next to the work one may be turned off): each on unless turned off.
+        r.get("/api/calendars") { _, _ in .json(SettingsAPI.calendars(app)) }
+        r.post("/api/calendars") { req, _ in
+            guard case .object = req.json, let id = req.json["id"]?.stringValue, !id.isEmpty,
+                  case .bool(let on)? = req.json["on"] else { throw BadRequest("give a calendar's \"id\" and \"on\" (true or false)") }
+            guard app.calendars?().contains(where: { $0.id == id }) ?? false else { throw NotFound("no calendar \(id) on this Mac") }
+            try SettingsFile.setCalendar(id, on: on, stores: app.stores)
+            return .json(SettingsAPI.calendars(app))
+        }
         addUsageStatsRoutes(r, app: app)
+    }
+}
+
+extension SettingsAPI {
+    /// `{"calendars": [{id, title, account, color, on}]}`: the Mac's calendars and whether Palaver reads each; none while
+    /// the calendar is turned off or not allowed.
+    static func calendars(_ app: ServerApp) -> JSONValue {
+        let off = SettingsFile.calendarsOff(stores: app.stores)
+        return .object([("calendars", .array((app.calendars?() ?? []).map { c in
+            .object([("id", .string(c.id)), ("title", .string(c.title)), ("account", .string(c.account)), ("color", .string(c.color)),
+                     ("on", .bool(!off.contains(c.id)))])
+        }))])
     }
 }

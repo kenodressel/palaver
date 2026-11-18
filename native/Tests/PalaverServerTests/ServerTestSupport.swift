@@ -127,7 +127,7 @@ final class TestServer {
     init(key: String? = nil, userName: String = "Timo Strauß", staticDir: URL? = nil, helpers: HelperRunner = StubHelperRunner(),
          recording: RecordingRemote? = nil, probe: SetupProbe = FakeProbe(), speechHere: @escaping () -> Bool = { true },
          openURL: @escaping (String) -> Void = { _ in }, notifyState: String? = nil, accessibilityState: String? = nil,
-         calendar: CalendarProvider? = nil,
+         calendar: CalendarProvider? = nil, calendars: (() -> [CalendarInfo])? = nil,
          notesEnabled: Bool? = nil, nextQuestion: NextQuestionAsker = StubNextQuestionAsker(),
          assistant: LiveAssistantAsker = StubLiveAssistantAsker(),
          provider: ProviderHelper = StubProviderHelper(), report: ReportMaker = StubReportMaker(),
@@ -144,7 +144,7 @@ final class TestServer {
         try meetings(out)
         app = ServerApp(outputDir: out, userName: userName, stores: stores, staticDir: staticDir ?? ServerApp.defaultStaticDir,
                         settingsDefaults: settingsDefaults, notesEnabled: notesEnabled, freeMemoryGB: freeMemoryGB, recording: recording, calendar: calendar,
-                        probe: probe, helpers: helpers, nextQuestion: nextQuestion, assistant: assistant, provider: provider, report: report, notion: notion, speechHere: speechHere, openURL: openURL,
+                        calendars: calendars, probe: probe, helpers: helpers, nextQuestion: nextQuestion, assistant: assistant, provider: provider, report: report, notion: notion, speechHere: speechHere, openURL: openURL,
                         notifyState: notifyState, accessibilityState: accessibilityState)
         let router = Router.palaver(app: app)
         routes(router, app)

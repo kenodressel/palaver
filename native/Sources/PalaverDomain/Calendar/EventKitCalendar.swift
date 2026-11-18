@@ -5,6 +5,20 @@
 import EventKit
 import Foundation
 
+/// One of the Mac's calendars, for Settings' choice.
+public struct CalendarInfo: Equatable, Sendable {
+    public var id: String
+    public var title: String
+    /// The account it belongs to ("iCloud", "Exchange", ...).
+    public var account: String
+    /// "#rrggbb", or "".
+    public var color: String
+
+    public init(id: String, title: String, account: String = "", color: String = "") {
+        self.id = id; self.title = title; self.account = account; self.color = color
+    }
+}
+
 public struct EventKitCalendar {
     /// EKAuthorizationStatusFullAccess (= Authorized before macOS 14).
     static let statusFullAccess = 3
@@ -13,7 +27,11 @@ public struct EventKitCalendar {
     /// EKParticipantTypeRoom, EKParticipantTypeResource.
     static let roomTypes: Set<Int> = [2, 3]
 
-    public init() {}
+    /// The calendars the user turned off in Settings (`calendarIdentifier`s, settings.json's `calendars_off`): their
+    /// events are none of Palaver's, e.g. a personal calendar next to the work one.
+    public var excluded: Set<String>
+
+    public init(excluded: Set<String> = []) { self.excluded = excluded }
 
     /// What the conversion reads of an EKParticipant.
     struct RawParticipant {
@@ -43,12 +61,33 @@ public struct EventKitCalendar {
         EKEventStore.authorizationStatus(for: .event).rawValue == Self.statusFullAccess
     }
 
-    /// Every event of every calendar that starts or runs between the two moments (empty without access, as EventKit
-    /// answers).
+    /// Every event that starts or runs between the two moments, of every calendar but the ones turned off (empty
+    /// without access, as EventKit answers).
     public func eventsBetween(_ start: Date, _ end: Date) throws -> [CalendarEvent] {
         let store = EKEventStore()
-        let predicate = store.predicateForEvents(withStart: start, end: end, calendars: nil)
+        var calendars: [EKCalendar]?
+        if !excluded.isEmpty {
+            calendars = store.calendars(for: .event).filter { !excluded.contains($0.calendarIdentifier) }
+            if calendars!.isEmpty { return [] }  // EventKit reads an empty list as every calendar
+        }
+        let predicate = store.predicateForEvents(withStart: start, end: end, calendars: calendars)
         return store.events(matching: predicate).map { Self.event(Self.raw($0)) }
+    }
+
+    /// The Mac's calendars, by account and title (empty without access).
+    public func calendars() -> [CalendarInfo] {
+        guard hasAccess() else { return [] }
+        let found = EKEventStore().calendars(for: .event).map { c in
+            CalendarInfo(id: c.calendarIdentifier, title: c.title, account: c.source?.title ?? "", color: Self.hex(c.cgColor))
+        }
+        return found.sorted { ($0.account.lowercased(), $0.title.lowercased()) < ($1.account.lowercased(), $1.title.lowercased()) }
+    }
+
+    /// "#rrggbb" of a calendar's color; "" when it has none in RGB.
+    private static func hex(_ color: CGColor?) -> String {
+        guard let rgb = color?.converted(to: CGColorSpace(name: CGColorSpace.sRGB)!, intent: .defaultIntent, options: nil),
+              let c = rgb.components, c.count >= 3 else { return "" }
+        return String(format: "#%02x%02x%02x", Int((c[0] * 255).rounded()), Int((c[1] * 255).rounded()), Int((c[2] * 255).rounded()))
     }
 
     private static func raw(_ p: EKParticipant) -> RawParticipant {

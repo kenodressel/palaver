@@ -5119,6 +5119,7 @@ async function openSettings(how = "push", pane = null) {
   if (movedOn(here)) return;
   renderSettings();
   watchCalendar();
+  refreshCalendars();
 }
 
 // The calendar on the Settings page (it was in the menu bar's menu): connected,
@@ -5136,6 +5137,52 @@ function calendarCard() {
           "with Calendars on. If your organization blocks that, its admin approves it once.")),
       cal && cal.state !== "granted" ? h("button", { type: "button", class: "btn", onclick: (e) => connectCalendarHere(e.currentTarget) },
         cal.state === "denied" ? "Open System Settings" : "Connect Calendar") : null));
+}
+
+// The calendars Palaver reads, under the Calendar card once it is connected:
+// each on unless turned off here, e.g. a personal calendar next to the work one.
+async function refreshCalendars() {
+  try {
+    state.calendars = (await api("/api/calendars")).calendars;
+  } catch {
+    state.calendars = null;
+  }
+  document.getElementById("calendar-list")?.replaceWith(calendarList());
+}
+
+function calendarList() {
+  const list = state.calendars || [];
+  const card = h("div", { id: "calendar-list" });
+  if (state.calendar?.state !== "granted" || !list.length) return card;
+  const box = h("div", { class: "gloss-card settings-card calendar-list" },
+    h("p", { class: "meta" }, "The calendars Palaver reads. Turn off one that holds no meetings, like a personal calendar: ",
+      "its events are then never suggested, prepared or given to a recording."));
+  let account = null;
+  for (const c of list) {
+    if (c.account !== account) {
+      account = c.account;
+      if (account) box.append(h("p", { class: "calendar-account meta" }, account));
+    }
+    const input = h("input", { type: "checkbox", role: "switch", class: "switch-input", "data-calendar": c.id,
+      onchange: (e) => turnCalendar(c, e.target) });
+    input.checked = !!c.on;
+    box.append(h("label", { class: "switch-row" },
+      h("span", { class: "switch-label" }, c.color ? h("span", { class: "calendar-dot", style: `background:${c.color}` }) : null, c.title),
+      input, h("span", { class: "switch-track", "aria-hidden": "true" })));
+  }
+  card.append(box);
+  return card;
+}
+
+async function turnCalendar(c, input) {
+  try {
+    state.calendars = (await api("/api/calendars", { id: c.id, on: input.checked })).calendars;
+  } catch (err) {
+    input.checked = !input.checked;
+    errorToast(`The calendar was not changed: ${err.message}`);
+    return;
+  }
+  toast(input.checked ? `Palaver reads “${c.title}” again.` : `Palaver leaves “${c.title}” alone.`, { short: true });
 }
 
 // Whether macOS lets Palaver notify, as its launcher last asked: off, Palaver
@@ -5220,6 +5267,7 @@ function watchCalendar() {
     if (now && now.state !== state.calendar?.state) {
       state.calendar = now;
       $("#calendar-card")?.replaceWith(calendarCard());
+      refreshCalendars();
     }
     watchCalendar();
   }, 1500);
@@ -5320,7 +5368,7 @@ function settingsContent(pane) {
         settingSwitch("nudge_fillers", "More filler words than usual (experimental)"),
         h("p", { class: "meta" }, "“Usual” is your own average over your last 30 meetings. Pace and filler words are experimental and off by default: they come from the realtime text, which is not yet checked against your transcripts. Who hasn't spoken counts only invitees who accepted (or, without responses, whose voice you have named), and only when every voice in the call has a name. Calls only: never for a recording you started yourself.")),
     ] : [];
-    case "calendar": return [h("h2", {}, "Calendar"), calendarCard()];
+    case "calendar": return [h("h2", {}, "Calendar"), calendarCard(), calendarList()];
     case "notifications": return [notificationsSection()];
     case "transcription": return state.tr ? renderTranscription(state.tr) : [];
     case "language-model": return state.lm ? renderLanguageModel(state.lm) : [];

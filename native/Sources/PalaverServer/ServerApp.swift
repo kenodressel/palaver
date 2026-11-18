@@ -44,6 +44,8 @@ public final class ServerApp: @unchecked Sendable {
     public let accessibilityState: String?
     /// (start, end) -> events, for meetings still to come; nil when the calendar is turned off.
     public let calendar: CalendarProvider?
+    /// The Mac's calendars, for Settings' choice of the ones Palaver reads; nil when the calendar is turned off.
+    public let calendars: (() -> [CalendarInfo])?
     /// The setup assistant's look at this Mac, its downloads (onboarding.Probe): `MacProbe` unless one is given.
     public let probe: SetupProbe
     public let helpers: HelperRunner
@@ -113,7 +115,7 @@ public final class ServerApp: @unchecked Sendable {
                 staticDir: URL = ServerApp.defaultStaticDir, settingsDefaults: SettingsValues? = nil,
                 notesEnabled: Bool? = nil, freeMemoryGB: @escaping () -> Double = { .infinity },
                 recording: RecordingRemote? = nil, calendar: CalendarProvider? = nil,
-                probe: SetupProbe? = nil, helpers: HelperRunner? = nil,
+                calendars: (() -> [CalendarInfo])? = nil, probe: SetupProbe? = nil, helpers: HelperRunner? = nil,
                 nextQuestion: NextQuestionAsker? = nil, assistant: LiveAssistantAsker? = nil, provider: ProviderHelper? = nil,
                 report: ReportMaker? = nil, notion: NotionLink? = nil, speechHere: (() -> Bool)? = nil, openURL: @escaping (String) -> Void = ServerApp.open,
                 notifyState: String? = ProcessInfo.processInfo.environment["PALAVER_NOTIFY_STATE"],
@@ -138,6 +140,7 @@ public final class ServerApp: @unchecked Sendable {
         self.freeMemoryGB = freeMemoryGB
         self.recording = recording
         self.calendar = calendar
+        self.calendars = calendars
         let probe = probe ?? MacProbe(stores: stores, outputDir: outputDir, config: config, recording: recording,
                                       calendar: calendar, notifyState: notifyState)
         self.probe = probe

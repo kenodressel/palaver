@@ -1,13 +1,15 @@
 """Every page of the Meetings window loads, the search finds, a setting stays."""
 
 import json
+import os
 import re
+from pathlib import Path
 
 import pytest
 
 from playwright.sync_api import expect  # noqa: E402
 
-from .helpers import audio, goto, heading, list_ids, list_item, open_meeting, reload  # noqa: E402
+from .helpers import audio, goto, heading, list_ids, list_item, open_meeting, reload, toast  # noqa: E402
 from .recordings import A, B, C, LIVE  # noqa: E402
 from .stores import GEMMA, NOTIFICATIONS_SETTINGS_URL, QWEN, write_update_status  # noqa: E402
 
@@ -391,3 +393,30 @@ def test_settings_connect_the_calendar_and_follow_a_yes_given_elsewhere(page, ap
     expect(card).to_contain_text("connected (read only)")  # macOS's dialog answered: the page follows
     expect(card.get_by_role("button")).to_have_count(0)
     assert app_server.probe.calendar.asked == 1
+
+
+def test_settings_turn_off_a_calendar_that_holds_no_meetings(page, tmp_path):
+    """A personal calendar next to the work one: turned off in Settings, Palaver reads none of its events."""
+    file = tmp_path / "calendars.json"
+    file.write_text(json.dumps([{"id": "work-1", "title": "Calendar", "account": "Contoso", "color": "#1e88e5"},
+                                {"id": "home-1", "title": "Family", "account": "iCloud", "color": "#43a047"}]))
+    from .conftest import _serve
+    srv, served = _serve(tmp_path / "Recordings", env={"PALAVER_TEST_CALENDARS": str(file)})
+    try:
+        goto(page, served, "#/settings/calendar")
+        expect(page.locator("#calendar-list .switch-row")).to_have_count(0)  # not connected: nothing to choose
+        page.locator("#calendar-card").get_by_role("button", name="Connect Calendar").click()
+        rows = page.locator("#calendar-list .switch-row")
+        expect(rows).to_have_count(2)
+        expect(page.locator("#calendar-list .calendar-account")).to_have_text(["Contoso", "iCloud"])
+        family = page.get_by_role("switch", name="Family")
+        expect(family).to_be_checked()
+        page.locator("#calendar-list label.switch-row", has_text="Family").click()
+        expect(toast(page)).to_contain_text("Palaver leaves “Family” alone.")
+        settings = json.loads((Path(os.environ["XDG_CONFIG_HOME"]) / "palaver" / "settings.json").read_text())
+        assert settings["calendars_off"] == ["home-1"]
+        reload(page)
+        expect(page.get_by_role("switch", name="Family")).not_to_be_checked()
+        expect(page.get_by_role("switch", name="Calendar")).to_be_checked()
+    finally:
+        served.close()

@@ -85,6 +85,23 @@ public enum SettingsFile {
         userName(stores: stores) ?? name
     }
 
+    /// The calendars turned off in Settings (`calendars_off`: their ids): Palaver reads none of their events.
+    public static func calendarsOff(stores: StorePaths = .current()) -> Set<String> {
+        Set((readRaw(stores: stores)["calendars_off"]?.arrayValue ?? []).compactMap(\.stringValue))
+    }
+
+    /// Turns the calendar `id` on or off; the ids stay in the order they were turned off.
+    public static func setCalendar(_ id: String, on: Bool, stores: StorePaths = .current()) throws {
+        try StoreLock.with(stores.settings) {
+            guard case .object(var fields) = readRaw(stores: stores) else { return }
+            var off = (readRaw(stores: stores)["calendars_off"]?.arrayValue ?? []).compactMap(\.stringValue).filter { $0 != id }
+            if !on { off.append(id) }
+            let value = JSONValue.array(off.map(JSONValue.string))
+            if let i = fields.firstIndex(where: { $0.0 == "calendars_off" }) { fields[i].1 = value } else { fields.append(("calendars_off", value)) }
+            try write(.object(fields), stores: stores)
+        }
+    }
+
     /// The user's earlier names, stripped, empty ones dropped.
     public static func userAliases(stores: StorePaths = .current()) -> [String] {
         guard let items = readRaw(stores: stores)["user_aliases"]?.arrayValue else { return [] }

@@ -150,7 +150,7 @@ public enum WorkerMain {
         }
         #endif
         guard config.calendarEnabled else { return (false, nil) }
-        let kit = EventKitCalendar()
+        let kit = EventKitCalendar(excluded: SettingsFile.calendarsOff(stores: stores(env)))
         guard kit.hasAccess() else { return (true, nil) }
         return (true, { try kit.eventsBetween($0, $1) })
     }

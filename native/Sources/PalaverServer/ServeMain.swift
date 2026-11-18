@@ -98,11 +98,13 @@ public enum ServeMain {
         let configURL = o.config.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) } ?? stores.configToml
         let config = Config.load(configURL, environment: env)
         var calendar: CalendarProvider?
+        var calendars: (() -> [CalendarInfo])?
         if config.calendarEnabled {
             calendar = { start, end in
-                let kit = EventKitCalendar()
+                let kit = EventKitCalendar(excluded: SettingsFile.calendarsOff(stores: stores))  // turned off in Settings now
                 return kit.hasAccess() ? try kit.eventsBetween(start, end) : []
             }
+            calendars = { EventKitCalendar().calendars() }
         }
         #if DEBUG
         // The parity harness's fake calendar (its side's events.json) instead of this Mac's: the events that overlap
@@ -110,6 +112,16 @@ public enum ServeMain {
         if let file = env["PALAVER_TEST_CALENDAR"] {
             let events = (PythonJSON.read(URL(fileURLWithPath: file))?.arrayValue ?? []).compactMap { try? CalendarEvent(json: $0) }
             calendar = { start, end in events.filter { $0.start.date < end && $0.end.date > start } }
+        }
+        // The end-to-end tests' calendars for Settings (a JSON list of {id, title, account, color}).
+        if let file = env["PALAVER_TEST_CALENDARS"] {
+            let items = PythonJSON.read(URL(fileURLWithPath: file))?.arrayValue ?? []
+            calendars = {
+                items.compactMap { c in
+                    c["id"]?.stringValue.map { CalendarInfo(id: $0, title: c["title"]?.stringValue ?? "", account: c["account"]?.stringValue ?? "",
+                                                            color: c["color"]?.stringValue ?? "") }
+                }
+            }
         }
         #endif
         let remoteLog: (String) -> Void = { log?.message($0, logger: "palaver.webapp.remote") }
@@ -156,7 +168,7 @@ public enum ServeMain {
                             userName: SettingsFile.currentUserName(default: config.userName, stores: stores),
                             config: config, stores: stores, cliOptions: forwarded(o),
                             staticDir: o.staticDir.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? ServerApp.defaultStaticDir,
-                            freeMemoryGB: ServerApp.freeMemory(env: env), recording: recording, calendar: calendar, probe: probe,
+                            freeMemoryGB: ServerApp.freeMemory(env: env), recording: recording, calendar: calendar, calendars: calendars, probe: probe,
                             helpers: helpers, nextQuestion: nextQuestion, assistant: assistant, provider: provider, report: report,
                             // Where uploads go and Upload to Notion (#34), with the server's key store.
                             notion: NotionService(configURL: configURL, stores: stores, keys: keys, env: env,
