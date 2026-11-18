@@ -2,7 +2,7 @@
 
 Palaver's anonymous usage numbers (issue #6): a Cloudflare Worker with a D1
 database, deployed at https://palaver-stats.ardobras.workers.dev/. Palaver
-sends a ping at most once a day, only while "Share anonymous usage numbers"
+sends a ping once a day and after each update, only while "Share anonymous usage numbers"
 (Settings → Updates or the setup assistant; on by default) and "Look for
 updates automatically" are both on.
 
@@ -12,7 +12,7 @@ updates automatically" are both on.
   (JSON, at most 1 KB). Anything else is refused (400; 413 for a larger body).
   It stores one row per UTC day and install: the day, the install id as a
   salted SHA-256 (the secret `SALT`; the id itself is never stored), the
-  version and macOS. A second ping the same day changes nothing. No IP address,
+  version and macOS. A later ping the same day (after an update) changes that row's versions to the new ones. No IP address,
   no user agent, no time of day; the Worker logs nothing, and its request logs
   are off (`[observability] enabled = false` in `wrangler.toml`).
 - `GET /` is the public page: active installs today, in the last 7 and 30 days,
@@ -68,6 +68,12 @@ so nobody can check whether an id they know was counted.
 `<placeholder>` in it is never called. `PALAVER_STATS_URL` points a Palaver at
 another endpoint (the tests' stub).
 
-Later changes to the Worker: `npx wrangler deploy` again. Cloudflare itself
+Later changes to the Worker deploy themselves: `.github/workflows/stats.yml`
+tests and deploys it whenever `stats/` changes on master (or by hand: Actions →
+stats → Run workflow). It needs two repository secrets, set once:
+`CLOUDFLARE_API_TOKEN` (My Profile → API Tokens → "Edit Cloudflare Workers",
+plus D1 edit) and `CLOUDFLARE_ACCOUNT_ID`; without them it only tests. The
+numbers on the page need no deploy: it is made from the database at each
+visit. Cloudflare itself
 sees the IP address of every request at its edge, as any host does; this
 Worker neither reads nor keeps it.

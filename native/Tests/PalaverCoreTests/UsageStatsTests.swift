@@ -76,6 +76,10 @@ import Testing
         #expect(UsageStats.lastSent(support: dir) == nil)
         try UsageStats.markSent(day: "2026-11-16", support: dir)
         #expect(UsageStats.lastSent(support: dir) == "2026-11-16")
+        #expect(UsageStats.lastSentVersion(support: dir) == nil)  // an earlier release's file: the day alone
+        try UsageStats.markSent(day: "2026-11-17", version: "0.7.4", support: dir)
+        #expect(UsageStats.lastSent(support: dir) == "2026-11-17")
+        #expect(UsageStats.lastSentVersion(support: dir) == "0.7.4")
         try "yesterday".write(to: UsageStats.sentFile(support: dir), atomically: true, encoding: .utf8)
         #expect(UsageStats.lastSent(support: dir) == nil)
     }

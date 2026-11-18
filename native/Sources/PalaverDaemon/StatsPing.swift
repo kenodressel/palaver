@@ -1,4 +1,5 @@
-// The anonymous usage numbers (#6): at most one ping a day, from the app's tick, beside the update check. Only while
+// The anonymous usage numbers (#6): one ping a day and one after each update (the day's version, now the new one), from
+// the app's tick, beside the update check. Only while
 // the user shares them (`share_usage`, on unless turned off) and lets Palaver look for updates (`check_updates`: the switch that allows
 // automatic network calls at all), and only from a release: a development build never sends. The ping is the one
 // UsageStats builds; Settings shows the same bytes.
@@ -44,14 +45,15 @@ public final class StatsPing: @unchecked Sendable {
     private var running = false
     private var lastTry: Date?
     private var sentDay: String?
+    private var sentVersion: String?
     private var sentDayRead = false
     private var failureSaid = false
     private var placeholderSaid = false
 
     public init(_ deps: Deps) { self.deps = deps }
 
-    /// A ping is due: shared, from a release, to a real endpoint, none taken this UTC day, none running, and the
-    /// last failed one an hour ago or more.
+    /// A ping is due: shared, from a release, to a real endpoint, none taken this UTC day or none since this version
+    /// (an update: the day's row gets the new version), none running, and the last failed one an hour ago or more.
     public func due() -> Bool {
         guard deps.version != nil, deps.enabled() else { return false }
         guard UsageStats.sendable(deps.endpoint) != nil else {
@@ -65,9 +67,13 @@ public final class StatsPing: @unchecked Sendable {
         return lock.withLock {
             if running { return false }
             if let lastTry, now.timeIntervalSince(lastTry) < Self.retryAfter { return false }
-            if !sentDayRead { sentDay = UsageStats.lastSent(support: deps.support); sentDayRead = true }
-            // A clock set back never sends a day twice: only a later day is due.
-            return sentDay.map { UsageStats.utcDay(now) > $0 } ?? true
+            if !sentDayRead {
+                sentDay = UsageStats.lastSent(support: deps.support)
+                sentVersion = UsageStats.lastSentVersion(support: deps.support)
+                sentDayRead = true
+            }
+            // A clock set back never sends a day twice for one version: only a later day is due, or a new version.
+            return sentDay.map { UsageStats.utcDay(now) > $0 } ?? true || sentVersion != deps.version
         }
     }
 
@@ -95,8 +101,8 @@ public final class StatsPing: @unchecked Sendable {
             if say { deps.log("usage numbers not sent (tried again in an hour): \(error)") }
             return false
         }
-        lock.withLock { sentDay = day; sentDayRead = true; failureSaid = false }
-        do { try UsageStats.markSent(day: day, support: deps.support) } catch {
+        lock.withLock { sentDay = day; sentVersion = version; sentDayRead = true; failureSaid = false }
+        do { try UsageStats.markSent(day: day, version: version, support: deps.support) } catch {
             deps.log("could not note the usage numbers' day: \(error)")  // kept in memory: not sent again until a restart
         }
         return true

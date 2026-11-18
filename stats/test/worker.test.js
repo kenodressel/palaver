@@ -77,12 +77,12 @@ test("the table holds only the day, the hashed install, the version and macOS", 
   assert.deepEqual(columns, ["day", "install", "version", "macos"]);
 });
 
-test("more pings the same day change nothing, the next day counts again", async () => {
+test("a ping after an update the same day changes that day's versions, the next day counts again", async () => {
   const e = env();
   await sendPing(e, KIM, "0.6.7", "15.5", "2026-11-16");
-  const again = await sendPing(e, KIM, "0.6.8", "15.6", "2026-11-16");  // updated in between: the first one stays
+  const again = await sendPing(e, KIM, "0.6.8", "15.6", "2026-11-16");  // updated in between: still one row, now 0.6.8
   assert.equal(again.status, 204);
-  assert.deepEqual(e.DB.rows().map((r) => [r.day, r.version, r.macos]), [["2026-11-16", "0.6.7", "15.5"]]);
+  assert.deepEqual(e.DB.rows().map((r) => [r.day, r.version, r.macos]), [["2026-11-16", "0.6.8", "15.6"]]);
   await sendPing(e, KIM, "0.6.8", "15.6", "2026-11-17");
   assert.equal(e.DB.rows().length, 2);
 });

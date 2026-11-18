@@ -62,6 +62,33 @@ private final class PingRig: @unchecked Sendable {
         #expect(r.sent.count == 1)
     }
 
+    /// An update the same day pings again, with the new version, once: the day's row shows what the Mac runs now.
+    @Test func anUpdateTheSameDaySendsTheNewVersionOnce() throws {
+        let r = PingRig()
+        r.ping.tick()
+        r.version = "0.6.9"
+        let updated = r.make()  // the app started again after the update
+        r.later(hours: 1)
+        updated.tick()
+        #expect(r.sent.map { $0.1.contains("\"version\": \"0.6.9\"") } == [false, true])
+        #expect(UsageStats.lastSent(support: r.support) == "2026-11-16")
+        #expect(UsageStats.lastSentVersion(support: r.support) == "0.6.9")
+        r.later(hours: 1)
+        updated.tick()
+        r.make().tick()  // and a restart without one sends nothing more
+        #expect(r.sent.count == 2)
+    }
+
+    /// A stats-sent of an earlier release holds the day alone: the first start of this one is an update.
+    @Test func aDayWithoutAVersionIsAnEarlierRelease() throws {
+        let r = PingRig()
+        try UsageStats.markSent(day: "2026-11-16", support: r.support)
+        r.ping.tick()
+        #expect(r.sent.count == 1)
+        r.make().tick()
+        #expect(r.sent.count == 1)
+    }
+
     @Test func offDevelopmentBuildOrPlaceholderSendNothing() {
         let off = PingRig()
         off.on = false

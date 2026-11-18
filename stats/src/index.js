@@ -1,7 +1,8 @@
-// Palaver's opt-in usage numbers (#6): a Cloudflare Worker with a D1 database (binding DB).
+// Palaver's anonymous usage numbers (#6): a Cloudflare Worker with a D1 database (binding DB).
 //
-// POST /ping  {"install": <UUID v4>, "version": "0.6.8", "macos": "15.5"}, sent at most once a day by a Palaver whose
-//             user turned on "Share anonymous usage numbers". One row per UTC day and install; the install id is
+// POST /ping  {"install": <UUID v4>, "version": "0.6.8", "macos": "15.5"}, sent once a day and after each update by a
+//             Palaver that shares them (on unless turned off). One row per UTC day and install, with the version it
+//             runs now; the install id is
 //             stored only as a salted SHA-256 (the secret SALT), never as sent. Nothing else of the request is kept
 //             or logged: no IP address, no user agent, no time of day.
 // GET /       A public page with the totals only: how many installs were active, on which versions, and how fast
@@ -103,8 +104,9 @@ async function ping(request, env, now) {
   // Without a salt the id could only be stored as it came, or hashed without one: neither.
   if (typeof env.SALT !== "string" || env.SALT.length < 16) return plain(503, "not set up");
   const install = await hashInstall(env.SALT, sent.install);
-  // The first ping of the day counts; another one that day (an update in between too) changes nothing.
-  await env.DB.prepare("INSERT OR IGNORE INTO pings (day, install, version, macos) VALUES (?, ?, ?, ?)")
+  // One row a day per install; a later ping that day (after an update) changes its versions to the new ones.
+  await env.DB.prepare("INSERT INTO pings (day, install, version, macos) VALUES (?, ?, ?, ?) "
+    + "ON CONFLICT (day, install) DO UPDATE SET version = excluded.version, macos = excluded.macos")
     .bind(utcDay(now), install, sent.version, sent.macos)
     .run();
   return new Response(null, { status: 204 });
@@ -230,10 +232,10 @@ ${shareTable("macOS versions, last 7 days", n.macos)}
 <h2>How fast the latest version spread</h2>
 <div class="spread-wrap">${spreadTable(n.spread)}</div>
 <footer>
-<p>Each Palaver that shares sends, at most once a day: a random install id (stored here only as a salted hash, and
+<p>Each Palaver that shares sends, once a day and after each update: a random install id (stored here only as a salted hash, and
 reset in Palaver's Settings), the Palaver version and the macOS version. No IP address, name, meeting or anything
-else is stored. Daily rows are deleted after ${KEEP_DAYS} days. Off by default; Settings → Updates in Palaver turns it
-on or off.</p>
+else is stored. Daily rows are deleted after ${KEEP_DAYS} days. On unless turned off in Palaver's Settings → Updates
+(or its setup assistant).</p>
 </footer>
 </body>
 </html>

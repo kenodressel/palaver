@@ -5427,9 +5427,9 @@ function renderUpdateSection() {
 
 // --- usage numbers (#6) -------------------------------------------------------------------
 
-// Off unless turned on here or in the setup assistant. What is sent is shown
-// byte for byte, with this Mac's values; the menu bar app sends it, at most
-// once a day, beside the update check.
+// On unless turned off here or in the setup assistant. What is sent is shown
+// byte for byte, with this Mac's values; the menu bar app sends it once a day
+// and after each update, beside the update check.
 async function refreshUsageStats() {
   try {
     state.usageStats = await api("/api/usage-stats");
@@ -5451,7 +5451,7 @@ function usageStatsCard() {
   return h("div", { id: "usage-stats", class: "usage-stats" },
     settingSwitch("share_usage", "Share anonymous usage numbers"),
     h("p", { class: "meta" }, "Shows how many people use Palaver, on which versions, and how fast updates arrive. "
-      + "At most once a day Palaver sends exactly this, and nothing else:"),
+      + "Once a day and after each update Palaver sends exactly this, and nothing else:"),
     usageStatsBody(u.body),
     h("p", { class: "meta" }, "“install” is a random ID made on this Mac. Your name, your meetings, their audio and "
       + "anything from them are never sent.", when ? ` ${when}` : null),
@@ -6760,12 +6760,12 @@ function recommendedStep(p, next) {
         h("label", { class: "switch-row" }, h("span", { class: "switch-label" }, "Start Palaver at login"),
           autostart, h("span", { class: "switch-track", "aria-hidden": "true" })),
         h("p", { class: "meta" }, "Calls are only recorded while Palaver runs.")),
-      // The usage numbers (#6): asked here once, off unless turned on, with what would be sent.
+      // The usage numbers (#6): asked here once, on unless turned off, with what would be sent.
       p.usage ? h("div", { class: "gloss-card settings-card setup-usage" },
         h("label", { class: "switch-row" }, h("span", { class: "switch-label" }, "Share anonymous usage numbers"),
           share, h("span", { class: "switch-track", "aria-hidden": "true" })),
-        h("p", { class: "meta" }, "Off unless you turn it on. It shows how many people use Palaver and how fast updates "
-          + "arrive. At most once a day Palaver would send exactly this, and nothing else:"),
+        h("p", { class: "meta" }, "On unless you turn it off. It shows how many people use Palaver and how fast updates "
+          + "arrive. Once a day and after each update Palaver sends exactly this, and nothing else:"),
         usageStatsBody(p.usage.body),
         h("p", { class: "meta" }, "A random ID made on this Mac, Palaver's version and macOS's. Never your name, your "
           + "meetings or their audio. Change it any time in Settings → Updates.")) : null,

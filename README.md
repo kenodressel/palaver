@@ -282,7 +282,7 @@ Claude) may come later.
   latest release's `manifest.json` at start, every hour and when you open
   the window. Turn it off in Settings → Updates. Unless you turn off
   "Share anonymous usage numbers" (Settings → Updates or the setup
-  assistant; on by default), also one small request at most once a day,
+  assistant; on by default), also one small request once a day and after each update,
   while the update check is on: a random install id (made on this Mac; "New
   ID" replaces it), the Palaver version and the macOS version, nothing else.
   Settings shows it exactly as sent. The totals are on a public page linked

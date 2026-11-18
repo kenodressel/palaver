@@ -55,7 +55,8 @@ public enum UsageStats {
 
     /// `<support>/install-id`: a random UUID v4, made the first time it is needed, replaced by "New ID".
     public static func installFile(support: URL) -> URL { support.appendingPathComponent("install-id") }
-    /// `<support>/stats-sent`: the UTC day of the last ping the endpoint took.
+    /// `<support>/stats-sent`: the UTC day of the last ping the endpoint took, and the version it sent ("2026-11-18 0.7.4";
+    /// a file of earlier releases holds the day alone).
     public static func sentFile(support: URL) -> URL { support.appendingPathComponent("stats-sent") }
 
     public static func isInstallID(_ s: String) -> Bool {
@@ -95,18 +96,26 @@ public enum UsageStats {
     }
 
     /// The UTC day the last ping was taken, nil when never.
-    public static func lastSent(support: URL) -> String? {
+    public static func lastSent(support: URL) -> String? { sent(support: support)?.day }
+
+    /// The version the last ping sent; nil when it is not known (none sent, or a file of an earlier release).
+    public static func lastSentVersion(support: URL) -> String? { sent(support: support)?.version }
+
+    private static func sent(support: URL) -> (day: String, version: String?)? {
         let text = (try? String(contentsOf: sentFile(support: support), encoding: .utf8))?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return text.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil ? text : nil
+        let parts = text.split(separator: " ", omittingEmptySubsequences: false).map(String.init)
+        guard (1...2).contains(parts.count), parts[0].range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil
+        else { return nil }
+        return (parts[0], parts.count == 2 && !parts[1].isEmpty ? parts[1] : nil)
     }
 
-    public static func markSent(day: String, support: URL) throws {
+    public static func markSent(day: String, version: String? = nil, support: URL) throws {
         let file = sentFile(support: support)
         #if DEBUG
         TestIsolation.checkOutsideHome(file, "the usage numbers' day")
         #endif
-        let tmp = try writeTemp(day, beside: file)
+        let tmp = try writeTemp(version.map { "\(day) \($0)" } ?? day, beside: file)
         guard rename(tmp.path, file.path) == 0 else {
             let e = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
             unlink(tmp.path)
