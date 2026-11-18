@@ -133,10 +133,11 @@ import Testing
             ("forget", { try bank.forget("Anna") }),
         ]
         for (what, write) in writers {
-            let held = try LockHolder(lock, seconds: 0.4)
+            // Held 1 s: a busy CI machine may take a while to get from the holder's start to here (0.28 s once).
+            let held = try LockHolder(lock, seconds: 1.0)
             let start = Date()
             try write()
-            #expect(Date().timeIntervalSince(start) >= 0.3, "\(what) did not wait for voices.lock")
+            #expect(Date().timeIntervalSince(start) >= 0.5, "\(what) did not wait for voices.lock")
             held.wait()
         }
         #expect(try bank.names().isEmpty)
