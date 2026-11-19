@@ -113,7 +113,6 @@ private func idleRecording(_ folder: URL) -> RecordingPaths {
         #expect(s["talk"]?["speaking"] == .string("me"))
         #expect(s["talk_text"] == .str(VoiceActivity.talkText(s["talk"])))
         #expect(s["nudge"] == .null && s["quiet"] == .array([]))
-        #expect(!exists(folder.appendingPathComponent("coach.json.tmp")))  // written atomically
         // The recording ends: both tracks final, meta.json there: the worker ends by itself.
         finalizePart(paths.micRawWav)
         finalizePart(paths.systemWav)
@@ -121,6 +120,9 @@ private func idleRecording(_ folder: URL) -> RecordingPaths {
         #expect(run.done.wait(10))
         #expect(run.result == 0)
         #expect(!exists(LiveCoachRunner.coachPath(folder)))
+        // Written atomically, through a .tmp renamed into place: none is left. Looked at once the worker has ended, as
+        // while it runs (every 50 ms) a check can land between a write and its rename.
+        #expect(!exists(folder.appendingPathComponent("coach.json.tmp")))
     }
 
     @Test func test_coach_worker_ends_on_sigterm_flag() {
