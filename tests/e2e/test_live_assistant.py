@@ -15,7 +15,42 @@ WARNING = "Runs Gemma on this Mac during the call (about 10 GB, may slow the cal
 
 
 def _panel(page):
+    """The assistant in the live panel; the test's window (1280 px) shows the panel as a bar: ⋯ shows the asks."""
+    more = page.locator("#main .live-more")
+    expect(more).to_be_visible()
+    if more.get_attribute("aria-expanded") != "true":
+        more.click()
     return page.get_by_role("region", name="Live assistant")
+
+
+def test_a_narrow_window_shows_the_coach_as_a_bar_the_assistant_behind_more(page, app_server):
+    goto(page, app_server, f"#/{LIVE}")
+    coach = page.get_by_role("complementary", name="Coach")
+    expect(coach.get_by_role("button", name="Best answer", exact=True)).to_be_visible()
+    expect(coach.get_by_role("button", name="Best next question", exact=True)).to_be_visible()
+    assistant = page.get_by_role("region", name="Live assistant")
+    expect(assistant.get_by_role("button", name="Catch me up", exact=True)).to_be_hidden()
+    more = coach.get_by_role("button", name="More: catch me up, next steps, ask")
+    more.click()
+    expect(more).to_have_attribute("aria-expanded", "true")
+    expect(assistant.get_by_role("button", name="Catch me up", exact=True)).to_be_visible()
+    expect(assistant.get_by_label("Ask about what was said")).to_be_visible()
+    more.click()
+    expect(assistant.get_by_role("button", name="Catch me up", exact=True)).to_be_hidden()
+
+
+def test_a_wide_window_shows_the_coach_beside_the_meeting(page, app_server):
+    page.set_viewport_size({"width": 1600, "height": 900})
+    goto(page, app_server, f"#/{LIVE}")
+    coach = page.get_by_role("complementary", name="Coach")
+    expect(coach.get_by_role("heading", name="Coach")).to_be_visible()
+    assistant = page.get_by_role("region", name="Live assistant")
+    expect(assistant.get_by_role("button", name="Catch me up", exact=True)).to_be_visible()  # no ⋯ needed
+    expect(coach.locator(".live-more")).to_be_hidden()
+    tabs = page.locator("#main .tabs").bounding_box()
+    box = coach.bounding_box()
+    assert box["x"] >= tabs["x"] + tabs["width"], (box, tabs)  # its own column, right of the transcript
+    assert box["width"] < 400
 
 
 def test_catch_me_up_runs_only_on_a_click(page, app_server):

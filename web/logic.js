@@ -1181,15 +1181,17 @@ export function speakingText(talk) {
   return { me: "You're talking", others: "Others are talking", both: "Both talking" }[talk.speaking] || "Quiet";
 }
 
-// The button: which model answers and where ("Best next question (Gemma, on this Mac)"), off with the reason
-// when none can (no model chosen, notes off), "Thinking…" while it answers. ``info``: GET …/next-question.
-// ``q``: what was asked last (``kind`` "answer" for Best answer); while it runs both buttons wait.
+// The button: "Best next question", off with the reason when no model can answer (none chosen, notes off),
+// "Thinking…" while it answers; ``place``: which model answers and where ("Gemma, on this Mac"), for its tooltip.
+// ``info``: GET …/next-question. ``q``: what was asked last (``kind`` "answer" for Best answer); while it runs both
+// buttons wait.
 export function questionButton(info, q) {
+  const place = info?.label?.match(/\((.+)\)$/)?.[1] ?? null;
   if (q?.loading) {
-    return { label: q.kind === "answer" ? info?.label || "Best next question" : "Thinking…", disabled: true, reason: null };
+    return { label: q.kind === "answer" ? "Best next question" : "Thinking…", disabled: true, reason: null, place };
   }
-  if (!info) return { label: "Best next question", disabled: true, reason: null };
-  return { label: info.label, disabled: !info.ready, reason: info.ready ? null : info.reason };
+  if (!info) return { label: "Best next question", disabled: true, reason: null, place };
+  return { label: "Best next question", disabled: !info.ready, reason: info.ready ? null : info.reason, place };
 }
 
 // "Best answer": what you could say now to the latest question put to you, from the same model.

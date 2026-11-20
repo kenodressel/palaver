@@ -302,7 +302,7 @@ body:is([data-page="today"], [data-page="people"], [data-page="projects"], [data
 
 /* --- meeting ---------------------------------------------------------- */
 
-.main { grid-area: main; overflow-y: auto; min-width: 0; outline: none; }
+.main { grid-area: main; overflow-y: auto; min-width: 0; outline: none; container: main / inline-size; }
 
 .empty, .notice {
   max-width: 40rem;
@@ -364,10 +364,22 @@ h1 {
 .unfollowed-hint .link { font-style: normal; }
 :root { --mic-slash: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 9v3a3 3 0 0 0 5.1 2.1M15 9.3V5a3 3 0 0 0-5.9-.7'/%3E%3Cpath d='M19 10v2a7 7 0 0 1-.9 3.4M5 10v2a7 7 0 0 0 11.6 5.3M12 19v3'/%3E%3Cpath d='M3 3l18 18'/%3E%3C/svg%3E"); }
 
-/* The live coach (#41): a quiet line under a recording's header, the questions on demand. */
-.coach-live { margin-top: 12px; }
-.coach-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; color: var(--ink-2); font-size: 13px; }
-.coach-status { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; }
+/* The live panel (#41, #15): while a meeting records, the coach (who talks, the talk share, the nudge, Best answer
+   and Best next question) and the live assistant in one card. A narrow main pane shows it as a bar under the header,
+   the assistant's buttons behind ⋯; from 1080 px it stands beside the meeting, everything shown (the container
+   queries below). */
+.live-panel { margin-top: 20px; padding: 10px 12px 10px 18px; border-radius: 18px; background: var(--surface);
+  box-shadow: 0 0 0 1px var(--rule); }
+.live-panel-title { display: none; margin: 0; font: 800 20px/1.2 var(--display); letter-spacing: -0.01em; }
+.coach-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; color: var(--ink-2); font-size: 13px; }
+.coach-status { display: inline-flex; flex: 1 1 auto; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; }
+.coach-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.coach-actions .btn { min-height: 36px; font-weight: 600; }
+.live-more { min-width: 36px; padding-left: 10px; padding-right: 10px; font-size: 16px; line-height: 1; }
+.live-more[aria-expanded="true"] { background: var(--selected); }
+.coach-meter { position: relative; display: inline-block; width: 72px; height: 6px; border-radius: 3px; background: var(--rule);
+  overflow: hidden; }
+.coach-meter > span { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--you); }
 .coach-status:empty { display: none; }  /* else the line's gap indents the button */
 .coach-now { display: inline-flex; align-items: center; gap: 6px; color: var(--ink); font-weight: 600; }
 .coach-now::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--rule); }
@@ -376,7 +388,7 @@ h1 {
 .coach-now.both::before { background: linear-gradient(90deg, var(--you) 50%, var(--ink-3) 50%); }
 .coach-nudge { padding: 2px 12px; border-radius: 999px; background: var(--selected); color: var(--you-ink); font-weight: 600; }
 .coach-answer:empty { display: none; }
-.coach-answer { max-width: 720px; margin-top: 12px; padding: 16px 20px; border-radius: var(--radius); background: var(--surface); }
+.coach-answer { margin-top: 12px; padding: 16px 20px; border-radius: var(--radius); background: var(--paper); }
 .next-questions { margin: 0; padding-left: 20px; }
 .next-questions li { margin: 0 0 8px; }
 .next-questions .q { display: block; color: var(--ink); font-weight: 600; }
@@ -393,10 +405,8 @@ h1 {
 .coach-warning { margin: 0; color: var(--ink); font-size: 13px; }
 .coach-error { display: inline; margin: 0 8px 0 0; color: var(--coral-ink); font-size: 13px; }
 
-/* The live assistant (#15): a row of asks under the coach line, its answers as quiet cards below. */
-.assistant { margin-top: 16px; }
+/* The live assistant (#15): its asks in the live panel, its answers as quiet cards below them. */
 .assistant-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 8px; font-size: 13px; }
-.assistant-name { margin-right: 4px; color: var(--ink-2); font-weight: 600; }
 .assistant-ask { display: flex; flex: 1 1 260px; gap: 8px; min-width: 0; max-width: 480px; }
 .assistant-input { flex: 1 1 auto; min-width: 0; padding: 4px 12px; border: 1px solid var(--rule); border-radius: 999px;
   background: var(--surface); color: var(--ink); font: inherit; font-size: 13px; }
@@ -408,7 +418,7 @@ h1 {
 .assistant-error { margin: 0; color: var(--coral-ink); font-size: 13px; }
 .assistant-answers { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px;
   max-width: 960px; max-height: 50vh; margin-top: 12px; overflow-y: auto; }
-.assistant-card { padding: 12px 16px; border-radius: var(--radius); background: var(--surface); font-size: 14px; }
+.assistant-card { padding: 12px 16px; border-radius: var(--radius); background: var(--paper); font-size: 14px; }
 .assistant-card h3 { margin: 0 0 6px; color: var(--ink-2); font-size: 13px; font-weight: 600; }
 .assistant-card h4 { margin: 8px 0 4px; color: var(--ink-2); font-size: 12px; font-weight: 600; }
 .assistant-card ul { margin: 0; padding-left: 20px; }
@@ -419,6 +429,30 @@ h1 {
 .assistant-qa .q { margin: 0; color: var(--ink); font-weight: 600; }
 .assistant-qa .a { margin: 2px 0 4px; }
 .assistant-quotes { color: var(--ink-2); font-size: 13px; }
+
+/* The bar (a narrow main pane): the assistant's asks only after ⋯. */
+@container main (max-width: 1079.98px) {
+  .live-panel:not(.open) :is(.assistant-bar, .assistant-model) { display: none; }
+  .live-panel.open .assistant-bar { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--rule); }
+  .live-panel .assistant-answers, .live-panel .assistant-status { margin-top: 10px; }
+}
+/* Beside the meeting (a wide main pane): its own column, staying in view while the transcript scrolls. */
+@container main (min-width: 1080px) {
+  .meeting.live { max-width: 1400px; display: grid; grid-template-columns: minmax(0, 1fr) 340px; column-gap: 32px;
+    align-items: start; }
+  .meeting.live > * { grid-column: 1; min-width: 0; }
+  .meeting.live > .live-panel { grid-column: 2; grid-row: 1 / span 40; position: sticky; top: 20px; margin-top: 0;
+    display: flex; flex-direction: column; gap: 16px; padding: 20px; max-height: calc(100vh - 140px); overflow-y: auto; }
+  .live-panel-title { display: block; }
+  .live-panel .coach-line { flex-direction: column; align-items: stretch; gap: 12px; }
+  .live-panel .coach-actions { flex-direction: column; }
+  .live-panel .coach-actions .btn { min-height: 44px; font-size: 15px; text-align: left; }
+  .live-panel .live-more { display: none; }
+  .live-panel .coach-answer { margin-top: 0; }
+  .live-panel .assistant { display: flex; flex-direction: column; gap: 10px; padding-top: 16px; border-top: 1px solid var(--rule); }
+  .live-panel .assistant-ask { flex-basis: 100%; max-width: none; }
+  .live-panel .assistant-answers { grid-template-columns: 1fr; }
+}
 
 /* The people on the left, the projects on the right; under each other when narrow. */
 .people-row { display: flex; flex: 1 1 100%; flex-wrap: wrap; align-items: center; justify-content: space-between;

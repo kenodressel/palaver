@@ -33,14 +33,18 @@ test("questionsNote says which model answered and that it keeps to the transcrip
 
 import { questionButton } from "../../web/logic.js";
 
-test("questionButton names the model, waits for it, and says why it is off", () => {
+test("questionButton keeps its name short, waits for the model, says why it is off, and where the model runs", () => {
   const local = { ready: true, reason: null, label: "Best next question (Gemma, on this Mac)", local: true, warning: null };
-  assert.deepEqual(questionButton(local, null), { label: "Best next question (Gemma, on this Mac)", disabled: false, reason: null });
-  assert.deepEqual(questionButton(local, { loading: true }), { label: "Thinking…", disabled: true, reason: null });
+  assert.deepEqual(questionButton(local, null),
+    { label: "Best next question", disabled: false, reason: null, place: "Gemma, on this Mac" });
+  assert.deepEqual(questionButton(local, { loading: true }),
+    { label: "Thinking…", disabled: true, reason: null, place: "Gemma, on this Mac" });
+  assert.deepEqual(questionButton(local, { kind: "answer", loading: true }),
+    { label: "Best next question", disabled: true, reason: null, place: "Gemma, on this Mac" });
   const off = { ready: false, reason: "No model yet: choose one for Best next question in Settings → Language model.",
     label: "Best next question", local: false, warning: null };
-  assert.deepEqual(questionButton(off, null), { label: "Best next question", disabled: true, reason: off.reason });
-  assert.deepEqual(questionButton(null, null), { label: "Best next question", disabled: true, reason: null });
+  assert.deepEqual(questionButton(off, null), { label: "Best next question", disabled: true, reason: off.reason, place: null });
+  assert.deepEqual(questionButton(null, null), { label: "Best next question", disabled: true, reason: null, place: null });
 });
 
 import { answerButton, answerHeading, answerNote } from "../../web/logic.js";
@@ -53,7 +57,7 @@ test("Best answer waits with Best next question and is off without a model", () 
   assert.deepEqual(answerButton({ ready: false }, null), { label: "Best answer", disabled: true });
   assert.deepEqual(answerButton(null, null), { label: "Best answer", disabled: true });
   assert.deepEqual(questionButton(info, { kind: "answer", loading: true }),
-    { label: "Best next question (Gemma, on this Mac)", disabled: true, reason: null });
+    { label: "Best next question", disabled: true, reason: null, place: "Gemma, on this Mac" });
 });
 
 test("answerHeading says what is answered, who asked and when", () => {

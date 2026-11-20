@@ -1,5 +1,5 @@
 """The live coach on a meeting being recorded (#41, #42): who talks, the
-talk share and the nudge as a quiet line, and "Best next question" with a
+talk share and the nudge in the live panel, and "Best next question" with a
 fake language model."""
 
 import re
@@ -44,7 +44,7 @@ def test_best_next_question(page, app_server):
         {"question": "What is the budget for Q1?", "why": "The budget came up at the start and was dropped."}]}
     app_server.model.gate.clear()
     goto(page, app_server, f"#/{LIVE}")
-    button = page.get_by_role("button", name="Best next question (Gemma, on this Mac)")
+    button = page.get_by_role("button", name="Best next question")
     button.click()
     answer = page.locator("#main .coach-answer")
     # The local model during the call: said first, run only on a second click.
@@ -65,7 +65,7 @@ def test_best_next_question(page, app_server):
     assert "Ja, das passt für uns." in prompt and "## Transcript (the last minutes)" in prompt
     answer.get_by_role("button", name="Hide").click()
     expect(answer.locator(".next-questions")).to_have_count(0)
-    expect(page.get_by_role("button", name="Best next question (Gemma, on this Mac)")).to_be_enabled()
+    expect(page.get_by_role("button", name="Best next question")).to_be_enabled()
 
 
 def test_best_answer(page, app_server):
@@ -93,7 +93,7 @@ def test_not_enough_memory_for_the_local_model_is_said_plainly(page, app_server)
     page.guard.allow(r"status of 400")
     app_server.free_gb = 4.0
     goto(page, app_server, f"#/{LIVE}")
-    page.get_by_role("button", name="Best next question (Gemma, on this Mac)").click()
+    page.get_by_role("button", name="Best next question").click()
     page.get_by_role("button", name="Run anyway").click()
     expect(page.locator("#main .coach-error")).to_have_text(
         "Not enough free memory for the local model during the call; choose a cloud model in "
@@ -105,7 +105,7 @@ def test_a_failing_model_says_why(page, app_server):
     page.guard.allow(r"status of 502")
     app_server.model.answer = RuntimeError("Anthropic API: the key was refused")
     goto(page, app_server, f"#/{LIVE}")
-    page.get_by_role("button", name="Best next question (Gemma, on this Mac)").click()
+    page.get_by_role("button", name="Best next question").click()
     page.get_by_role("button", name="Run anyway").click()
     expect(page.locator("#main .coach-error")).to_have_text("Anthropic API: the key was refused")
 

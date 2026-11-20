@@ -191,6 +191,7 @@ const state = {
   coach: null,     // the open meeting's coach numbers
   assistant: null, // the live assistant of the meeting being recorded (#15): {id, at, info, answers, pending, error, confirm}
   assistantMinutes: 5,  // how far Catch me up looks back
+  liveMore: false,  // the live panel as a bar: the assistant shown (⋯)
   assistantDraft: "",   // the question being typed
   reviewAt: 0,     // which of them is open in the review
   upcoming: [],    // calendar events still to come
@@ -770,8 +771,7 @@ function renderMeeting() {
       (live ? audioWarnings(m, state.recording) : []).map((text) => h("div", { class: "audio-warning", role: "status" }, text,
         h("button", { type: "button", class: "link report-link", onclick: () => reportFrom(m, text) }, "Report…"))),
       failureLine(m),
-      audioHints(m, state.recording).map((text) => h("div", { class: "audio-hint" }, text)),
-      coachLive(m)),
+      audioHints(m, state.recording).map((text) => h("div", { class: "audio-hint" }, text))),
     meetingToolbar(m),
     peopleRow(m),  // the header's whole width, under the toolbar too
   );
@@ -788,8 +788,8 @@ function renderMeeting() {
   const body = state.tab === "notes" ? renderNotes(m, color) : state.tab === "mine" ? myNotes(m)
     : state.tab === "coach" ? renderCoach(m) : renderTranscript(m, color);
 
-  const page = h("article", { class: "meeting" }, head,
-    liveAssistant(m),
+  const page = h("article", { class: live ? "meeting live" : "meeting" }, head,
+    livePanel(m),
     renderNeedsStrip(m),
     renderStopQuestion(m),
     renderCutSuggestion(m),
@@ -2321,9 +2321,28 @@ setInterval(async () => {
 }, 1000);
 
 // --- the live coach (#41, #42) ----------------------------------------------------
-// While a meeting records: who talks now, the talk share and the coach's nudge, as a quiet line under the
-// header, and "Best next question" on demand. Updated in place every second (the button keeps its focus);
-// nothing pops up over the call.
+// While a meeting records: who talks now, the talk share and the coach's nudge, "Best answer" and "Best next
+// question" on demand, and the live assistant: one panel. A wide window shows it beside the meeting, all of it at
+// once; a narrower one as a bar under the header, the assistant's own buttons behind ⋯ (app.css: .live-panel).
+// Updated in place every second (a button keeps its focus); nothing pops up over the call.
+
+function livePanel(m) {
+  if (!(m.status === "recording" || m.live)) return null;
+  return h("aside", { class: state.liveMore ? "live-panel open" : "live-panel", "aria-label": "Coach" },
+    h("h2", { class: "live-panel-title" }, "Coach"),
+    coachLive(m),
+    liveAssistant(m));
+}
+
+// ⋯ in the bar: the assistant's buttons and question field shown or put away again.
+function toggleLiveMore() {
+  state.liveMore = !state.liveMore;
+  const panel = $("#main .live-panel");
+  if (!panel) return;
+  panel.classList.toggle("open", state.liveMore);
+  panel.querySelector(".live-more")?.setAttribute("aria-expanded", String(state.liveMore));
+  if (state.liveMore) panel.querySelector(".assistant-bar button")?.focus({ preventScroll: true });
+}
 
 function coachLive(m) {
   if (!(m.status === "recording" || m.live)) return null;
@@ -2337,17 +2356,24 @@ function fillCoachLive(el, m) {
     el.append(
       h("div", { class: "coach-line" },
         h("span", { class: "coach-status" }),
-        h("button", { type: "button", class: "btn small coach-ask", onclick: () => askNextQuestion(m.id) }),
-        h("button", { type: "button", class: "btn small coach-ask-answer",
-          onclick: () => askNextQuestion(m.id, false, "answer") }),
+        h("div", { class: "coach-actions" },
+          h("button", { type: "button", class: "btn small primary coach-ask-answer",
+            onclick: () => askNextQuestion(m.id, false, "answer") }),
+          h("button", { type: "button", class: "btn small coach-ask", onclick: () => askNextQuestion(m.id) }),
+          h("button", { type: "button", class: "btn small live-more", "aria-label": "More: catch me up, next steps, ask",
+            "aria-expanded": String(!!state.liveMore), onclick: toggleLiveMore }, "⋯")),
         h("span", { class: "coach-reason" })),
       h("div", { class: "coach-answer" }));
   }
   const [line, answer] = el.children;
-  const [status, button, answerBtn, reason] = line.children;
+  const [status, actions, reason] = line.children;
+  const [answerBtn, button] = actions.children;
   const c = liveCoachFor(state.liveCoach, m);
+  const share = c?.talk?.share;
   status.replaceChildren(...(c ? [
     h("span", { class: `coach-now ${c.talk?.speaking || "quiet"}` }, speakingText(c.talk)),
+    typeof share === "number" ? h("span", { class: "coach-meter", "aria-hidden": "true" },
+      h("span", { style: `width:${Math.round(100 * Math.min(1, Math.max(0, share)))}%` })) : null,
     c.text ? h("span", { class: "coach-talk" }, c.text) : null,
     c.nudge?.text ? h("span", { class: "coach-nudge", role: "status" }, c.nudge.text) : null,
   ].filter(Boolean) : []));
@@ -2355,7 +2381,7 @@ function fillCoachLive(el, m) {
   const b = questionButton(state.questionInfo?.id === m.id ? state.questionInfo : null, q);
   button.textContent = b.label;
   button.disabled = b.disabled;
-  button.title = "1–3 questions to ask next, from the last minutes and your prep";
+  button.title = `1–3 questions to ask next, from the last minutes and your prep${b.place ? ` (${b.place})` : ""}`;
   const a = answerButton(state.questionInfo?.id === m.id ? state.questionInfo : null, q);
   answerBtn.textContent = a.label;
   answerBtn.disabled = a.disabled;
@@ -2471,7 +2497,6 @@ function fillAssistant(el, m) {
       oninput: (e) => { state.assistantDraft = e.target.value; } });
     el.append(
       h("div", { class: "assistant-bar" },
-        h("span", { class: "assistant-name" }, "Assistant"),
         h("button", { type: "button", class: "btn small", "data-kind": "catchup", onclick: () => askAssistant(m.id, "catchup") }),
         minutes,
         h("button", { type: "button", class: "btn small", "data-kind": "next_steps", onclick: () => askAssistant(m.id, "next_steps") }),
