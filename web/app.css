@@ -368,7 +368,7 @@ h1 {
    the header: who talks, the talk share, the nudge, Best answer and Best next question (and their answer); the
    live assistant is in the Ask tab (.live-ask-tab). A wide one has both in a panel beside the meeting
    (.meeting.live.side, below). The rest of the coach is the Coach tab. */
-.live-panel { margin-top: 20px; padding: 8px 8px 8px 18px; border-radius: 18px; background: var(--surface);
+.live-panel { margin-top: 20px; padding: 8px 8px 8px 16px; border-radius: 18px; background: var(--surface);
   box-shadow: 0 0 0 1px var(--rule); }
 .live-panel-title { margin: 0; font: 800 20px/1.2 var(--display); letter-spacing: -0.01em; }
 .live-panel-sub { margin: 0; padding-top: 16px; border-top: 1px solid var(--rule); color: var(--ink-2); font-size: 13px;
@@ -447,7 +447,7 @@ span.moment { color: var(--ink-2); text-decoration: none; }
 .side .live-panel .coach-actions { flex-direction: column; }
 .side .live-panel .coach-actions .btn { min-height: 44px; font-size: 15px; text-align: left; }
 .side .live-panel .coach-answer { margin-top: 0; }
-.side .live-panel .assistant { display: flex; flex-direction: column; gap: 10px; }
+.side .live-panel .assistant { display: flex; flex-direction: column; gap: 12px; }
 .side .live-panel .assistant-ask { flex-basis: 100%; max-width: none; }
 .side .live-panel .assistant-answers { grid-template-columns: 1fr; }
 
