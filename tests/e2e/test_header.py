@@ -37,21 +37,19 @@ def _color(locator) -> str:
     return locator.evaluate("el => el.style.getPropertyValue('--c')")
 
 
-def test_the_header_lists_the_invitees_as_people_who_spoke_first_in_their_lane_colour(page, app_server):
+def test_the_header_lists_only_the_invitees_without_a_lane_so_nobody_is_named_twice(page, app_server):
     _invite(app_server, ("Jonas Weber", "jonas@contoso.com"), ("Anna", "anna@contoso.com"),
             ("Mara Fischer", "mara@fabrikam.com"), ("Carla Rossi", "carla@contoso.com"))
     open_meeting(page, app_server, A)
+    # Anna and Carla (by her first name) spoke: their names are on their lanes, not in the header too.
+    expect(lane(page, "SPEAKER_00")).to_be_visible()
     people = page.locator("#main .head .invitees .person-token")
-    expect(people).to_have_text(["Anna", "Carla Rossi", "Jonas Weber", "Mara Fischer"])
-    # Who spoke has the colour of their lane (Carla by her first name); who did not, a grey outline.
-    expect(people.nth(0)).not_to_have_class("person-token silent")
-    assert _color(people.nth(0)) == _color(lane(page, "SPEAKER_00"))
-    assert _color(people.nth(1)) == _color(lane(page, "SPEAKER_02"))
-    expect(people.nth(2)).to_have_class("person-token silent")
+    expect(people).to_have_text(["Jonas Weber", "Mara Fischer"])
+    expect(people.nth(0)).to_have_class("person-token silent")
     # The user's own organization goes without saying; another is in the tooltip only.
     expect(page.locator("#main .head")).not_to_contain_text("Contoso", ignore_case=True)
-    expect(people.nth(3)).to_have_attribute("title", "Mara Fischer · Fabrikam · invited, no named voice")
-    expect(people.nth(2)).to_have_attribute("title", "Jonas Weber · invited, no named voice")
+    expect(people.nth(1)).to_have_attribute("title", "Mara Fischer · Fabrikam · invited, no named voice")
+    expect(people.nth(0)).to_have_attribute("title", "Jonas Weber · invited, no named voice")
 
 
 def test_a_person_has_one_colour_in_the_lanes_the_list_and_the_text(page, app_server):

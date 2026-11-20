@@ -674,9 +674,11 @@ async function uploadToNotion(m, from) {
     : "Uploaded to Notion.", { short: true });
 }
 
-// The people on the left, the projects on the right; wrapping when narrow.
+// The people on the left, the projects on the right; wrapping when narrow. Who spoke has a lane with their name in
+// the ribbon below: only the invitees without one are listed here, so nobody is named twice.
 function peopleRow(m) {
-  const tokens = attendeeTokens(m);
+  const ribbon = m.status === "ready" || m.transcript.length;
+  const tokens = attendeeTokens(m).filter((t) => !(ribbon && t.spoke));
   const projects = m.status === "ready" || m.live ? renderMeetingProjects(m) : null;
   if (!tokens.length && !projects) return null;
   return h("div", { class: "people-row" }, tokens.length ? renderInvitees(m, tokens) : null, projects);
