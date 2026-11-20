@@ -775,9 +775,9 @@ function renderMeeting() {
     peopleRow(m),  // the header's whole width, under the toolbar too
   );
 
-  // While it records, a wide window has the coach beside the meeting; a narrow one in its Coach tab.
+  // While it records, a wide window has the live assistant beside the meeting; a narrow one in its Ask tab.
   const side = live && liveSide();
-  const tabList = meetingTabs(m, { liveCoach: live && !side });
+  const tabList = meetingTabs(m, { ask: live && !side });
   if (!tabList.includes(state.tab)) state.tab = "transcript";
   // Summary: what the language model wrote (✦, as on Write notes); Notes: mine.
   const tabs = h("div", { class: "tabs", role: "tablist" },
@@ -789,7 +789,7 @@ function renderMeeting() {
     t === "notes" ? h("span", { class: "tab-ai", "aria-hidden": "true" }, "✦") : null)));
 
   const body = state.tab === "notes" ? renderNotes(m, color) : state.tab === "mine" ? myNotes(m)
-    : state.tab === "coach" ? (live ? liveCoachTab(m) : renderCoach(m)) : renderTranscript(m, color);
+    : state.tab === "coach" ? renderCoach(m) : state.tab === "ask" ? liveAskTab(m) : renderTranscript(m, color);
 
   const page = h("article", { class: side ? "meeting live side" : live ? "meeting live" : "meeting" }, head,
     livePanel(m, side),
@@ -2324,34 +2324,27 @@ setInterval(async () => {
 }, 1000);
 
 // --- the live coach (#41, #42) ----------------------------------------------------
-// While a meeting records: who talks now, the talk share and the coach's nudge, "Best answer" and "Best next
-// question" on demand, and the live assistant. A wide main pane (LIVE_SIDE_PX) has all of it in a panel beside
-// the meeting; a narrower one a single line under the header (who talks, the share, the nudge, the two buttons and
-// their answer) and the rest in the meeting's Coach tab. Updated in place every second (a button keeps its
-// focus); nothing pops up over the call.
+// While a meeting records: who talks now, the talk share (a bar; its sentence on hover) and the coach's nudge,
+// "Best answer" and "Best next question" on demand, and the live assistant. A wide main pane (LIVE_SIDE_PX) has all
+// of it in a panel beside the meeting; a narrower one a single line under the header and the assistant in the
+// meeting's Ask tab. The rest of the coach is the Coach tab, from what is transcribed so far. Updated in place
+// every second (a button keeps its focus); nothing pops up over the call.
 
 const LIVE_SIDE_PX = 1080;
 const liveSide = () => ($("#main")?.clientWidth ?? 0) >= LIVE_SIDE_PX;
 
 function livePanel(m, side) {
   if (!(m.status === "recording" || m.live)) return null;
-  return h("aside", { class: "live-panel", "aria-label": "Coach" },
-    side ? h("h2", { class: "live-panel-title" }, "Coach") : null,
+  return h("aside", { class: "live-panel", "aria-label": "Live" },
+    side ? h("h2", { class: "live-panel-title" }, "Live") : null,
     coachLive(m),
+    side ? h("h3", { class: "live-panel-sub" }, "Ask the transcript") : null,
     side ? liveAssistant(m) : null);
 }
 
-// The Coach tab while it records (a narrow window): the talk in a sentence, then the live assistant.
-function liveCoachTab(m) {
-  const detail = h("p", { class: "coach-detail", role: "status" });
-  fillCoachDetail(detail, m);
-  return h("section", { class: "live-coach-tab" }, detail, liveAssistant(m));
-}
-
-function fillCoachDetail(el, m) {
-  const c = liveCoachFor(state.liveCoach, m);
-  const text = c ? [speakingText(c.talk), c.text, c.nudge?.text].filter(Boolean).join(" · ") : "";
-  if (el.textContent !== text) el.textContent = text;
+// The Ask tab while it records (a narrow window): the live assistant.
+function liveAskTab(m) {
+  return h("section", { class: "live-ask-tab" }, liveAssistant(m));
 }
 
 // The window made wider or narrower across LIVE_SIDE_PX while a recording is open: the page is laid out again.
@@ -2390,7 +2383,6 @@ function fillCoachLive(el, m) {
     h("span", { class: `coach-now ${c.talk?.speaking || "quiet"}` }, speakingText(c.talk)),
     typeof share === "number" ? h("span", { class: "coach-meter", "aria-hidden": "true", title: c.text || null },
       h("span", { style: `width:${Math.round(100 * Math.min(1, Math.max(0, share)))}%` })) : null,
-    c.text ? h("span", { class: "coach-talk" }, c.text) : null,
     c.nudge?.text ? h("span", { class: "coach-nudge", role: "status" }, c.nudge.text) : null,
   ].filter(Boolean) : []));
   const q = state.nextQuestion?.id === m.id ? state.nextQuestion : null;
@@ -2444,8 +2436,6 @@ function renderQuestions(q) {
 function refreshCoachLive() {
   const el = $("#main .coach-live");
   if (el && state.meeting) fillCoachLive(el, state.meeting);
-  const detail = $("#main .coach-detail");
-  if (detail && state.meeting) fillCoachDetail(detail, state.meeting);
 }
 
 // ``kind``: "questions" (Best next question) or "answer" (Best answer); the same model and the same second click.
@@ -3968,19 +3958,41 @@ function renderSeries() {
 const pct = (x) => (x == null ? "–" : `${Math.round(100 * x)} %`);
 const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
 
-// A moment in the meeting: click to hear it.
+// A moment in the meeting: click to hear it (while it records there is no audio to play yet: only the time).
 function at(seconds, label) {
+  if (state.coach?.live) return h("span", { class: "moment" }, label ?? clock(seconds));
   return h("button", { class: "link moment", title: "Play from here", onclick: () => seek(seconds, true) },
     label ?? clock(seconds));
 }
 
+// While it records, the Coach tab is asked again every LIVE_COACH_MS: what is transcribed so far grows.
+const LIVE_COACH_MS = 15000;
+let liveCoachLoading = false;
+setInterval(async () => {
+  const m = state.meeting;
+  if (liveCoachLoading || document.hidden || state.view !== "meetings" || state.tab !== "coach" || !m
+    || m.status !== "recording" || state.coach?.id !== m.id || Date.now() - (state.coach.at ?? 0) < LIVE_COACH_MS) return;
+  liveCoachLoading = true;
+  try {
+    const r = await api(`/api/meetings/${encodeURIComponent(m.id)}/coach`);
+    if (state.meeting?.id !== m.id) return;
+    state.coach = { ...r, id: m.id, at: Date.now() };
+    const shown = $("#main section.coach");
+    if (shown && state.tab === "coach") shown.replaceWith(renderCoach(m));
+  } catch {
+    // the next round tries again
+  } finally {
+    liveCoachLoading = false;
+  }
+}, 1000);
+
 function renderCoach(m) {
   const wrap = h("section", { class: "coach" });
   const c = state.coach;
-  if (!c || c.id !== m.id) {
+  if (!c || c.id !== m.id || (c.live && m.status !== "recording")) {
     wrap.append(h("p", { class: "notes-empty" }, "Looking at how you talked…"));
     api(`/api/meetings/${encodeURIComponent(m.id)}/coach`).then((r) => {
-      state.coach = { ...r, id: m.id };
+      state.coach = { ...r, id: m.id, at: Date.now() };
       if (state.meeting?.id === m.id && state.tab === "coach") renderMeeting();
     }).catch((err) => { wrap.replaceChildren(h("p", { class: "error" }, `Not available: ${err.message}`)); });
     return wrap;
@@ -3990,6 +4002,10 @@ function renderCoach(m) {
   const usualFillers = b.fillers_per_minute?.[c.language];
   const card = (title, ...body) => h("div", { class: "coach-card" }, h("h3", {}, title), ...body);
 
+  if (c.live) {
+    wrap.append(h("p", { class: "coach-live-note" }, h("span", { class: "live-dot", "aria-hidden": "true" }),
+      "Live: from what is transcribed so far, updated every 15 s."));
+  }
   if (c.highlights.length) {
     wrap.append(h("ul", { class: "coach-highlights" }, c.highlights.map((x) => h("li", {}, x))));
   } else {

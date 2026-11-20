@@ -136,10 +136,11 @@ public enum Coach {
     }
 
     /// The coach's numbers for one meeting. `invited`: invitees as named in the meeting; `names`: label → name of
-    /// the others.
+    /// the others; `lines`: my lines and the others' (by label) instead of transcript.json's (a meeting being recorded).
     public static func analyze(_ paths: RecordingPaths, userName: String, invited: [String] = [],
-                               names: PyDict<String> = PyDict(), stores: StorePaths = .current()) throws -> JSONValue {
-        let (mine, theirs) = try lanes(paths, userName: userName, stores: stores)
+                               names: PyDict<String> = PyDict(), stores: StorePaths = .current(),
+                               lines: (mine: [Utterance], theirs: [Utterance])? = nil) throws -> JSONValue {
+        let (mine, theirs) = try lines ?? lanes(paths, userName: userName, stores: stores)
         let atMic = SharedMic.micRoom(paths) != nil && !mine.isEmpty  // my track is several people's
         let sharedLabels = SharedMic.sharedLabels(paths)
         let shared = theirs.contains { sharedLabels.contains(ScalarKey($0.speaker)) } || atMic

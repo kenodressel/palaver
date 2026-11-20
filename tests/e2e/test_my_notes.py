@@ -323,9 +323,10 @@ def test_the_tabs_are_summary_notes_transcript_coach(page, app_server):
     expect(_pad(page)).to_be_visible()
     expect(page.locator("#main .notes")).to_have_count(0)
     goto(page, app_server, f"#/{LIVE}")
-    # While it records, the Coach tab holds the live coach in this window (1280 px); a wide one has it beside.
-    expect(page.locator("#main .tabs [role=tab]")).to_have_count(4)
-    assert _tab_names(page) == ["Summary", "Notes", "Transcript", "Coach"]
+    # While it records: the coach from what is transcribed so far, and in this window (1280 px) the live assistant's
+    # Ask tab (a wide one has it beside the meeting).
+    expect(page.locator("#main .tabs [role=tab]")).to_have_count(5)
+    assert _tab_names(page) == ["Summary", "Notes", "Transcript", "Coach", "Ask"]
     expect(page.get_by_role("tab", name="Transcript")).to_have_attribute("aria-selected", "true")
 
 

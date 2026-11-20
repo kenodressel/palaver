@@ -24,7 +24,7 @@ def test_the_coach_line_follows_the_daemon(page, app_server):
     goto(page, app_server, f"#/{LIVE}")
     line = page.locator("#main .coach-line")
     expect(line.locator(".coach-now")).to_have_text("You're talking")
-    expect(line.locator(".coach-talk")).to_have_text("You 72 % of the last 10 min · talking for 4:05")
+    expect(line.locator(".coach-meter")).to_have_attribute("title", "You 72 % of the last 10 min · talking for 4:05")
     expect(line.locator(".coach-nudge")).to_have_text("4-min monologue")
     app_server.recording.live_coach = {**COACH, "talk": {"speaking": "others"}, "text": "You 70 % of the last 10 min",
                                        "nudge": None}

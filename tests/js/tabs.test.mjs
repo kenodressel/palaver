@@ -8,10 +8,10 @@ import { meetingTabs, meetingTab, TAB_LABELS } from "../../web/logic.js";
 const ready = { status: "ready", notes: { summary: "…" }, my_notes_revision: "" };
 const live = { status: "recording", live: { until: 60 }, notes: null, my_notes_revision: "" };
 
-test("the tabs, in order; Coach only once the meeting is ready", () => {
+test("the tabs, in order; Coach once it records or is ready, Ask while it records in a narrow window", () => {
   assert.deepEqual(meetingTabs(ready), ["notes", "mine", "transcript", "coach"]);
-  assert.deepEqual(meetingTabs(live), ["notes", "mine", "transcript"]);
-  assert.deepEqual(meetingTabs(live, { liveCoach: true }), ["notes", "mine", "transcript", "coach"]);  // a narrow window
+  assert.deepEqual(meetingTabs(live), ["notes", "mine", "transcript", "coach"]);  // the coach from what is transcribed so far
+  assert.deepEqual(meetingTabs(live, { ask: true }), ["notes", "mine", "transcript", "coach", "ask"]);  // a narrow window
   assert.deepEqual(meetingTabs(ready).map((t) => TAB_LABELS[t]), ["Summary", "Notes", "Transcript", "Coach"]);
 });
 
@@ -33,7 +33,7 @@ test("the tab asked for (history, a link) wins when the meeting has it", () => {
   assert.equal(meetingTab(ready, { asked: "mine" }), "mine");
   assert.equal(meetingTab(ready, { asked: "notes" }), "notes");  // an old entry: the Summary
   assert.equal(meetingTab(ready, { asked: "coach" }), "coach");
-  assert.equal(meetingTab(live, { asked: "coach" }), "transcript");  // no coach while it records
+  assert.equal(meetingTab(live, { asked: "coach" }), "coach");  // the live coach
   assert.equal(meetingTab(ready, { asked: "nonsense" }), "notes");
 });
 

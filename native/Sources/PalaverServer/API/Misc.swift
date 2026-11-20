@@ -6,16 +6,44 @@ import PalaverDomain
 
 public enum CoachAPI {
     /// `coach_meeting`: how the user talked in one meeting, with what is usual for them and the few things worth saying.
+    /// While the meeting records: the same numbers from what the live worker has so far (`"live": true`).
     public static func meeting(_ app: ServerApp, _ id: String) throws -> JSONValue {
         let paths = try MeetingsAPI.meetingPaths(outputDir: app.outputDir, id: id)
-        guard MeetingsAPI.exists(paths.transcriptJson) else { throw NotFound(id) }
+        let recording = MeetingsAPI.exists(paths.live) && MeetingsAPI.state(paths) == "recording"
+        guard recording || MeetingsAPI.exists(paths.transcriptJson) else { throw NotFound(id) }
         let base = try Coach.baseline(Coach.history(app.outputDir, userName: app.userName, limit: Coach.BASELINE_MEETINGS,
                                                     stores: app.stores))
-        let r = try Coach.result(paths, userName: app.userName, stores: app.stores)
+        let r = recording ? try live(app, paths) : try Coach.result(paths, userName: app.userName, stores: app.stores)
         var out = PyDict<JSONValue>(r) ?? PyDict()
         out["baseline"] = base
         out["highlights"] = .array(try Coach.highlights(r, base).map { .string($0) })
+        out["live"] = .bool(recording)
         return out.json
+    }
+
+    /// The coach's numbers of a meeting being recorded: its live page's lines (mine have no label) and names.
+    static func live(_ app: ServerApp, _ paths: RecordingPaths) throws -> JSONValue {
+        let page = try LivePage.meeting(app: app, paths: paths)
+        var mine: [Utterance] = [], theirs: [Utterance] = []
+        for item in page["transcript"]?.arrayValue ?? [] {
+            guard let start = LivePage.number(item["start"]), let end = LivePage.number(item["end"]),
+                  let text = item["text"]?.stringValue, let speaker = item["speaker"]?.stringValue else { continue }
+            if let label = item["label"]?.stringValue, !label.isEmpty {
+                theirs.append(Utterance(speaker: label, start: start, end: end, text: text, label: label))
+            } else {
+                mine.append(Utterance(speaker: speaker, start: start, end: end, text: text))
+            }
+        }
+        var names = PyDict<String>()
+        for s in page["speakers"]?.arrayValue ?? [] {
+            if let label = s["label"]?.stringValue, let shown = s["display"]?.stringValue { names[label] = shown }
+        }
+        var seen = Set<ScalarKey>(), known: [String] = []
+        let voices = try VoiceBank(directory: app.stores.voices).names()
+        for name in names.values + voices.keys where seen.insert(ScalarKey(name)).inserted { known.append(name) }
+        let invited = CalendarEvents.invitedNames(paths, Py.stableSorted(known, by: Py.less), userName: app.userName) ?? []
+        return try Coach.analyze(paths, userName: app.userName, invited: invited, names: names, stores: app.stores,
+                                 lines: (mine, theirs))
     }
 
     /// `coach_overview`: every meeting's key numbers, newest first, and the averages.
