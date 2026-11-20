@@ -121,6 +121,8 @@ def test_without_a_model_the_button_is_off_and_says_why(page, app_server):
 
 def test_how_you_talk_over_time(page, shared_server):
     goto(page, shared_server, "#/coach")
+    # Below the charts (#43), folded away: the weeks and kinds as tables.
+    page.get_by_text("Weeks and kinds of meeting as tables").click()
     trends = page.get_by_role("region", name="Over time")
     expect(trends.locator(".trend-table").first.locator("th")).to_have_text(
         ["Week of", "Meetings", "You talked", "Words/min", "Fillers/min"])

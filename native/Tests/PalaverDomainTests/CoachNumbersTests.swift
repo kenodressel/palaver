@@ -75,6 +75,10 @@ import Testing
         #expect(dumps(r["interruptions"]?["by_me_at"]?.arrayValue?.first) == #"{"start": 228.0, "who": "Valerie"}"#)
         #expect(dumps(r["quiet_invitees"]) == #"[{"name": "Carla", "seconds": 0}]"#)
         #expect(r["language"] == .string("de"))
+        // Words: mine and everyone's (the overview's totals, #43).
+        let words = Self.LINES.map { Coach.words($0.3) }
+        #expect(r["words"]?["me"] == .int(words[0] + words[1] + words[3] + words[5]))
+        #expect(r["words"]?["all"] == .int(words.reduce(0, +)))
 
         // The highlights compare with what is usual.
         let said = try Coach.highlights(try Coach.analyze(p, userName: "Timo", stores: place.stores), Self.usual)
@@ -262,6 +266,7 @@ import Testing
         #expect(r["talk"]?["share"] == .null && r["talk"]?["at_mic"] == .bool(true) && r["monologues"] == .array([]))
         #expect(dumps(r["pace"]) == #"{"wpm": null, "fastest": null}"#)
         #expect(dumps(r["fillers"]) == #"{"per_minute": null, "top": [], "hesitations": null}"#)
+        #expect(r["words"]?["me"] == .null && r["words"]?["all"] != .int(0))  // the room's words are not mine
     }
 
     @Test func test_the_coach_says_a_room_cut_in_not_a_label() throws {

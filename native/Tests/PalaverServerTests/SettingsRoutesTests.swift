@@ -164,7 +164,7 @@ private final class QuietProvider: ProviderHelper {
         #expect(r.status == 200)
         #expect(r.json?["baseline"]?["meetings"] == .int(1) && r.json?["highlights"]?.arrayValue?.isEmpty == false)
         guard case .object(let fields)? = r.json else { Issue.record("\(r.text)"); return }
-        #expect(fields.suffix(2).map(\.0) == ["baseline", "highlights"])  // after the numbers
+        #expect(fields.suffix(3).map(\.0) == ["baseline", "highlights", "live"])  // after the numbers
         r = s.get("/api/coach")
         #expect(r.status == 200)
         let row = try #require(r.json?["meetings"]?.arrayValue?.first)
@@ -176,6 +176,60 @@ private final class QuietProvider: ProviderHelper {
         ])])))
         #expect(r.json?["trends"]?["kinds"]?.arrayValue?.map { $0["kind"] } == [.string("1:1")])
         #expect(r.json?["baseline"]?["meetings"] == .int(1))
+    }
+
+    /// The overview's numbers for the charts (#43): per meeting its length, words, people and glossary terms; the
+    /// totals; the share by meeting size.
+    @Test func theOverviewHasWhatTheChartsNeed() throws {
+        let s = try TestServer(userName: "Timo", meetings: { root in
+            try coachMeeting(root, "2026-10-27T10-00-00")
+            try coachMeeting(root, "2026-10-28T10-00-00")
+        })
+        defer { s.stop() }
+        try write(s.app.stores.glossary, #"{"terms": {"t1": {"term": "Budget", "variants": ["Bucket"], "note": ""}}, "rejected": []}"#)
+        let r = s.get("/api/coach")
+        #expect(r.status == 200)
+        let rows = try #require(r.json?["meetings"]?.arrayValue)
+        #expect(rows.map { $0["id"] } == [.string("2026-10-28T10-00-00"), .string("2026-10-27T10-00-00")])
+        let row = rows[0]
+        let mine = ["Also ich habe das halt irgendwie quasi so gedacht, halt ganz anders und irgendwie besser.",
+                    "Und dann halt nochmal, weil das halt wichtig ist und ich das so sehe, ähm, genau.",
+                    "Das Budget klären wir morgen mit dem Team, ganz sicher.", "Wie siehst du das?"]
+        let theirs = ["Okay, verstehe ich, und was machen wir mit dem Budget, das ist ja noch offen?", "Ja.",
+                      "Ich finde das gut, wir sollten aber die Kosten im Blick behalten."]
+        let said = mine.reduce(0) { $0 + Coach.words($1) }, all = said + theirs.reduce(0) { $0 + Coach.words($1) }
+        #expect(row["kind"] == .string("1:1") && row["fair"] == .double(0.5) && row["duration"] == .int(900))
+        #expect(row["words"] == .int(said) && row["words_all"] == .int(all))
+        #expect(row["cut_off"] == .int(0) && row["monologues"] == .int(1) && row["minutes_talked"] == .double(3.6))
+        #expect(row["names"] == .array([]) && row["projects"] == .array([]) && row["series"] == .null)
+        #expect(dumps(row["terms"]) == #"[{"term": "Budget", "count": 2}]"#)
+        let totals = try #require(r.json?["totals"])
+        #expect(totals["meetings"] == .int(2) && totals["seconds"] == .int(1800) && totals["talked_seconds"] == .int(432))
+        #expect(totals["words"] == .int(2 * said) && totals["words_all"] == .int(2 * all))
+        #expect(totals["longest"]?["id"] == .string("2026-10-27T10-00-00") && totals["longest"]?["seconds"] == .int(900))
+        #expect(dumps(r.json?["by_size"]) == #"[{"size": "2", "meetings": 2, "share": 0.807, "fair": 0.5}]"#)
+    }
+
+    @Test func theTotalsCountThePeopleMetMostAndTheSizesGoUpToFivePlus() throws {
+        func row(_ id: String, people: Int, share: JSONValue, fair: JSONValue, names: [String], duration: Int) -> JSONValue {
+            .object([("id", .string(id)), ("title", .string("Meeting \(id)")), ("people", .int(people)), ("share", share),
+                     ("fair", fair), ("names", .strings(names)), ("duration", .int(duration)),
+                     ("minutes_talked", .double(1.5)), ("words", .int(10)), ("words_all", .int(30))])
+        }
+        let rows = [  // newest first, as the overview has them
+            row("d", people: 10, share: .double(0.1), fair: .double(0.1), names: ["Valerie", "Carla"], duration: 600),
+            row("c", people: 5, share: .double(0.3), fair: .double(0.2), names: ["Carla"], duration: 1200),
+            row("b", people: 3, share: .null, fair: .null, names: ["Valerie"], duration: 1200),
+            row("a", people: 2, share: .double(0.5), fair: .double(0.5), names: ["Dana"], duration: 300),
+        ]
+        let totals = CoachAPI.totals(rows)
+        #expect(totals["longest"]?["id"] == .string("b"))  // the first of the longest
+        #expect(dumps(totals["people"])
+            == #"[{"name": "Valerie", "meetings": 2}, {"name": "Carla", "meetings": 2}, {"name": "Dana", "meetings": 1}]"#)
+        #expect(totals["seconds"] == .int(3300) && totals["talked_seconds"] == .int(360) && totals["words_all"] == .int(120))
+        // A meeting without a share (a shared microphone) is left out; 5 and 10 people are both 5+.
+        #expect(dumps(try CoachAPI.bySize(rows)) == #"[{"size": "2", "meetings": 1, "share": 0.5, "fair": 0.5}, "#
+            + #"{"size": "5+", "meetings": 2, "share": 0.2, "fair": 0.15}]"#)
     }
 
     @Test func aMeetingWithoutATranscriptHasNoCoachPage() throws {

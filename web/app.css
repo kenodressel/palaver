@@ -1057,6 +1057,95 @@ button.series-chip:hover .link-title { text-decoration: underline; }
 .trend-bar { display: inline-block; width: 90px; height: 8px; border-radius: 4px; background: var(--hover); overflow: hidden; }
 .trend-bar > span { display: block; height: 100%; border-radius: 0 4px 4px 0; background: var(--you); }
 .trend-value { min-width: 3.2em; color: var(--ink); }
+.coach-tables { margin: 24px 0 0; }
+.coach-tables > summary { cursor: pointer; color: var(--ink-2); font-size: 13px; font-weight: 600; }
+
+/* The coach's statistics (#43): stat tiles, then charts in cards. The user's numbers are violet (--you), the
+   rest stays in the inks; grid lines are hairlines one step off the card. */
+.coach-stats { margin: 20px 0 8px; }
+.coach-stats h2 { margin: 32px 0 12px; }
+.stat-row { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 1260px) { .stat-row { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.stat-tile { min-width: 0; padding: 16px; border-radius: 20px; background: var(--surface); }
+.stat-label { color: var(--ink-2); font-size: 13px; font-weight: 600; }
+.stat-value { margin: 4px 0; font: 800 24px/1.1 var(--display); letter-spacing: -0.02em; }
+.stat-sub { display: block; max-width: 100%; padding: 0; color: var(--ink-3); font-size: 12px; line-height: 1.35;
+  text-align: left; overflow-wrap: anywhere; }
+.stat-tile:first-child { background: var(--ink); color: var(--paper); }
+.stat-tile:first-child :is(.stat-label, .stat-sub) { color: var(--paper); opacity: 0.75; }
+.stat-grid { display: grid; gap: 12px; }
+.stat-grid.two { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.stat-grid.three { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.stat-card { min-width: 0; padding: 20px; border-radius: var(--card); background: var(--surface); }
+.coach-stats > .stat-card { margin-top: 12px; }
+.coach-stats > h2 + .stat-card { margin-top: 0; }
+.stat-card h3 { margin: 0; font: 700 15px/1.3 var(--sans); }
+.stat-card > .meta { margin: 4px 0 12px; font-size: 12px; }
+.stat-card > h3 + .chart { margin-top: 12px; }
+.chart-empty { margin: 12px 0 0; }
+
+.chart { position: relative; width: 100%; }
+.chart svg { display: block; overflow: visible; touch-action: none; cursor: pointer; }
+.chart svg:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; border-radius: 4px; }
+.chart-grid line { stroke: var(--rule); stroke-width: 1; }
+.chart-grid text, .chart-axis { fill: var(--ink-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.chart-base { stroke: var(--ink-3); stroke-width: 1; }
+.chart-usual { stroke: var(--ink-2); stroke-width: 1.5; }
+.chart-ref-label { fill: var(--ink-2); font-size: 11px; font-weight: 600; paint-order: stroke; stroke: var(--surface);
+  stroke-width: 4px; stroke-linejoin: round; }
+.chart-dot { fill: color-mix(in srgb, var(--you) 40%, var(--surface)); stroke: var(--surface); stroke-width: 2; }
+.chart-line { fill: none; stroke: var(--you); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart-cross { stroke: var(--ink-3); stroke-width: 1; pointer-events: none; }
+.chart-active { fill: var(--you); stroke: var(--surface); stroke-width: 2; pointer-events: none; }
+.chart-tip { position: absolute; z-index: 2; display: flex; flex-direction: column; gap: 2px; max-width: 260px;
+  padding: 8px 12px; border-radius: 8px; background: var(--ink); color: var(--paper); font-size: 12px; line-height: 1.35;
+  pointer-events: none; box-shadow: 0 4px 16px var(--lift); }
+.chart-tip[hidden] { display: none; }
+.chart-tip strong { font-size: 14px; }
+.chart-tip span { opacity: 0.8; }
+
+.size-meters { margin: 0; padding: 0; list-style: none; }
+.size-meters li { display: grid; grid-template-columns: 5.5em minmax(60px, 1fr) 3.2em auto; grid-template-areas:
+  "name track value spark" "name meta meta spark"; align-items: center; column-gap: 12px; padding: 8px 0;
+  border-bottom: 1px solid var(--rule); }
+.size-meters li:last-child { border-bottom: 0; }
+.size-name { grid-area: name; font-weight: 650; font-size: 14px; }
+.size-track { grid-area: track; position: relative; height: 8px; border-radius: 4px;
+  background: color-mix(in srgb, var(--you) 14%, var(--surface)); }
+.size-fill { display: block; height: 100%; border-radius: 4px; background: var(--you); }
+.size-fair { position: absolute; top: -4px; width: 2px; height: 16px; margin-left: -1px; border-radius: 1px; background: var(--ink); }
+.size-value { grid-area: value; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
+.size-meta { grid-area: meta; font-size: 12px; }
+.sparkline { grid-area: spark; display: block; width: 112px; height: 28px; overflow: visible; }
+.spark-fair { stroke: var(--rule); stroke-width: 1; }
+.spark-line { fill: none; stroke: var(--ink-3); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.spark-dot { fill: var(--ink-3); stroke: var(--surface); stroke-width: 2; }
+.spark-dot.last { fill: var(--you); }
+@media (max-width: 1100px) { .sparkline { display: none; } }
+
+.records { margin: 12px 0 0; padding: 0; list-style: none; }
+.records li { display: grid; gap: 0; padding: 8px 0; border-bottom: 1px solid var(--rule); }
+.records li:last-child { border-bottom: 0; }
+.record-label { color: var(--ink-2); font-size: 12px; font-weight: 600; }
+.record-value { justify-self: start; font-weight: 700; font-variant-numeric: tabular-nums; }
+.record-where { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+
+.people-bars { margin: 12px 0 0; padding: 0; list-style: none; }
+.people-bars li { display: grid; grid-template-columns: minmax(6em, 12em) 1fr 2.5em; align-items: center; gap: 12px; padding: 4px 0; }
+.people-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.people-track { height: 8px; }
+.people-track > span { display: block; height: 100%; border-radius: 0 4px 4px 0; background: var(--you); }
+.people-count { font-variant-numeric: tabular-nums; text-align: right; color: var(--ink-2); font-size: 13px; }
+
+.heat-grid { width: 100%; margin-top: 12px; border-collapse: separate; border-spacing: 2px; table-layout: fixed;
+  font-size: 12px; font-variant-numeric: tabular-nums; }
+.heat-grid caption { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.heat-grid th { color: var(--ink-3); font-weight: 600; text-align: center; padding: 2px; }
+.heat-grid th[scope="row"] { width: 40%; overflow: hidden; color: var(--ink); text-align: left; text-overflow: ellipsis;
+  white-space: nowrap; font-weight: 550; }
+.heat-grid td { height: 28px; border-radius: 4px; color: var(--ink); text-align: center;
+  background: color-mix(in srgb, var(--you) var(--level, 0%), var(--hover)); }
+.heat-grid td.strong { color: var(--on-color); font-weight: 700; }
 
 /* Prep */
 

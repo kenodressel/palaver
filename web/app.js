@@ -27,6 +27,9 @@ import { meetingTime, parseNote } from "./mynotes-logic.js";
 // The live assistant (#15).
 import { ASSISTANT_KINDS, ASSISTANT_MINUTES, assistantModelText, assistantButton, catchupTitle, nextStepsTitle, nextStepText,
   quoteText, assistantEmptyText } from "./logic.js";
+// The coach's statistics page (#43).
+import { coachPoints, coachWeeks, balanceWeeks, coachStreaks, coachRecords, sizeTrend, topicsByMonth, niceTicks,
+  compactNumber, hoursText } from "./logic.js";
 // Today, Needs you and the ⌘K palette (UI spec, phase 2).
 import { needsSummary, needCards, needQuestion, startsInText, cutAtPointer, navCount, paletteMatch, paletteCommands,
   paletteRecent, paletteRecentShown, labelDisplay, meetingTabs, meetingTab, TAB_LABELS } from "./logic.js";
@@ -4071,24 +4074,309 @@ async function openCoach(how = "push") {
   }
   if (movedOn(here)) return;
   const b = d.baseline;
+  const points = coachPoints(d.meetings);
+  const trends = renderTrends(d.trends, b);
   const page = h("article", { class: "meeting coach-overview" }, h("h1", {}, "How you talk"),
     h("p", { class: "lede" }, `Across ${b.meetings} meetings: you talk ${pct(b.share_1on1)} in 1:1s and ${pct(b.share_group)} in groups, `
       + `${b.wpm ? Math.round(b.wpm) : "–"} words a minute, `
       + `${b.fillers_per_minute?.de != null ? b.fillers_per_minute.de.toFixed(1) : "–"} filler words a minute in German.`),
-    renderTrends(d.trends, b),
+    points.length ? coachStats(d, points) : null,
+    trends ? h("details", { class: "coach-tables" }, h("summary", {}, "Weeks and kinds of meeting as tables"), trends) : null,
     h("h2", {}, "Meetings"),
     h("table", { class: "coach-table" },
       h("thead", {}, h("tr", {}, ["Meeting", "People", "You", "Words/min", "Fillers/min", "Longest", "Questions", "Cut in"]
         .map((x) => h("th", {}, x)))),
-      h("tbody", {}, d.meetings.map((r) => h("tr", { onclick: () => { setTab("coach"); openMeeting(r.id); } },
+      h("tbody", {}, d.meetings.map((r) => h("tr", { onclick: () => openCoachOf(r.id) },
         // The title is the row's button, so the keyboard reaches it too (the row's click does the same).
         h("td", {}, h("button", { type: "button", class: "link item-title",
-          onclick: (e) => { e.stopPropagation(); setTab("coach"); openMeeting(r.id); } }, r.title || r.id),
+          onclick: (e) => { e.stopPropagation(); openCoachOf(r.id); } }, r.title || r.id),
           h("span", { class: "meta" }, r.start ? `${dayFmt.format(new Date(r.start))}, ${timeFmt.format(new Date(r.start))}` : "")),
         h("td", {}, r.people), h("td", {}, pct(r.share)), h("td", {}, r.wpm ?? "–"),
         h("td", {}, r.fillers != null ? r.fillers.toFixed(1) : "–"), h("td", {}, r.longest ? mmss(r.longest) : "–"),
         h("td", {}, r.questions), h("td", {}, r.interruptions))))));
   $("#main").replaceChildren(page);
+}
+
+// A meeting of the coach's page opens on its Coach tab.
+function openCoachOf(id) {
+  setTab("coach");
+  openMeeting(id);
+}
+
+// --- the coach's statistics (#43): stat tiles, charts drawn as SVG in the page, highlights and topics ---------------
+
+const DAY = 86400000;
+const monthFmt = new Intl.DateTimeFormat(undefined, { month: "short" });
+const monthYearFmt = new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" });
+const shortDateFmt = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" });
+const weekStart = (week) => new Date(`${week}T12:00:00`);
+const monthLabel = (month, fmt = monthFmt) => fmt.format(new Date(`${month}-15T12:00:00`));
+const signed = (x) => `${x > 0 ? "+" : x < 0 ? "−" : ""}${Math.abs(Math.round(x))}`;
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+// How far from the fair share, in points of the share of talk time.
+const overText = (over) => (over == null ? "–" : Math.abs(over) < 0.005 ? "at the fair share"
+  : `${Math.abs(Math.round(100 * over))} % ${over > 0 ? "above" : "below"} fair`);
+
+function svg(tag, attrs = {}, ...children) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v == null || v === false) continue;
+    if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v);
+  }
+  for (const c of children.flat()) {
+    if (c != null && c !== false) el.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+  return el;
+}
+
+// A chart drawn for the width it has, and again when that changes: `draw(width)` gives its elements.
+function chartBox(cls, draw) {
+  const box = h("div", { class: `chart ${cls}` });
+  let drawn = 0;
+  const paint = (width) => {
+    if (width < 40 || Math.abs(width - drawn) < 1) return;
+    drawn = width;
+    box.replaceChildren(...[draw(width)].flat());
+  };
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver((entries) => paint(Math.floor(entries[0].contentRect.width))).observe(box);
+  }
+  requestAnimationFrame(() => paint(Math.floor(box.clientWidth)));
+  return box;
+}
+
+// The tooltip of a chart: the value first, what it is below. Text only (titles are data).
+function chartTip() {
+  const tip = h("div", { class: "chart-tip", hidden: true });
+  tip.show = (x, y, width, value, ...lines) => {
+    tip.replaceChildren(h("strong", {}, value), ...lines.filter(Boolean).map((l) => h("span", {}, l)));
+    tip.hidden = false;
+    const w = tip.offsetWidth;
+    tip.style.left = `${x + 12 + w > width ? Math.max(0, x - 12 - w) : x + 12}px`;
+    tip.style.top = `${Math.max(0, y - tip.offsetHeight - 8)}px`;
+  };
+  tip.hide = () => { tip.hidden = true; };
+  return tip;
+}
+
+// One measure over time: each meeting a dot (a click opens it), the week's mean as the line, what is usual as a
+// labelled level. The pointer (or the arrow keys) picks the nearest meeting; Enter opens it.
+function timeChart({ label, points, value, weeks, weekValue, format, usual = null, usualLabel = "usual", zero = null,
+  zeroLabel = null, height = 200, tickFormat = (v) => String(v) }) {
+  const shown = points.filter((r) => value(r) != null);
+  const line = weeks.filter((w) => weekValue(w) != null);
+  if (!shown.length) return h("p", { class: "meta chart-empty" }, "Not enough meetings yet.");
+  return chartBox("time-chart", (width) => {
+    const m = { left: 40, right: 16, top: 16, bottom: 24 };
+    const plotW = width - m.left - m.right, plotH = height - m.top - m.bottom;
+    let t0 = Math.min(...shown.map((r) => r.t)), t1 = Math.max(...shown.map((r) => r.t));
+    if (t1 - t0 < 14 * DAY) { t0 -= 7 * DAY; t1 += 7 * DAY; }
+    const values = [...shown.map(value), ...line.map(weekValue), usual, zero].filter((v) => v != null);
+    const ticks = niceTicks(Math.min(...values), Math.max(...values), height > 180 ? 4 : 3);
+    const lo = ticks[0], hi = ticks[ticks.length - 1];
+    const x = (t) => m.left + ((t - t0) / (t1 - t0)) * plotW;
+    const y = (v) => m.top + (hi === lo ? plotH / 2 : (1 - (v - lo) / (hi - lo)) * plotH);
+    // The months along the bottom: as many as fit, January as its year.
+    const months = [];
+    for (let at = new Date(new Date(t0).getFullYear(), new Date(t0).getMonth() + 1, 1); at.getTime() <= t1;
+      at = new Date(at.getFullYear(), at.getMonth() + 1, 1)) months.push(at);
+    const every = Math.max(1, Math.ceil(months.length / Math.max(1, Math.floor(plotW / 56))));
+    const tip = chartTip();
+    const cross = svg("line", { class: "chart-cross", y1: m.top, y2: m.top + plotH, visibility: "hidden" });
+    const ring = svg("circle", { class: "chart-active", r: 6, visibility: "hidden" });
+    let active = -1;
+    const pick = (i) => {
+      active = i;
+      if (i < 0) {
+        for (const el of [cross, ring]) el.setAttribute("visibility", "hidden");
+        tip.hide();
+        return;
+      }
+      const r = shown[i], px = x(r.t), py = y(value(r));
+      cross.setAttribute("x1", px); cross.setAttribute("x2", px);
+      ring.setAttribute("cx", px); ring.setAttribute("cy", py);
+      for (const el of [cross, ring]) el.setAttribute("visibility", "visible");
+      const w = weeks.find((k) => k.week === r.week);
+      tip.show(px, py, width, format(value(r)), r.title || r.id,
+        r.start ? `${dayFmt.format(new Date(r.start))}, ${timeFmt.format(new Date(r.start))}` : null,
+        w && weekValue(w) != null ? `Week of ${shortDateFmt.format(weekStart(w.week))}: ${format(weekValue(w))}` : null);
+    };
+    const nearest = (px) => {
+      let best = -1, dist = Infinity;
+      shown.forEach((r, i) => {
+        const dd = Math.abs(x(r.t) - px);
+        if (dd < dist) { dist = dd; best = i; }
+      });
+      return best;
+    };
+    const at = (e) => e.clientX - e.currentTarget.getBoundingClientRect().left;
+    const chart = svg("svg", { width, height, viewBox: `0 0 ${width} ${height}`, role: "group", tabindex: 0,
+      "aria-label": `${label}: ${plural(shown.length, "meeting", "meetings")}. The arrow keys go through them, Enter opens one.`,
+      onpointermove: (e) => pick(nearest(at(e))),
+      onpointerleave: () => pick(-1),
+      onblur: () => pick(-1),
+      onclick: (e) => {
+        const i = nearest(at(e));
+        if (i >= 0) openCoachOf(shown[i].id);
+      },
+      onkeydown: (e) => {
+        if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+          e.preventDefault();
+          const step = e.key === "ArrowRight" ? 1 : -1;
+          pick(Math.max(0, Math.min(shown.length - 1, active < 0 ? shown.length - 1 : active + step)));
+        } else if (e.key === "Enter" && active >= 0) openCoachOf(shown[active].id);
+        else if (e.key === "Escape") pick(-1);
+      } },
+      ticks.map((v) => svg("g", { class: "chart-grid" },
+        svg("line", { x1: m.left, x2: m.left + plotW, y1: y(v), y2: y(v) }),
+        svg("text", { x: m.left - 8, y: y(v), dy: "0.32em", "text-anchor": "end" }, tickFormat(v)))),
+      months.filter((_, i) => i % every === 0).map((d) => svg("text", { class: "chart-axis", x: x(d.getTime()),
+        y: height - 6, "text-anchor": "middle" }, d.getMonth() === 0 ? String(d.getFullYear()) : monthFmt.format(d))),
+      zero != null ? svg("line", { class: "chart-base", x1: m.left, x2: m.left + plotW, y1: y(zero), y2: y(zero) }) : null,
+      zero != null && zeroLabel ? svg("text", { class: "chart-ref-label", x: m.left + plotW, y: y(zero) - 6,
+        "text-anchor": "end" }, zeroLabel) : null,
+      usual != null ? svg("line", { class: "chart-usual", x1: m.left, x2: m.left + plotW, y1: y(usual), y2: y(usual) }) : null,
+      usual != null ? svg("text", { class: "chart-ref-label", x: m.left + plotW, y: y(usual) - 6, "text-anchor": "end" },
+        `${usualLabel}: ${format(usual)}`) : null,
+      shown.map((r) => svg("circle", { class: "chart-dot", cx: x(r.t), cy: y(value(r)), r: 4 })),
+      line.length > 1 ? svg("polyline", { class: "chart-line",
+        points: line.map((w) => `${x(w.t)},${y(weekValue(w))}`).join(" ") }) : null,
+      cross, ring);
+    return [chart, tip];
+  });
+}
+
+// A small line of the user's share per month for one meeting size, over its fair share.
+function sparkline(months, fair) {
+  const W = 112, H = 28, known = months.map((x, i) => [i, x.share]).filter(([, s]) => s != null);
+  const x = (i) => 4 + (months.length > 1 ? (i / (months.length - 1)) * (W - 8) : (W - 8) / 2);
+  const y = (s) => H - 4 - Math.max(0, Math.min(1, s)) * (H - 8);
+  return svg("svg", { class: "sparkline", width: W, height: H, viewBox: `0 0 ${W} ${H}` },
+    fair != null ? svg("line", { class: "spark-fair", x1: 0, x2: W, y1: y(fair), y2: y(fair) }) : null,
+    known.length > 1 ? svg("polyline", { class: "spark-line", points: known.map(([i, s]) => `${x(i)},${y(s)}`).join(" ") }) : null,
+    known.map(([i, s], k) => svg("circle", { class: k === known.length - 1 ? "spark-dot last" : "spark-dot", cx: x(i), cy: y(s), r: 4 },
+      svg("title", {}, `${monthLabel(months[i].month, monthYearFmt)}: ${pct(s)} in ${plural(months[i].meetings, "meeting", "meetings")}`))));
+}
+
+const SIZE_NAMES = { 2: "1:1s", 3: "3 people", 4: "4 people", "5+": "5 or more" };
+
+// The user's share by meeting size against the fair share: a bar each, and its months as a small line.
+function sizeMeters(bySize, trend) {
+  if (!bySize?.length) return h("p", { class: "meta chart-empty" }, "No meeting with a talk share yet.");
+  return h("ul", { class: "size-meters" }, bySize.map((s) => h("li", {
+    title: `${SIZE_NAMES[s.size]}: you talked ${pct(s.share)}, a fair share is ${pct(s.fair)} (${plural(s.meetings, "meeting", "meetings")})` },
+    h("span", { class: "size-name" }, SIZE_NAMES[s.size]),
+    h("span", { class: "size-track", "aria-hidden": "true" },
+      h("span", { class: "size-fill", style: `width:${Math.round(100 * (s.share ?? 0))}%` }),
+      h("span", { class: "size-fair", style: `left:${Math.round(100 * (s.fair ?? 0))}%` })),
+    h("span", { class: "size-value" }, pct(s.share)),
+    h("span", { class: "size-meta meta" }, `fair ${pct(s.fair)} · ${plural(s.meetings, "meeting", "meetings")}`),
+    trend.sizes[s.size] && trend.months.length > 1 ? sparkline(trend.sizes[s.size], s.fair) : h("span", { class: "sparkline" }))));
+}
+
+// A stat tile: what it counts, the number, a line about it; one that names a meeting opens it.
+function statTile(label, value, sub, id = null) {
+  return h("div", { class: "stat-tile" }, h("div", { class: "stat-label" }, label), h("div", { class: "stat-value" }, value),
+    id ? h("button", { type: "button", class: "link stat-sub", onclick: () => openCoachOf(id) }, sub) : h("div", { class: "stat-sub" }, sub));
+}
+
+// A count per row and month as a grid: the darker, the more (one hue). It is its own table view.
+function heatGrid(caption, months, rows, unit) {
+  const max = Math.max(1, ...rows.flatMap((r) => r.counts));
+  return h("table", { class: "heat-grid" }, h("caption", {}, caption),
+    h("thead", {}, h("tr", {}, h("th", {}, ""), months.map((mo) => h("th", { scope: "col" }, monthLabel(mo))))),
+    h("tbody", {}, rows.map((r) => h("tr", {}, h("th", { scope: "row", title: r.name }, r.name), r.counts.map((n, i) => {
+      const level = n ? 0.18 + 0.82 * (n / max) : 0;
+      return h("td", { class: level > 0.55 ? "strong" : null, style: n ? `--level:${Math.round(100 * level)}%` : null,
+        title: `${r.name}, ${monthLabel(months[i], monthYearFmt)}: ${plural(n, unit[0], unit[1])}` }, n || "");
+    })))));
+}
+
+function coachStats(d, points) {
+  const b = d.baseline, t = d.totals || {};
+  const weeks = coachWeeks(points);
+  const streaks = coachStreaks(points);
+  const records = coachRecords(points);
+  const { best, worst } = balanceWeeks(weeks);
+  const topics = topicsByMonth(points);
+  const usualWpm = b.wpm ? Math.round(b.wpm) : null;
+  const card = (title, sub, ...body) => h("section", { class: "stat-card" }, h("h3", {}, title),
+    sub ? h("p", { class: "meta" }, sub) : null, ...body);
+  const weekLine = (w) => (w ? [h("span", { class: "record-value" }, overText(w.over)),
+    h("span", { class: "meta" }, `Week of ${shortDateFmt.format(weekStart(w.week))} · ${plural(w.meetings, "meeting", "meetings")}`)] : "–");
+  const record = (label, r, text) => h("li", {}, h("span", { class: "record-label" }, label),
+    r ? h("button", { type: "button", class: "link record-value", onclick: () => openCoachOf(r.id) }, text(r.value))
+      : h("span", { class: "record-value" }, "–"),
+    r ? h("span", { class: "meta record-where" }, r.title || r.id) : null);
+  const people = t.people || [];
+  const mostMet = Math.max(1, ...people.map((p) => p.meetings));
+  const dots = "Each dot a meeting (click one to open it), the line the week's mean.";
+
+  return h("div", { class: "coach-stats" },
+    h("div", { class: "stat-row" },
+      statTile("Meetings", compactNumber(t.meetings ?? points.length), `since ${shortDateFmt.format(new Date(points[0].start))}`),
+      statTile("Recorded", hoursText(t.seconds), `you talked ${hoursText(t.talked_seconds)}`),
+      statTile("Words you said", compactNumber(t.words), `of ${compactNumber(t.words_all)} in all`
+        + (t.words_all ? ` · ${pct(t.words / t.words_all)}` : "")),
+      statTile("Your pace", usualWpm ?? "–", "words a minute, usual"),
+      statTile("Longest meeting", t.longest ? hoursText(t.longest.seconds) : "–", t.longest ? (t.longest.title || t.longest.id) : "",
+        t.longest?.id),
+      statTile("Week streak", streaks.weeks, `weeks in a row · best ${streaks.longestWeeks}`)),
+
+    h("h2", {}, "Talk share"),
+    h("div", { class: "stat-grid two" },
+      card("By meeting size", "Your share, the mark a fair one; the small line is your share month by month.",
+        sizeMeters(d.by_size, sizeTrend(points))),
+      card("Above or below your fair share", dots,
+        timeChart({ label: "Talk share against the fair share", points, value: (r) => (r.over == null ? null : 100 * r.over),
+          weeks, weekValue: (w) => (w.over == null ? null : 100 * w.over), zero: 0, zeroLabel: "fair share",
+          format: (v) => overText(v / 100), tickFormat: (v) => (v === 0 ? "0" : signed(v)) }))),
+
+    h("h2", {}, "Pace"),
+    card("Words a minute", `${dots} Meetings where you talked under 3 minutes are left out of the line.`,
+      timeChart({ label: "Words a minute", points, value: (r) => r.wpm, weeks, weekValue: (w) => w.wpm,
+        usual: usualWpm, usualLabel: "your usual", format: (v) => `${Math.round(v)} words a minute`, height: 240 })),
+
+    h("h2", {}, "Filler words, questions, interruptions"),
+    h("div", { class: "stat-grid three" },
+      card("Filler words a minute", null, timeChart({ label: "Filler words a minute", points, value: (r) => r.fillers, weeks,
+        weekValue: (w) => w.fillers, usual: b.fillers_per_minute?.de ?? null, usualLabel: "usual in German",
+        format: (v) => `${v.toFixed(1)} a minute`, height: 160 })),
+      card("Questions an hour", null, timeChart({ label: "Questions an hour", points, value: (r) => r.questions_per_hour,
+        weeks, weekValue: (w) => w.questions, usual: b.questions_per_hour ?? null,
+        format: (v) => `${Math.round(v)} an hour`, height: 160 })),
+      card("Times you cut in", null, timeChart({ label: "Times you cut in", points, value: (r) => r.interruptions, weeks,
+        weekValue: (w) => w.cutIns, format: (v) => `${Math.round(v * 10) / 10}× a meeting`, height: 160 }))),
+
+    h("h2", {}, "Highlights"),
+    h("div", { class: "stat-grid three" },
+      card("Weeks", "Balanced: your share close to a fair one.", h("ul", { class: "records" },
+        h("li", {}, h("span", { class: "record-label" }, "Most balanced"), weekLine(best)),
+        h("li", {}, h("span", { class: "record-label" }, "Least balanced"), weekLine(worst)))),
+      card("Records", null, h("ul", { class: "records" },
+        record("Fastest pace", records.pace, (v) => `${v} words a minute`),
+        record("Fastest stretch", records.stretch, (v) => `${v} words a minute`),
+        record("Longest monologue", records.monologue, (v) => mmss(v)),
+        record("Most questions", records.questions, (v) => plural(v, "question", "questions")))),
+      card("Streaks", null, h("ul", { class: "records" },
+        h("li", {}, h("span", { class: "record-label" }, "Weeks with meetings, in a row"),
+          h("span", { class: "record-value" }, `${streaks.weeks} now`), h("span", { class: "meta" }, `longest ${streaks.longestWeeks}`)),
+        h("li", {}, h("span", { class: "record-label" }, "Meetings at or under your fair share, in a row"),
+          h("span", { class: "record-value" }, `${streaks.fair} now`), h("span", { class: "meta" }, `longest ${streaks.fairLongest}`))))),
+
+    people.length ? card("Who you meet most", "Meetings with each of them.", h("ul", { class: "people-bars" }, people.map((p) => h("li", {},
+      h("span", { class: "people-name" }, p.name),
+      h("span", { class: "people-track", "aria-hidden": "true" }, h("span", { style: `width:${Math.round(100 * p.meetings / mostMet)}%` })),
+      h("span", { class: "people-count" }, p.meetings))))) : null,
+
+    h("h2", {}, "Topics"),
+    topics.topics.length || topics.terms.length ? h("div", { class: "stat-grid two" },
+      topics.topics.length ? card("Projects and series", "Meetings a month.",
+        heatGrid("Meetings per project or series and month", topics.months, topics.topics, ["meeting", "meetings"])) : null,
+      topics.terms.length ? card("Words from your glossary", "How often they were said, a month.",
+        heatGrid("Glossary terms said per month", topics.months, topics.terms, ["time", "times"])) : null)
+      : h("p", { class: "meta" }, "Put meetings in projects or series, or add terms to the glossary, to see what they were about."));
 }
 
 // How the user's talking changed: per week and per kind of meeting (#41). The live coach's nudges compare

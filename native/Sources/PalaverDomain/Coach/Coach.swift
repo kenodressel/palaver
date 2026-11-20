@@ -265,6 +265,9 @@ public enum Coach {
             ("language", .string(german >= english ? "de" : "en")),
             ("quiet_invitees", .array(quiet)),
             ("minutes_talked", rounded(minutes, 1)),
+            // Words said: mine (unknown when several people sat at my microphone) and everyone's (#43).
+            ("words", .object([("me", atMic ? .null : .int(words)),
+                               ("all", .int(words + theirs.reduce(0) { $0 + Self.words($1.text) }))])),
         ]
         return .object(fields)
     }
@@ -295,7 +298,7 @@ public enum Coach {
     }
 
     /// `_avg`: the mean of the values that are not None, rounded; None when there are none.
-    static func avg(_ values: [JSONValue], _ digits: Int = 3) throws -> JSONValue {
+    public static func avg(_ values: [JSONValue], _ digits: Int = 3) throws -> JSONValue {
         let numbers = try values.compactMap(number)
         return PyStatistics.mean(numbers)?.rounded(digits).json ?? .null
     }

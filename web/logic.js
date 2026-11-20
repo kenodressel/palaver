@@ -1277,6 +1277,169 @@ export function assistantEmptyText(kind) {
     : kind === "next_steps" ? "No next steps or decisions yet." : "No answer.";
 }
 
+// --- the coach's statistics page (#43) --------------------------------------------------------
+// From the rows of GET /api/coach: the series the charts draw, the records, the streaks and the topics.
+
+const meanOf = (xs) => {
+  const v = xs.filter((x) => typeof x === "number" && Number.isFinite(x));
+  return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+};
+const DAY_MS = 86400000;
+
+// The Monday of a meeting's day as written ("2026-10-27T…" is in the week of "2026-10-26"), as the server's weeks are.
+export function weekOf(start) {
+  const d = new Date(`${String(start ?? "").slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Date(d.getTime() - ((d.getUTCDay() + 6) % 7) * DAY_MS).toISOString().slice(0, 10);
+}
+
+// The size a meeting is compared in: 2, 3, 4 or 5+ people.
+export const sizeOf = (people) => (people >= 5 ? "5+" : people >= 2 ? String(people) : null);
+
+// The meetings oldest first, with their time (`t`, ms) and how far above its fair share the user talked (`over`).
+export function coachPoints(meetings) {
+  return (meetings || []).map((r) => ({
+    ...r, t: Date.parse(r.start), week: weekOf(r.start), month: String(r.start ?? "").slice(0, 7),
+    over: r.share != null && r.fair != null ? r.share - r.fair : null,
+  })).filter((r) => Number.isFinite(r.t) && r.week).sort((a, b) => a.t - b.t);
+}
+
+// Pace and filler words count from meetings where the user talked 3 minutes or more, as the server's trends do.
+const talkedEnough = (r) => (r.minutes_talked ?? 0) >= 3;
+
+// Per week with meetings, oldest first: how many, the mean talk share and distance to the fair share, pace, filler
+// words, questions an hour, cut-ins a meeting and the time recorded. `t` is the mean time of its meetings: where a
+// chart puts the week, among them.
+export function coachWeeks(points) {
+  const by = new Map();
+  for (const r of points) by.set(r.week, [...(by.get(r.week) || []), r]);
+  return [...by.keys()].sort().map((week) => {
+    const g = by.get(week), long = g.filter(talkedEnough);
+    return {
+      week, t: meanOf(g.map((r) => r.t)), meetings: g.length, share: meanOf(g.map((r) => r.share)), over: meanOf(g.map((r) => r.over)),
+      wpm: meanOf(long.map((r) => r.wpm)), fillers: meanOf(long.map((r) => r.fillers)),
+      questions: meanOf(g.map((r) => r.questions_per_hour)), cutIns: meanOf(g.map((r) => r.interruptions)),
+      seconds: g.reduce((a, r) => a + (r.duration || 0), 0),
+    };
+  });
+}
+
+// The most and the least balanced week: the mean distance of the user's share to the fair share, smallest and
+// largest. Weeks with two meetings or more when there are such.
+export function balanceWeeks(weeks) {
+  const known = weeks.filter((w) => w.over != null);
+  const several = known.filter((w) => w.meetings >= 2);
+  const pool = several.length >= 2 ? several : known;
+  if (!pool.length) return { best: null, worst: null };
+  const by = [...pool].sort((a, b) => Math.abs(a.over) - Math.abs(b.over));
+  return { best: by[0], worst: by.length > 1 ? by[by.length - 1] : null };
+}
+
+// The weeks between two Mondays.
+const weeksBetween = (a, b) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / (7 * DAY_MS));
+
+// Streaks: weeks in a row with a meeting (the longest, and the current one: up to this week or the last), and
+// meetings in a row in which the user talked no more than the fair share.
+export function coachStreaks(points, today = new Date()) {
+  const weeks = [...new Set(points.map((r) => r.week))].sort();
+  let longest = 0, run = 0, prev = null;
+  for (const w of weeks) {
+    run = prev && weeksBetween(prev, w) === 1 ? run + 1 : 1;
+    longest = Math.max(longest, run);
+    prev = w;
+  }
+  const now = weekOf(today.toISOString());
+  const current = prev && weeksBetween(prev, now) <= 1 ? run : 0;
+  let fairLongest = 0, fair = 0;
+  for (const r of points) {
+    if (r.over == null) continue;
+    fair = r.over <= 0 ? fair + 1 : 0;
+    fairLongest = Math.max(fairLongest, fair);
+  }
+  return { weeks: current, longestWeeks: longest, fair, fairLongest };
+}
+
+// The records: the fastest pace of a meeting, the fastest stretch, the longest monologue, the most questions and the
+// longest meeting; each the meeting it was in (the first one on a tie) and its value.
+export function coachRecords(points) {
+  const top = (list, value) => {
+    let best = null;
+    for (const r of list) if (value(r) != null && value(r) > 0 && (!best || value(r) > value(best))) best = r;
+    return best ? { id: best.id, title: best.title, start: best.start, value: value(best) } : null;
+  };
+  return {
+    pace: top(points.filter(talkedEnough), (r) => r.wpm),
+    stretch: top(points, (r) => r.fastest),
+    monologue: top(points, (r) => r.longest),
+    questions: top(points, (r) => r.questions),
+    meeting: top(points, (r) => r.duration),
+  };
+}
+
+// The user's share by meeting size per month (the last `months` with meetings), to see it change.
+export function sizeTrend(points, months = 6) {
+  const shown = [...new Set(points.map((r) => r.month))].sort().slice(-months);
+  const out = {};
+  for (const size of ["2", "3", "4", "5+"]) {
+    const of = points.filter((r) => sizeOf(r.people) === size && r.share != null);
+    if (!of.length) continue;
+    out[size] = shown.map((month) => {
+      const g = of.filter((r) => r.month === month);
+      return { month, share: meanOf(g.map((r) => r.share)), meetings: g.length };
+    });
+  }
+  return { months: shown, sizes: out };
+}
+
+// What the meetings were about, per month (the last `months` with meetings): their projects and series, and the
+// glossary terms said most; the `top` most frequent of each, with their count per month.
+export function topicsByMonth(points, { months = 6, top = 8 } = {}) {
+  const shown = [...new Set(points.map((r) => r.month))].sort().slice(-months);
+  const inShown = points.filter((r) => shown.includes(r.month));
+  const rows = (pairs) => {
+    const counts = new Map();
+    for (const [name, month, n] of pairs) {
+      if (!counts.has(name)) counts.set(name, shown.map(() => 0));
+      counts.get(name)[shown.indexOf(month)] += n;
+    }
+    return [...counts.entries()].map(([name, c]) => ({ name, counts: c, total: c.reduce((a, b) => a + b, 0) }))
+      .sort((a, b) => b.total - a.total).slice(0, top);
+  };
+  const topics = inShown.flatMap((r) => [...new Set([...(r.projects || []), ...(r.series ? [r.series] : [])])]
+    .map((name) => [name, r.month, 1]));
+  const terms = inShown.flatMap((r) => (r.terms || []).map((t) => [t.term, r.month, t.count]));
+  return { months: shown, topics: rows(topics), terms: rows(terms) };
+}
+
+// Round axis ticks around `lo` to `hi` (the first at or below `lo`, the last at or above `hi`): about `count` steps,
+// each 1, 2, 2.5 or 5 times a power of ten.
+export function niceTicks(lo, hi, count = 4) {
+  if (!(hi > lo)) return [lo];
+  const raw = (hi - lo) / count, mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw);
+  const out = [];
+  const last = Math.ceil(hi / step - 1e-9);
+  for (let i = Math.floor(lo / step + 1e-9); i <= last; i += 1) out.push(Math.round(i * step * 1e6) / 1e6 || 0);
+  return out;
+}
+
+// A count as a stat tile shows it: 1,284 in full under 10,000, else 12.9K or 4.2M.
+export function compactNumber(n) {
+  if (n == null) return "–";
+  if (Math.abs(n) < 10000) return Math.round(n).toLocaleString("en-US");
+  const [d, unit] = Math.abs(n) >= 1e6 ? [1e6, "M"] : [1e3, "K"];
+  const v = n / d;
+  return `${Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 10) / 10}${unit}`;
+}
+
+// A length of time in hours, or in minutes under an hour: "42 min", "1.5 h", "128 h".
+export function hoursText(seconds) {
+  if (seconds == null) return "–";
+  if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
+  const hours = seconds / 3600;
+  return `${hours >= 10 ? Math.round(hours) : Math.round(hours * 10) / 10} h`;
+}
+
 // --- the setup assistant (#55) ---------------------------------------------------------
 
 // The steps, in order: who you are (and the calendar), what Palaver recommends

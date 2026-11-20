@@ -46,30 +46,124 @@ public enum CoachAPI {
                                  lines: (mine, theirs))
     }
 
-    /// `coach_overview`: every meeting's key numbers, newest first, and the averages.
+    /// `coach_overview`: every meeting's key numbers, newest first, and the averages; for the charts of the page (#43)
+    /// also each meeting's length, words, people and topics, the totals and the share by meeting size.
     public static func overview(_ app: ServerApp) throws -> JSONValue {
         var titles = PyDict<JSONValue>()
         for m in try MeetingsAPI.listMeetings(app: app) {
             if case .string(let id)? = m["id"] { titles[id] = m }
         }
         var results = PyDict<JSONValue>()
+        var found = PyDict<RecordingPaths>()
         for p in Coach.meetings(app.outputDir) {
             results[p.folder.lastPathComponent] = try Coach.result(p, userName: app.userName, stores: app.stores)
+            found[p.folder.lastPathComponent] = p
         }
+        let glossary = Glossary.current(stores: app.stores)
         let rows: [JSONValue] = Py.stableSorted(results.keys) { Py.less($1, $0) }.map { id in
             let r = results[id]!, m = titles[id]
             func at(_ a: String, _ b: String) -> JSONValue { r[a]?[b] ?? .null }
             let monologues = r["monologues"] ?? .null
+            let one = r["talk"]?["people"].flatMap { PyNum($0) }.map { $0 == 2 } ?? false
+            let projects: [JSONValue] = (m?["projects"]?.arrayValue ?? []).compactMap { $0["name"] }
             return .object([
                 ("id", .string(id)), ("title", m?["title"] ?? .null), ("start", m?["start"] ?? .null),
                 ("people", at("talk", "people")), ("share", at("talk", "share")), ("wpm", at("pace", "wpm")),
                 ("fillers", at("fillers", "per_minute")), ("language", r["language"] ?? .null),
                 ("longest", monologues.truthy ? (monologues.arrayValue?.first?["seconds"] ?? .null) : .int(0)),
                 ("questions", at("questions", "count")), ("interruptions", at("interruptions", "by_me")),
+                // What the charts add.
+                ("kind", .string(one ? "1:1" : "group")), ("fair", at("talk", "fair")),
+                ("duration", m?["duration"] ?? .null), ("minutes_talked", r["minutes_talked"] ?? .null),
+                ("words", at("words", "me")), ("words_all", at("words", "all")),
+                ("questions_per_hour", at("questions", "per_hour")), ("cut_off", at("interruptions", "of_me")),
+                ("fastest", r["pace"]?["fastest"]?["wpm"] ?? .null), ("monologues", .int(monologues.arrayValue?.count ?? 0)),
+                ("names", m?["people"] ?? .array([])), ("projects", .array(projects)),
+                ("series", m?["series"]?["name"] ?? .null),
+                ("terms", .array(terms(found[id]!, glossary).map { .object([("term", .string($0.term)), ("count", .int($0.count))]) })),
             ])
         }
         return .object([("baseline", try Coach.baseline(results.values)), ("meetings", .array(rows)),
-                        ("trends", try Coach.trends(Coach.history(app.outputDir, userName: app.userName, stores: app.stores)))])
+                        ("trends", try Coach.trends(Coach.history(app.outputDir, userName: app.userName, stores: app.stores))),
+                        ("totals", totals(rows)), ("by_size", try bySize(rows))])
+    }
+
+    /// How much was recorded and said in all, the longest meeting and the people met most often.
+    static func totals(_ rows: [JSONValue]) -> JSONValue {
+        func number(_ v: JSONValue?) -> Double { v.flatMap { PyNum($0) }?.double ?? 0 }
+        var longest: JSONValue = .null, longestSeconds = 0.0
+        var met = PyDict<Int>(), order: [String] = []
+        for r in rows.reversed() {  // oldest first: the first one met wins a tie
+            let seconds = number(r["duration"])
+            if seconds > longestSeconds {
+                longestSeconds = seconds
+                longest = .object([("id", r["id"] ?? .null), ("title", r["title"] ?? .null), ("seconds", r["duration"] ?? .null)])
+            }
+            for n in r["names"]?.arrayValue ?? [] {
+                guard let name = n.stringValue else { continue }
+                if met[name] == nil { order.append(name) }
+                met[name] = (met[name] ?? 0) + 1
+            }
+        }
+        let people = Py.stableSorted(order) { met[$0]! > met[$1]! }.prefix(8)
+        let recorded = rows.reduce(0.0) { $0 + number($1["duration"]) }
+        let talked = rows.reduce(0.0) { $0 + number($1["minutes_talked"]) * 60 }
+        return .object([
+            ("meetings", .int(rows.count)),
+            ("seconds", .int(Int(recorded.rounded()))),
+            ("talked_seconds", .int(Int(talked.rounded()))),
+            ("words", .int(rows.reduce(0) { $0 + Int(number($1["words"])) })),
+            ("words_all", .int(rows.reduce(0) { $0 + Int(number($1["words_all"])) })),
+            ("longest", longest),
+            ("people", .array(people.map { .object([("name", .string($0)), ("meetings", .int(met[$0]!))]) })),
+        ])
+    }
+
+    /// The meeting sizes the page compares: two people (a 1:1), three, four, five or more.
+    static let SIZES = ["2", "3", "4", "5+"]
+
+    /// The user's mean talk share by meeting size, beside the fair share of that size (for 5+: the mean of its
+    /// meetings' fair shares). Meetings without a share (several people on one microphone) are left out.
+    static func bySize(_ rows: [JSONValue]) throws -> JSONValue {
+        var groups = PyDict<[JSONValue]>()
+        for r in rows {
+            guard let people = r["people"].flatMap({ PyNum($0) })?.double, people >= 2,
+                  let share = r["share"], share != .null else { continue }
+            let size = people >= 5 ? "5+" : String(Int(people))
+            groups[size] = (groups[size] ?? []) + [r]
+        }
+        return .array(try SIZES.compactMap { size in
+            guard let group = groups[size] else { return nil }
+            return .object([("size", .string(size)), ("meetings", .int(group.count)),
+                            ("share", try Coach.avg(group.map { $0["share"] ?? .null })),
+                            ("fair", try Coach.avg(group.map { $0["fair"] ?? .null }))])
+        })
+    }
+
+    /// The glossary terms said most in a meeting (each spelling of a term counts for it), at most TERMS_SHOWN of them;
+    /// kept while the transcript and the glossary stay as they are.
+    static let TERMS_SHOWN = 5
+    private static let termCache = SignatureCache<[(term: String, count: Int)]>()
+
+    static func terms(_ paths: RecordingPaths, _ glossary: Glossary) -> [(term: String, count: Int)] {
+        termCache.get(key: paths.folder.path + "\u{0}" + glossary.path.path, files: [paths.transcriptJson, glossary.path]) {
+            var spelled = PyDict<String>()  // casefolded → the term as the glossary writes it
+            for (_, e) in glossary.terms {
+                if let t = e["term"]?.stringValue, !Py.strip(t).isEmpty { spelled[Py.casefold(t)] = t }
+            }
+            guard !spelled.isEmpty, let lines = try? MeetingsAPI.utterances(paths), !lines.isEmpty else { return [] }
+            let alternatives = Py.stableSorted(spelled.keys) { $0.unicodeScalars.count > $1.unicodeScalars.count }
+            guard let regex = try? PyRegex(#"(?<!\w)("# + alternatives.map(PyRegex.escape).joined(separator: "|") + #")(?!\w)"#,
+                                           ignoreCase: true) else { return [] }
+            var counts = PyDict<Int>(), order: [String] = []
+            let text = glossary.apply(lines: lines.map(\.text)).joined(separator: "\n")
+            for m in regex.matches(in: text) {
+                guard let heard = m.group(1), let term = spelled[Py.casefold(heard)] else { continue }
+                if counts[term] == nil { order.append(term) }
+                counts[term] = (counts[term] ?? 0) + 1
+            }
+            return Py.stableSorted(order) { counts[$0]! > counts[$1]! }.prefix(TERMS_SHOWN).map { ($0, counts[$0]!) }
+        }
     }
 }
 
