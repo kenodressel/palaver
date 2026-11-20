@@ -386,6 +386,23 @@ class FakeAssistantHelper:
         self._fake.answer("assistant", {"error": str(value)} if isinstance(value, Exception) else value)
 
 
+class FakeAskMeetingsHelper:
+    """Ask your meetings' language model (#42) behind `palaver-lm ask` (its test model): what it answers (the model's
+    JSON, or an exception whose text is its error), a hold, and what it was asked."""
+
+    def __init__(self, fake: FakePython):
+        self._fake = fake
+        self.gate = _HoldGate(fake, "ask-meetings")
+
+    @property
+    def asked(self) -> list[dict]:
+        """{meetings, prompt} of each question asked."""
+        return [{"meetings": c["meetings"], "prompt": c["prompt"]} for c in self._fake.calls("ask-meetings")]
+
+    def answer(self, value: dict | Exception | None) -> None:
+        self._fake.answer("ask-meetings", {"error": str(value)} if isinstance(value, Exception) else value)
+
+
 class ProbeFile:
     """The Mac palaver-server's setup assistant sees (TestProbe): probe.json, changed
     with ``set``; ``fetched``, ``autostart_on``, ``calendar`` and
@@ -442,6 +459,7 @@ class SwiftServed(_Api):
         self.notes = FakeNotesHelper(fake)
         self.model = FakeModelHelper(fake)
         self.assistant = FakeAssistantHelper(fake)
+        self.ask_meetings = FakeAskMeetingsHelper(fake)
         self.home = tmp / "home"  # $PALAVER_HOME and $HOME
         self.notify_state = tmp / "notify-state"  # $PALAVER_NOTIFY_STATE: not there, as outside the app
         self._opened_file = tmp / "opened"

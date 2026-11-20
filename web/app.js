@@ -27,6 +27,9 @@ import { meetingTime, parseNote } from "./mynotes-logic.js";
 // The live assistant (#15).
 import { ASSISTANT_KINDS, ASSISTANT_MINUTES, assistantModelText, assistantButton, catchupTitle, nextStepsTitle, nextStepText,
   quoteText, assistantEmptyText } from "./logic.js";
+// Ask your meetings (#42).
+import { keepAsked, askAnswerParts, askSourcePlace, askSourceQuote, askModelText, askBasisText, askLeftOutText, askEmptyText,
+  askSinceOptions } from "./logic.js";
 // Today, Needs you and the ⌘K palette (UI spec, phase 2).
 import { needsSummary, needCards, needQuestion, startsInText, cutAtPointer, navCount, paletteMatch, paletteCommands,
   paletteRecent, paletteRecentShown, labelDisplay, meetingTabs, meetingTab, TAB_LABELS } from "./logic.js";
@@ -192,6 +195,10 @@ const state = {
   assistant: null, // the live assistant of the meeting being recorded (#15): {id, at, info, answers, pending, error, confirm}
   assistantMinutes: 5,  // how far Catch me up looks back
   assistantDraft: "",   // the question being typed
+  // Ask your meetings (#42): the model line, the question being typed, the page's filters, the ask that runs (its
+  // body), what it waits for (a second click) or why it failed, and the answers of this session, the newest first.
+  ask: { info: null, draft: "", person: "", project: "", since: "", pending: null, confirm: null, error: null,
+    answers: loadAsked() },
   reviewAt: 0,     // which of them is open in the review
   upcoming: [],    // calendar events still to come
   prepping: null,  // the upcoming meeting open for prep
@@ -4486,6 +4493,185 @@ document.addEventListener("mouseup", (e) => {
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeRespell(); });
 $("#main").addEventListener("scroll", closeRespell);
 
+// --- ask your meetings (#42) -------------------------------------------------------
+// One question across all meetings. The server finds the passages that match (lines with the lines around them,
+// notes, my notes) and the notes' model answers from those only, citing them by number; each citation and source opens
+// its meeting at the moment. A meeting kept on this Mac never goes to a cloud model: the answer says how many were
+// left out, and Ask on this Mac runs the local model with them. The model runs only on a click; during a call the
+// local model asks first. The last answers stay for the session (this window, not on disk).
+
+// Read while the page's state is made, before this module's constants are: the key is written out.
+function loadAsked() {
+  try {
+    const x = JSON.parse(sessionStorage.getItem("palaver.ask.recent"));
+    return Array.isArray(x) ? x : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveAsked() {
+  try {
+    sessionStorage.setItem("palaver.ask.recent", JSON.stringify(state.ask.answers));
+  } catch { /* kept on the page until it reloads */ }
+}
+
+// ``question``: asked at once (from the palette).
+async function openAsk(how = "push", question = null) {
+  const here = leaveMeeting("ask", "#/ask", how);
+  if (question) state.ask.draft = question;
+  renderAsk();
+  try {
+    state.ask.info = await api("/api/ask");
+  } catch (err) {
+    state.ask.info = { ready: false, reason: `Not available: ${err.message}` };
+  }
+  if (movedOn(here)) return;
+  fillAsk();
+  if (question && state.ask.info.ready) askMeetings();
+  else if (!document.activeElement || document.activeElement === document.body) $("#main .ask-input")?.focus();
+}
+
+// The page: built once, then its parts are filled in place (a question being typed keeps its text and focus).
+function renderAsk() {
+  const projects = [...new Map(state.meetings.flatMap((x) => x.projects).map((p) => [p.id, p])).values()]
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const select = (key, label, options) => h("select", { class: "filter inline", "aria-label": label, "data-key": key,
+    onchange: (e) => { state.ask[key] = e.target.value; } }, options.map((o) => h("option", { value: o.value }, o.label)));
+  const page = h("article", { class: "meeting ask-page" },
+    h("h1", {}, "Ask your meetings"),
+    h("p", { class: "lede" }, "One question across all your meetings. Palaver finds the passages that matter and the "
+      + "model answers from those alone, with the moments it rests on."),
+    h("form", { class: "ask-form", onsubmit: (e) => { e.preventDefault(); askMeetings(); } },
+      h("input", { type: "text", class: "ask-input", maxlength: 500, autocomplete: "off", spellcheck: "false",
+        placeholder: "What did we agree with Northwind about the term?", "aria-label": "Ask your meetings",
+        value: state.ask.draft, oninput: (e) => { state.ask.draft = e.target.value; } }),
+      h("button", { type: "submit", class: "btn primary ask-go" }, "Ask")),
+    h("div", { class: "ask-filters" },
+      select("person", "Who took part", [{ value: "", label: "Anyone" }, ...state.names.map((n) => ({ value: n, label: n }))]),
+      select("project", "Project", [{ value: "", label: "Any project" }, ...projects.map((p) => ({ value: p.name, label: p.name }))]),
+      select("since", "Since", askSinceOptions(new Date()))),
+    h("p", { class: "ask-model" }),
+    h("div", { class: "ask-status" }),
+    h("div", { class: "ask-answers" }));
+  for (const s of page.querySelectorAll("select[data-key]")) s.value = state.ask[s.dataset.key];
+  $("#main").replaceChildren(page);
+  fillAsk();
+}
+
+function fillAsk() {
+  const page = state.view === "ask" ? $("#main .ask-page") : null;
+  if (!page) return;
+  const a = state.ask;
+  const ready = !!a.info?.ready;
+  const go = page.querySelector(".ask-go");
+  go.textContent = a.pending ? "Thinking…" : "Ask";
+  go.disabled = !ready || !!a.pending;
+  page.querySelector(".ask-input").disabled = !ready && !!a.info;
+  page.querySelector(".ask-model").textContent = askModelText(a.info);
+  const status = page.querySelector(".ask-status");
+  const statusKey = JSON.stringify([a.pending && a.pending.question, a.confirm, a.error]);
+  if (status.dataset.key !== statusKey) {
+    status.dataset.key = statusKey;
+    status.replaceChildren(...askStatus(a));
+  }
+  const answers = page.querySelector(".ask-answers");
+  const answersKey = JSON.stringify([a.answers, !!a.pending]);  // Ask on this Mac waits while one runs
+  if (answers.dataset.key !== answersKey) {
+    answers.dataset.key = answersKey;
+    answers.replaceChildren(...a.answers.map(askCard));
+  }
+}
+
+function askStatus(a) {
+  if (a.pending) return [h("p", { class: "ask-pending", role: "status" }, `Looking through your meetings for “${a.pending.question}”…`)];
+  if (a.confirm) {  // the local model during a call: said first, run on a second click
+    return [h("p", { class: "assistant-warning", role: "status" }, a.confirm.warning, " ",
+      h("button", { type: "button", class: "btn small", onclick: () => runAsk({ ...a.confirm.body, confirmed: true }) }, "Run anyway"), " ",
+      h("button", { type: "button", class: "btn btn-quiet small", onclick: () => { a.confirm = null; fillAsk(); } }, "Cancel"))];
+  }
+  if (a.error) return [h("p", { class: "assistant-error", role: "status" }, a.error)];
+  return [];
+}
+
+// Opens a source's meeting: at its moment (a line, my notes written during the call), else its notes.
+function openSource(s) {
+  usage.count("action", "ask.source");
+  if (s.time != null) openMeeting(s.meeting, s.time, { tab: s.kind === "my_notes" ? "mine" : "transcript" });
+  else openMeeting(s.meeting, undefined, { tab: s.kind === "my_notes" ? "mine" : "notes" });
+}
+
+const askSourceTitle = (s) => {
+  const start = s.start ? new Date(s.start) : null;
+  return [s.title, start && !Number.isNaN(start.getTime()) ? shortDayFmt.format(start) : null, askSourcePlace(s)]
+    .filter(Boolean).join(" · ");
+};
+
+function askCard(a) {
+  const card = h("section", { class: "ask-card", "aria-label": a.question });
+  card.append(h("p", { class: "ask-q" }, a.question));
+  if (a.answer == null) {
+    card.append(h("p", { class: "ask-a meta" }, askEmptyText(a)));
+  } else {
+    card.append(h("p", { class: "ask-a" }, a.answer ? askAnswerParts(a.answer, a.sources).map((p) => (p.source
+      ? h("button", { type: "button", class: "ask-cite", title: askSourceTitle(p.source), "aria-label": `Source ${p.n}: ${askSourceTitle(p.source)}`,
+        onclick: () => openSource(p.source) }, String(p.n))
+      : p.text)) : "The model found no answer in the passages."));
+  }
+  if (a.sources?.length) {
+    card.append(h("ol", { class: "ask-sources" }, a.sources.slice().sort((x, y) => x.n - y.n).map((s) => h("li", { value: s.n },
+      h("button", { type: "button", class: "ask-source", onclick: () => openSource(s) },
+        h("span", { class: "ask-source-where" }, askSourceTitle(s)),
+        h("span", { class: "ask-source-quote" }, askSourceQuote(s)))))));
+  }
+  const left = askLeftOutText(a);
+  if (left) {
+    card.append(h("p", { class: "ask-left-out" }, left, " ",
+      h("button", { type: "button", class: "btn small", disabled: !!state.ask.pending,
+        onclick: () => runAsk({ ...a.body, include_local: true }) }, "Ask on this Mac")));
+  }
+  // The filters the question named (people, projects, dates); "decisions" only weighs the notes more.
+  const narrowed = (a.understood || []).filter((c) => c.kind !== "in").map((c) => c.label);
+  card.append(h("p", { class: "assistant-note" },
+    [a.passages ? askBasisText(a) : null, narrowed.length ? `Narrowed to ${narrowed.join(", ")}` : null].filter(Boolean).join(" · ")));
+  return card;
+}
+
+function askMeetings() {
+  const question = state.ask.draft.trim();
+  if (!question || state.ask.pending) return;
+  const body = { question };
+  for (const key of ["person", "project", "since"]) if (state.ask[key]) body[key] = state.ask[key];
+  runAsk(body);
+}
+
+async function runAsk(body) {
+  const a = state.ask;
+  a.confirm = null;
+  a.error = null;
+  a.pending = body;
+  usage.count("action", body.include_local ? "ask.local" : "ask.ask");
+  fillAsk();
+  try {
+    const r = await api("/api/ask", body);
+    if (r.confirm) {
+      a.confirm = { body, warning: r.confirm };
+    } else {
+      const { confirmed, ...asked } = body;
+      a.answers = keepAsked(a.answers, { ...r, body: asked });
+      saveAsked();
+      if (a.draft.trim() === body.question) a.draft = "";  // asked: the field is free for the next one
+      const input = $("#main .ask-input");
+      if (input && input.value.trim() === body.question) input.value = a.draft;
+    }
+  } catch (err) {
+    a.error = err.message;
+  } finally {
+    a.pending = null;
+  }
+  fillAsk();
+}
+
 // --- prep ------------------------------------------------------------------------
 
 async function openPrep(key, how = "push") {
@@ -7653,7 +7839,7 @@ commands.register("reportProblem", { enabled: () => true, run: APP_ACTIONS.repor
 
 // --- the ⌘K palette ---------------------------------------------------------------------
 
-const PAGES = [["today", "Today"], ["meetings", "Meetings"], ["people", "People"], ["projects", "Projects"],
+const PAGES = [["today", "Today"], ["meetings", "Meetings"], ["ask", "Ask your meetings"], ["people", "People"], ["projects", "Projects"],
   ["series", "Series"], ["glossary", "Glossary"], ["settings", "Settings"]];
 
 function goTo(view) {
@@ -7662,6 +7848,7 @@ function goTo(view) {
   else if (view === "projects") openProjects();
   else if (view === "series") openSeries();
   else if (view === "glossary") openGlossary();
+  else if (view === "ask") openAsk();
   else if (view === "settings") openSettings();
   else if (lastMeeting()) openMeeting(lastMeeting());
   else openMeetingsList();
@@ -7711,7 +7898,8 @@ function paletteGroups(query) {
   return [{ title: null, entries: paletteMatch(query,
     [...cmds, ...pages, ...settingsEntries(), ...HELP_COMMANDS, ...meetings, ...people, ...projects,
       ...seriesEntries(state.meetings)]) },
-    { title: null, entries: [{ kind: "search", id: query.trim(), label: `Search transcripts for “${query.trim()}”` }] }];
+    { title: null, entries: [{ kind: "search", id: query.trim(), label: `Search transcripts for “${query.trim()}”` },
+      { kind: "ask", id: query.trim(), label: `Ask your meetings “${query.trim()}”` }] }];
 }
 
 // Commands of the whole app, any page: Report a Problem (#59).
@@ -7727,6 +7915,7 @@ async function pickFromPalette(e) {
   else if (e.kind === "page") goTo(e.id);
   else if (e.kind === "setting") openSettings("push", e.id);
   else if (e.kind === "command") commands.run(e.id);
+  else if (e.kind === "ask") openAsk("push", e.id);
   else if (e.kind === "search") {
     if (document.body.dataset.page !== "meetings") await (lastMeeting() ? openMeeting(lastMeeting()) : openMeetingsList());
     const field = $("#search");
@@ -7886,6 +8075,7 @@ async function route(how = "none", entry = null) {
   else if (place.view === "projects") await openProjects(place.focus, how);
   else if (place.view === "series") await openSeries(place.focus, how);
   else if (place.view === "glossary") await openGlossary(how);
+  else if (place.view === "ask") await openAsk(how);
   else if (place.view === "settings") {
     await openSettings(how, place.section);
   }
@@ -7985,11 +8175,12 @@ setInterval(() => {
 
 // The usage log's catalog (#59): every action, page and tab there is, so a report knows what was never used.
 usage.catalog("action", [...actionCatalog(), "meeting.reportFromError", "app.reportProblem",
-  ...ASSISTANT_KINDS.map((k) => `assistant.${k}`)]);
+  ...ASSISTANT_KINDS.map((k) => `assistant.${k}`), "ask.ask", "ask.local", "ask.source"]);
 usage.catalog("view", ["today", "meetings", "people", "projects", "series", "glossary", "settings", "review", "coach", "prep",
-  "setup", "report"]);
+  "setup", "report", "ask"]);
 usage.catalog("tab", Object.keys(TAB_LABELS));
-usage.catalog("palette", ["open", "meeting", "person", "project", "series", "page", "setting", "search", "command.reportProblem",
+usage.catalog("palette", ["open", "meeting", "person", "project", "series", "page", "setting", "search", "ask",
+  "command.reportProblem",
   ...GLOBAL_COMMANDS.map((c) => `command.${c.id}`), "command.startRecording", "command.stopRecording",
   ...Object.keys(meetingCommands({})).map((name) => `command.${name}`)]);
 

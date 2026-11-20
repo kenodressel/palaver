@@ -68,6 +68,12 @@ public protocol LiveAssistantAsker: AnyObject {
     func ask(meetingId: String, inputs: JSONValue) throws -> JSONValue
 }
 
+/// `palaver-lm ask` (ask your meetings, #42): the answer to one question from the passages found for it,
+/// `{"answer", "sources", "engine"}`. `watching`: the meeting whose notes' memory budget the app watches it with.
+public protocol MeetingsAsker: AnyObject {
+    func ask(inputs: JSONValue, watching: URL) throws -> JSONValue
+}
+
 /// The provider actions (Task 46; phase 4: `Providers`, in this process): one call with its JSON body.
 public protocol ProviderHelper: AnyObject {
     func call(_ action: String, body: JSONValue, timeout: Double) throws -> JSONValue
@@ -212,6 +218,12 @@ final class StubLiveAssistantAsker: LiveAssistantAsker {
     func ask(meetingId: String, inputs: JSONValue) throws -> JSONValue { throw Unavailable(notWired) }
 }
 
+/// For tests that leave it out: 503.
+final class StubMeetingsAsker: MeetingsAsker {
+    init() {}
+    func ask(inputs: JSONValue, watching: URL) throws -> JSONValue { throw Unavailable(notWired) }
+}
+
 /// The live assistant (#15) from `palaver-lm <options> --no-notify assistant <folder>`: the best next question's helper
 /// process (in a session of its own, watched by the app, the same errors), another command.
 public final class LMLiveAssistant: LiveAssistantAsker, @unchecked Sendable {
@@ -226,6 +238,24 @@ public final class LMLiveAssistant: LiveAssistantAsker, @unchecked Sendable {
 
     public func ask(meetingId: String, inputs: JSONValue) throws -> JSONValue {
         try helper.ask(meetingId: meetingId, inputs: inputs)
+    }
+}
+
+/// Ask your meetings (#42) from `palaver-lm <options> --no-notify ask`: the best next question's helper process (in a
+/// session of its own, watched by the app, the same errors), with the question and its passages on stdin and no
+/// folder of its own; the app watches it with the notes' budget of `watching`, the meeting that decides its model.
+public final class LMAskMeetings: MeetingsAsker, @unchecked Sendable {
+    let helper: LMNextQuestion
+
+    public init(outputDir: URL, lm: String, cliOptions: [String], recording: RecordingRemote?,
+                taskpolicy: String = ModelJobs.TASKPOLICY, timeout: Double = LMNextQuestion.TIMEOUT,
+                env: [String: String] = ProcessInfo.processInfo.environment) {
+        helper = LMNextQuestion(outputDir: outputDir, lm: lm, cliOptions: cliOptions, recording: recording,
+                                taskpolicy: taskpolicy, timeout: timeout, env: env, command: "ask", answerKey: "answer")
+    }
+
+    public func ask(inputs: JSONValue, watching: URL) throws -> JSONValue {
+        try helper.run(["ask"], watching: watching, inputs: inputs, key: "answer")
     }
 }
 
@@ -268,7 +298,15 @@ public final class LMNextQuestion: NextQuestionAsker, @unchecked Sendable {
 
     public func ask(meetingId: String, inputs: JSONValue) throws -> JSONValue {
         let folder = try MeetingsAPI.meetingPaths(outputDir: outputDir, id: meetingId).folder
-        var argv = [lm] + cliOptions + ["--no-notify", command, folder.path]
+        // The best answer (#41's "answer" kind) comes back under its own key.
+        let key = answerKey == "questions" && inputs["kind"]?.stringValue == "answer" ? "answer" : answerKey
+        return try run([command, folder.path], watching: folder, inputs: inputs, key: key)
+    }
+
+    /// palaver-lm with `args` after the options, `inputs` on stdin; its answer (the last line), which has `key`.
+    /// The app watches its memory with the budget of `watching`'s notes.
+    func run(_ args: [String], watching folder: URL, inputs: JSONValue, key: String) throws -> JSONValue {
+        var argv = [lm] + cliOptions + ["--no-notify"] + args
         if FileManager.default.fileExists(atPath: taskpolicy) { argv = [taskpolicy, "-c", "utility"] + argv }
         let done: HelperChild.Finished
         do {
@@ -282,8 +320,6 @@ public final class LMNextQuestion: NextQuestionAsker, @unchecked Sendable {
         if done.code < 0 { throw BadGateway(Self.STOPPED) }
         let lines = ModelJobs.splitlines(Py.strip(String(decoding: done.stdout, as: UTF8.self)))
         guard let answer = try? PythonJSON.parse(Data((lines.last ?? "{}").utf8)) else { throw BadGateway(Self.NO_ANSWER) }
-        // The best answer (#41's "answer" kind) comes back under its own key.
-        let key = answerKey == "questions" && inputs["kind"]?.stringValue == "answer" ? "answer" : answerKey
         guard case .object = answer, answer["error"] == nil, answer[key] != nil else {
             // `str((out or {}).get("error") or NO_ANSWER)`
             if answer.truthy, !answer.isObject {

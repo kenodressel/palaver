@@ -95,6 +95,7 @@ extension Router {
         addNoteTemplateRoutes(r, app: app)
         addNextQuestionRoutes(r, app: app)
         addLiveAssistantRoutes(r, app: app)
+        addAskMeetingsRoutes(r, app: app)
         addUpcomingRoutes(r, app: app)
         addProjectRoutes(r, app: app)
         addGlossaryRoutes(r, app: app)

@@ -149,10 +149,10 @@ button, input { font: inherit; color: inherit; }
 @keyframes side-in { from { opacity: 0; transform: translateX(-12px); } }
 
 /* People, Projects, Series, Glossary and Settings use the whole width. */
-body:is([data-page="today"], [data-page="people"], [data-page="projects"], [data-page="series"], [data-page="glossary"], [data-page="settings"], [data-page="setup"], [data-page="report"]) {
+body:is([data-page="today"], [data-page="ask"], [data-page="people"], [data-page="projects"], [data-page="series"], [data-page="glossary"], [data-page="settings"], [data-page="setup"], [data-page="report"]) {
   grid-template-areas: "top top" "main main" "player player";
 }
-body:is([data-page="today"], [data-page="people"], [data-page="projects"], [data-page="series"], [data-page="glossary"], [data-page="settings"], [data-page="setup"], [data-page="report"]) .sidebar { display: none; }
+body:is([data-page="today"], [data-page="ask"], [data-page="people"], [data-page="projects"], [data-page="series"], [data-page="glossary"], [data-page="settings"], [data-page="setup"], [data-page="report"]) .sidebar { display: none; }
 
 .list-head { display: flex; flex-direction: column; padding-top: 16px; }
 
@@ -436,6 +436,36 @@ span.moment { color: var(--ink-2); text-decoration: none; }
 .assistant-qa .q { margin: 0; color: var(--ink); font-weight: 600; }
 .assistant-qa .a { margin: 2px 0 4px; }
 .assistant-quotes { color: var(--ink-2); font-size: 13px; }
+
+/* Ask your meetings (#42): one field, its filters, and the answers of the session as cards, the newest first. Each
+   citation is a small numbered button; the sources under an answer open their meeting at the moment. */
+.ask-page { max-width: 820px; }
+.ask-form { display: flex; gap: 8px; margin-top: 24px; }
+.ask-input { flex: 1 1 auto; min-width: 0; padding: 8px 16px; border: 1px solid var(--rule); border-radius: 999px;
+  background: var(--surface); color: var(--ink); font: inherit; font-size: 15px; }
+.ask-input:focus-visible { border-color: var(--focus); outline: none; }
+.ask-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.ask-model { margin: 8px 0 0; color: var(--ink-3); font-size: 12px; }
+.ask-model:empty, .ask-status:empty, .ask-answers:empty { display: none; }
+.ask-status { margin-top: 12px; }
+.ask-pending { margin: 0; color: var(--ink-2); font-size: 13px; }
+.ask-answers { display: flex; flex-direction: column; gap: 16px; margin-top: 24px; }
+.ask-card { padding: 16px 20px; border-radius: var(--radius); background: var(--surface); box-shadow: 0 0 0 1px var(--rule); }
+.ask-q { margin: 0; color: var(--ink-2); font-size: 13px; font-weight: 600; }
+.ask-a { margin: 6px 0 0; font-size: 15px; line-height: 1.6; }
+.ask-cite { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px;
+  margin: 0 2px; padding: 0 6px; border: 0; border-radius: 999px; background: var(--selected); color: var(--you-ink);
+  font-size: 11px; font-weight: 700; vertical-align: 2px; cursor: pointer; }
+.ask-cite:hover, .ask-cite:focus-visible { background: var(--you); color: var(--on-color); outline: none; }
+.ask-sources { margin: 12px 0 0; padding-left: 24px; color: var(--ink-3); font-size: 12px; }
+.ask-sources li { margin: 0 0 4px; }
+.ask-source { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 4px 8px; border: 0; border-radius: 8px;
+  background: none; color: var(--ink); text-align: left; cursor: pointer; }
+.ask-source:hover, .ask-source:focus-visible { background: var(--hover); outline: none; }
+.ask-source-where { color: var(--ink-3); font-size: 12px; font-weight: 600; }
+.ask-source-quote { color: var(--ink-2); font-size: 13px; }
+.ask-left-out { margin: 12px 0 0; color: var(--ink-2); font-size: 13px; }
+.ask-card .assistant-note:empty { display: none; }
 
 /* Beside the meeting (a wide main pane): its own column, staying in view while the transcript scrolls. */
 .meeting.live.side { max-width: 1400px; display: grid; grid-template-columns: minmax(0, 1fr) 340px; column-gap: 32px;
