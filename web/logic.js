@@ -3,7 +3,9 @@
 // A meeting's tabs, in order. The keys go into history entries and links: "notes" stays the generated
 // notes (shown as Summary), so older entries still open them; "mine" is the user's own notes (#44).
 export const TAB_LABELS = { notes: "Summary", mine: "Notes", transcript: "Transcript", coach: "Coach" };
-export const meetingTabs = (m) => ["notes", "mine", "transcript", ...(m.status === "ready" ? ["coach"] : [])];
+// ``liveCoach``: while it records in a narrow window, the coach and the live assistant have a tab of their own.
+export const meetingTabs = (m, { liveCoach = false } = {}) =>
+  ["notes", "mine", "transcript", ...(m.status === "ready" || liveCoach ? ["coach"] : [])];
 
 // The tab a meeting opens on: the one ``asked`` for (history, a link) when it has it; the transcript at a time
 // to play and while it records; the coach when the coach was open (``current``); else the summary, or my

@@ -11,6 +11,7 @@ const live = { status: "recording", live: { until: 60 }, notes: null, my_notes_r
 test("the tabs, in order; Coach only once the meeting is ready", () => {
   assert.deepEqual(meetingTabs(ready), ["notes", "mine", "transcript", "coach"]);
   assert.deepEqual(meetingTabs(live), ["notes", "mine", "transcript"]);
+  assert.deepEqual(meetingTabs(live, { liveCoach: true }), ["notes", "mine", "transcript", "coach"]);  // a narrow window
   assert.deepEqual(meetingTabs(ready).map((t) => TAB_LABELS[t]), ["Summary", "Notes", "Transcript", "Coach"]);
 });
 

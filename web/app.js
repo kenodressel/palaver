@@ -191,7 +191,6 @@ const state = {
   coach: null,     // the open meeting's coach numbers
   assistant: null, // the live assistant of the meeting being recorded (#15): {id, at, info, answers, pending, error, confirm}
   assistantMinutes: 5,  // how far Catch me up looks back
-  liveMore: false,  // the live panel as a bar: the assistant shown (⋯)
   assistantDraft: "",   // the question being typed
   reviewAt: 0,     // which of them is open in the review
   upcoming: [],    // calendar events still to come
@@ -776,9 +775,13 @@ function renderMeeting() {
     peopleRow(m),  // the header's whole width, under the toolbar too
   );
 
+  // While it records, a wide window has the coach beside the meeting; a narrow one in its Coach tab.
+  const side = live && liveSide();
+  const tabList = meetingTabs(m, { liveCoach: live && !side });
+  if (!tabList.includes(state.tab)) state.tab = "transcript";
   // Summary: what the language model wrote (✦, as on Write notes); Notes: mine.
   const tabs = h("div", { class: "tabs", role: "tablist" },
-    meetingTabs(m).map((t) => h("button", {
+    tabList.map((t) => h("button", {
       class: "tab", role: "tab", "aria-selected": String(state.tab === t),
       title: t === "notes" ? "AI generated: the language model wrote this from the transcript" : null,
       onclick: () => { setTab(t); renderMeeting(); saveHere(); },
@@ -786,10 +789,10 @@ function renderMeeting() {
     t === "notes" ? h("span", { class: "tab-ai", "aria-hidden": "true" }, "✦") : null)));
 
   const body = state.tab === "notes" ? renderNotes(m, color) : state.tab === "mine" ? myNotes(m)
-    : state.tab === "coach" ? renderCoach(m) : renderTranscript(m, color);
+    : state.tab === "coach" ? (live ? liveCoachTab(m) : renderCoach(m)) : renderTranscript(m, color);
 
-  const page = h("article", { class: live ? "meeting live" : "meeting" }, head,
-    livePanel(m),
+  const page = h("article", { class: side ? "meeting live side" : live ? "meeting live" : "meeting" }, head,
+    livePanel(m, side),
     renderNeedsStrip(m),
     renderStopQuestion(m),
     renderCutSuggestion(m),
@@ -2322,26 +2325,41 @@ setInterval(async () => {
 
 // --- the live coach (#41, #42) ----------------------------------------------------
 // While a meeting records: who talks now, the talk share and the coach's nudge, "Best answer" and "Best next
-// question" on demand, and the live assistant: one panel. A wide window shows it beside the meeting, all of it at
-// once; a narrower one as a bar under the header, the assistant's own buttons behind ⋯ (app.css: .live-panel).
-// Updated in place every second (a button keeps its focus); nothing pops up over the call.
+// question" on demand, and the live assistant. A wide main pane (LIVE_SIDE_PX) has all of it in a panel beside
+// the meeting; a narrower one a single line under the header (who talks, the share, the nudge, the two buttons and
+// their answer) and the rest in the meeting's Coach tab. Updated in place every second (a button keeps its
+// focus); nothing pops up over the call.
 
-function livePanel(m) {
+const LIVE_SIDE_PX = 1080;
+const liveSide = () => ($("#main")?.clientWidth ?? 0) >= LIVE_SIDE_PX;
+
+function livePanel(m, side) {
   if (!(m.status === "recording" || m.live)) return null;
-  return h("aside", { class: state.liveMore ? "live-panel open" : "live-panel", "aria-label": "Coach" },
-    h("h2", { class: "live-panel-title" }, "Coach"),
+  return h("aside", { class: "live-panel", "aria-label": "Coach" },
+    side ? h("h2", { class: "live-panel-title" }, "Coach") : null,
     coachLive(m),
-    liveAssistant(m));
+    side ? liveAssistant(m) : null);
 }
 
-// ⋯ in the bar: the assistant's buttons and question field shown or put away again.
-function toggleLiveMore() {
-  state.liveMore = !state.liveMore;
-  const panel = $("#main .live-panel");
-  if (!panel) return;
-  panel.classList.toggle("open", state.liveMore);
-  panel.querySelector(".live-more")?.setAttribute("aria-expanded", String(state.liveMore));
-  if (state.liveMore) panel.querySelector(".assistant-bar button")?.focus({ preventScroll: true });
+// The Coach tab while it records (a narrow window): the talk in a sentence, then the live assistant.
+function liveCoachTab(m) {
+  const detail = h("p", { class: "coach-detail", role: "status" });
+  fillCoachDetail(detail, m);
+  return h("section", { class: "live-coach-tab" }, detail, liveAssistant(m));
+}
+
+function fillCoachDetail(el, m) {
+  const c = liveCoachFor(state.liveCoach, m);
+  const text = c ? [speakingText(c.talk), c.text, c.nudge?.text].filter(Boolean).join(" · ") : "";
+  if (el.textContent !== text) el.textContent = text;
+}
+
+// The window made wider or narrower across LIVE_SIDE_PX while a recording is open: the page is laid out again.
+if (typeof ResizeObserver !== "undefined" && $("#main")) {
+  new ResizeObserver(() => {
+    const page = $("#main .meeting.live");
+    if (page && page.classList.contains("side") !== liveSide()) renderMeeting();
+  }).observe($("#main"));
 }
 
 function coachLive(m) {
@@ -2359,9 +2377,7 @@ function fillCoachLive(el, m) {
         h("div", { class: "coach-actions" },
           h("button", { type: "button", class: "btn small primary coach-ask-answer",
             onclick: () => askNextQuestion(m.id, false, "answer") }),
-          h("button", { type: "button", class: "btn small coach-ask", onclick: () => askNextQuestion(m.id) }),
-          h("button", { type: "button", class: "btn small live-more", "aria-label": "More: catch me up, next steps, ask",
-            "aria-expanded": String(!!state.liveMore), onclick: toggleLiveMore }, "⋯")),
+          h("button", { type: "button", class: "btn small coach-ask", onclick: () => askNextQuestion(m.id) })),
         h("span", { class: "coach-reason" })),
       h("div", { class: "coach-answer" }));
   }
@@ -2372,7 +2388,7 @@ function fillCoachLive(el, m) {
   const share = c?.talk?.share;
   status.replaceChildren(...(c ? [
     h("span", { class: `coach-now ${c.talk?.speaking || "quiet"}` }, speakingText(c.talk)),
-    typeof share === "number" ? h("span", { class: "coach-meter", "aria-hidden": "true" },
+    typeof share === "number" ? h("span", { class: "coach-meter", "aria-hidden": "true", title: c.text || null },
       h("span", { style: `width:${Math.round(100 * Math.min(1, Math.max(0, share)))}%` })) : null,
     c.text ? h("span", { class: "coach-talk" }, c.text) : null,
     c.nudge?.text ? h("span", { class: "coach-nudge", role: "status" }, c.nudge.text) : null,
@@ -2428,6 +2444,8 @@ function renderQuestions(q) {
 function refreshCoachLive() {
   const el = $("#main .coach-live");
   if (el && state.meeting) fillCoachLive(el, state.meeting);
+  const detail = $("#main .coach-detail");
+  if (detail && state.meeting) fillCoachDetail(detail, state.meeting);
 }
 
 // ``kind``: "questions" (Best next question) or "answer" (Best answer); the same model and the same second click.

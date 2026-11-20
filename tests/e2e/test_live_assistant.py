@@ -15,28 +15,27 @@ WARNING = "Runs Gemma on this Mac during the call (about 10 GB, may slow the cal
 
 
 def _panel(page):
-    """The assistant in the live panel; the test's window (1280 px) shows the panel as a bar: ⋯ shows the asks."""
-    more = page.locator("#main .live-more")
-    expect(more).to_be_visible()
-    if more.get_attribute("aria-expanded") != "true":
-        more.click()
+    """The live assistant; in the test's window (1280 px) it is in the meeting's Coach tab."""
+    page.get_by_role("tab", name="Coach").click()
     return page.get_by_role("region", name="Live assistant")
 
 
-def test_a_narrow_window_shows_the_coach_as_a_bar_the_assistant_behind_more(page, app_server):
+def test_a_narrow_window_has_one_coach_line_and_the_rest_in_the_coach_tab(page, app_server):
+    app_server.recording.live_coach = {"meeting": LIVE, "talk": {"speaking": "me", "share": 0.72},
+                                       "text": "You 72 % of the last 10 min", "nudge": None, "quiet": []}
     goto(page, app_server, f"#/{LIVE}")
     coach = page.get_by_role("complementary", name="Coach")
     expect(coach.get_by_role("button", name="Best answer", exact=True)).to_be_visible()
     expect(coach.get_by_role("button", name="Best next question", exact=True)).to_be_visible()
+    line = coach.locator(".coach-line").bounding_box()
+    assert line["height"] < 60, line  # one row
+    expect(coach.locator(".coach-meter")).to_have_attribute("title", "You 72 % of the last 10 min")
+    expect(page.get_by_role("region", name="Live assistant")).to_have_count(0)
+    page.get_by_role("tab", name="Coach").click()
+    expect(page.locator("#main .coach-detail")).to_have_text("You're talking · You 72 % of the last 10 min")
     assistant = page.get_by_role("region", name="Live assistant")
-    expect(assistant.get_by_role("button", name="Catch me up", exact=True)).to_be_hidden()
-    more = coach.get_by_role("button", name="More: catch me up, next steps, ask")
-    more.click()
-    expect(more).to_have_attribute("aria-expanded", "true")
     expect(assistant.get_by_role("button", name="Catch me up", exact=True)).to_be_visible()
     expect(assistant.get_by_label("Ask about what was said")).to_be_visible()
-    more.click()
-    expect(assistant.get_by_role("button", name="Catch me up", exact=True)).to_be_hidden()
 
 
 def test_a_wide_window_shows_the_coach_beside_the_meeting(page, app_server):
@@ -44,13 +43,17 @@ def test_a_wide_window_shows_the_coach_beside_the_meeting(page, app_server):
     goto(page, app_server, f"#/{LIVE}")
     coach = page.get_by_role("complementary", name="Coach")
     expect(coach.get_by_role("heading", name="Coach")).to_be_visible()
-    assistant = page.get_by_role("region", name="Live assistant")
-    expect(assistant.get_by_role("button", name="Catch me up", exact=True)).to_be_visible()  # no ⋯ needed
-    expect(coach.locator(".live-more")).to_be_hidden()
+    assistant = coach.get_by_role("region", name="Live assistant")
+    expect(assistant.get_by_role("button", name="Catch me up", exact=True)).to_be_visible()
+    expect(page.get_by_role("tab", name="Coach")).to_have_count(0)  # all of it is in the panel
     tabs = page.locator("#main .tabs").bounding_box()
     box = coach.bounding_box()
     assert box["x"] >= tabs["x"] + tabs["width"], (box, tabs)  # its own column, right of the transcript
     assert box["width"] < 400
+    # Narrower: the line and the Coach tab, without a reload.
+    page.set_viewport_size({"width": 1280, "height": 900})
+    expect(page.get_by_role("tab", name="Coach")).to_be_visible()
+    expect(coach.get_by_role("heading", name="Coach")).to_have_count(0)
 
 
 def test_catch_me_up_runs_only_on_a_click(page, app_server):

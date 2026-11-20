@@ -323,8 +323,10 @@ def test_the_tabs_are_summary_notes_transcript_coach(page, app_server):
     expect(_pad(page)).to_be_visible()
     expect(page.locator("#main .notes")).to_have_count(0)
     goto(page, app_server, f"#/{LIVE}")
-    expect(page.locator("#main .tabs [role=tab]")).to_have_count(3)  # no coach while it records
-    assert _tab_names(page) == ["Summary", "Notes", "Transcript"]
+    # While it records, the Coach tab holds the live coach in this window (1280 px); a wide one has it beside.
+    expect(page.locator("#main .tabs [role=tab]")).to_have_count(4)
+    assert _tab_names(page) == ["Summary", "Notes", "Transcript", "Coach"]
+    expect(page.get_by_role("tab", name="Transcript")).to_have_attribute("aria-selected", "true")
 
 
 @pytest.mark.parametrize("width", [1280, 900])
