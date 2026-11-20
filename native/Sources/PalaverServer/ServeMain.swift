@@ -140,6 +140,7 @@ public enum ServeMain {
         }
         let nextQuestion = LMNextQuestion(outputDir: config.outputDir, lm: lm, cliOptions: forwarded(o), recording: recording)
         let assistant = LMLiveAssistant(outputDir: config.outputDir, lm: lm, cliOptions: forwarded(o), recording: recording)
+        let askMeetings = LMAskMeetings(outputDir: config.outputDir, lm: lm, cliOptions: forwarded(o), recording: recording)
         // The provider actions, all in this process.
         let keys = KeyStores.make(env: env)
         let provider = Providers(configURL: configURL, stores: stores, keys: keys, env: env)
@@ -169,7 +170,8 @@ public enum ServeMain {
                             config: config, stores: stores, cliOptions: forwarded(o),
                             staticDir: o.staticDir.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? ServerApp.defaultStaticDir,
                             freeMemoryGB: ServerApp.freeMemory(env: env), recording: recording, calendar: calendar, calendars: calendars, probe: probe,
-                            helpers: helpers, nextQuestion: nextQuestion, assistant: assistant, provider: provider, report: report,
+                            helpers: helpers, nextQuestion: nextQuestion, assistant: assistant, askMeetings: askMeetings,
+                            provider: provider, report: report,
                             // Where uploads go and Upload to Notion (#34), with the server's key store.
                             notion: NotionService(configURL: configURL, stores: stores, keys: keys, env: env,
                                                   base: NotionService.api(env: env)),

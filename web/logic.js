@@ -538,7 +538,7 @@ export function notesEstimate(history) {
 // window opens on it), #/meetings (the list, no meeting chosen), #/<meeting
 // id>, #/people[/<name>], #/projects[/<id>], #/upcoming/<key>, or one of the
 // plain pages.
-const PLAIN = new Set(["glossary", "settings", "review", "coach", "today"]);
+const PLAIN = new Set(["glossary", "settings", "review", "coach", "today", "ask"]);
 // Pages of their own with something in focus: a person, a project, a meeting series (#39).
 const FOCUSED = new Set(["people", "projects", "series"]);
 export function placeOf(hash) {
@@ -673,7 +673,7 @@ export function firstMoment(r) {
 // --- Settings → Language model (#53) ----------------------------------------------
 
 const FEATURE_LABELS = { notes: "Notes", projects: "Projects", transcription: "Transcription", test: "Test",
-  coach: "Best next question", assistant: "Live assistant" };
+  coach: "Best next question", assistant: "Live assistant", ask: "Ask your meetings" };
 const lowerFirst = (s) => s.charAt(0).toLowerCase() + s.slice(1);  // "Add the API key" -> "add the API key"
 
 // The choices for a feature's model: this Mac first, then each provider. One
@@ -1438,6 +1438,89 @@ export function hoursText(seconds) {
   if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
   const hours = seconds / 3600;
   return `${hours >= 10 ? Math.round(hours) : Math.round(hours * 10) / 10} h`;
+}
+
+// --- ask your meetings (#42) -----------------------------------------------------------
+// One question across all meetings, on the Ask page: the passages found for it go to the notes' model, which cites
+// them by number; each source opens its meeting at the moment.
+
+// The questions the page keeps for the session, the newest first.
+export const ASK_KEEP = 5;
+
+// The answers kept with ``entry`` added: the newest first, the same question asked again only once, ``max`` at most.
+export function keepAsked(list, entry, max = ASK_KEEP) {
+  const same = (a) => a.question.trim().toLowerCase() === entry.question.trim().toLowerCase();
+  return [entry, ...(list || []).filter((a) => !same(a))].slice(0, max);
+}
+
+// The answer's text in parts: plain text, and the citations [n] of sources it has (a number it has no source for
+// stays text).
+export function askAnswerParts(text, sources) {
+  const known = new Map((sources || []).map((s) => [s.n, s]));
+  const parts = [];
+  let at = 0;
+  for (const m of String(text || "").matchAll(/\[(\d{1,3})\]/g)) {
+    const source = known.get(Number(m[1]));
+    if (!source) continue;
+    if (m.index > at) parts.push({ text: text.slice(at, m.index) });
+    parts.push({ n: source.n, source });
+    at = m.index + m[0].length;
+  }
+  if (at < String(text || "").length) parts.push({ text: text.slice(at) });
+  return parts;
+}
+
+const SOURCE_KINDS = { decision: "Decision", step: "Next step", point: "Notes", summary: "Summary", my_notes: "My notes" };
+
+// Where in its meeting a source is: the time of a line (or of my notes written during the call), else what it is.
+export function askSourcePlace(s) {
+  if (s.kind === "line" || (s.kind === "my_notes" && s.time != null)) return callClock(s.time);
+  return SOURCE_KINDS[s.kind] || "Notes";
+}
+
+// What a source says: “…”, with who said it (a next step: whose it is).
+export function askSourceQuote(s) {
+  return `${s.speaker && (s.kind === "line" || s.kind === "step") ? `${s.speaker}: ` : ""}“${s.text}”`;
+}
+
+// The line under the field: which model answers and where, or why it can't.
+export function askModelText(info) {
+  if (!info) return "";
+  if (!info.ready) return info.reason || "";
+  const stays = info.local ? "nothing leaves this Mac" : "meetings kept on this Mac stay out";
+  return `${info.model} · runs only when you ask · ${stays}`;
+}
+
+// Under an answer: how much it was answered from, and by which model.
+export function askBasisText(a) {
+  const passages = `${a.passages} ${a.passages === 1 ? "passage" : "passages"}`;
+  const meetings = `${a.meetings} ${a.meetings === 1 ? "meeting" : "meetings"}`;
+  return [`From ${passages} in ${meetings}`, a.engine].filter(Boolean).join(" · ");
+}
+
+// The meetings kept on this Mac a cloud model was not given, said plainly; null when there were none.
+export function askLeftOutText(a) {
+  if (!a.left_out) return null;
+  return a.left_out === 1
+    ? "1 meeting kept on this Mac matches too: it was left out, a cloud model never sees it."
+    : `${a.left_out} meetings kept on this Mac match too: they were left out, a cloud model never sees them.`;
+}
+
+// An answer without a model run: nothing matched (or only meetings kept on this Mac).
+export function askEmptyText(a) {
+  if (a.left_out) return "Only meetings kept on this Mac match. Ask on this Mac to include them.";
+  return "Nothing in your meetings matches this question. Try other words, or fewer filters.";
+}
+
+// The "since" filter's choices for ``today`` (a Date): any time, or the last 30 days, 3 months or year.
+export function askSinceOptions(today) {
+  const before = (days) => {
+    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - days);
+    const two = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
+  };
+  return [{ value: "", label: "Any time" }, { value: before(30), label: "Last 30 days" },
+    { value: before(91), label: "Last 3 months" }, { value: before(365), label: "Last 12 months" }];
 }
 
 // --- the setup assistant (#55) ---------------------------------------------------------

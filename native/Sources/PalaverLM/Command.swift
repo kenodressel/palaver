@@ -4,10 +4,11 @@
 //   palaver-lm … projects [--no-wait] suggest [folder] | describe [project id]
 //   palaver-lm … next-question <folder>        (the inputs as JSON on stdin, the answer as JSON on stdout)
 //   palaver-lm … assistant <folder>            (the live assistant, #15: the same way)
+//   palaver-lm … ask                           (ask your meetings, #42: the question and its passages on stdin)
 //
 // Exit codes as Python's: 0; 1 with an "error: …" line (or `{"error"}` for next-question); 2 for a meeting without a
 // transcript or an unknown project; 75 when the model is busy and the run would not wait (`--no-wait`, next-question,
-// assistant).
+// assistant, ask).
 // One model at a time across processes (notes.lock). A command that fails says so in a notification, unless
 // `--no-notify`; the usage log counts the command.
 import Foundation
@@ -18,7 +19,7 @@ import PalaverDomain
 public enum LMMain {
     public static let usage = "usage: palaver-lm [--config F] [--dictionary F] [--no-notify] "
         + "(notes <folder> [--force] | projects [--no-wait] (suggest [folder] | describe [id]) | next-question <folder> "
-        + "| assistant <folder>)"
+        + "| assistant <folder> | ask)"
 
     public struct Options: Equatable {
         public var config: String?
@@ -64,6 +65,8 @@ public enum LMMain {
             guard operands.count == 1 else { throw UsageError(description: "\(command) takes one meeting folder") }
             guard command == "notes" || !o.force else { throw UsageError(description: "--force is for notes") }
             o.folder = operands[0]
+        case "ask":
+            guard operands.isEmpty else { throw UsageError(description: "ask takes no folder: the passages name their meetings") }
         case "projects":
             guard let action = operands.first, ["suggest", "describe"].contains(action), operands.count <= 2 else {
                 throw UsageError(description: "projects takes suggest [folder] or describe [id]")
@@ -151,6 +154,7 @@ public enum LMMain {
         case "notes": return await NotesRun.command(o, ctx)
         case "projects": return await ProjectsRun.command(o, ctx)
         case "assistant": return await AssistantRun.command(o, ctx)
+        case "ask": return await AskMeetingsRun.command(o, ctx)
         default: return await NextQuestionRun.command(o, ctx)
         }
     }
